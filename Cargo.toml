@@ -1,0 +1,12 @@
+[package]
+name = "ufs"
+version = "0.1.0"
+authors = ["uberfoo"]
+edition = "2018"
+
+[dependencies]
+sha2 = "0.8.0"
+failure = "0.1.5"
+
+[dev-dependencies]
+hex-literal = "0.1.1"
