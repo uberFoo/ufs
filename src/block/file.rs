@@ -171,14 +171,14 @@ mod test {
 
     use super::*;
 
-    const TEST_DIR: &str = "/tmp/test_fs";
+    const TEST_ROOT: &str = "/tmp/ufs_test/";
 
     #[test]
     fn bad_block_number() {
-        const TEST_DIR: &str = "/tmp/bad_block_number";
+        let test_dir = [TEST_ROOT, "bad_block_number"].concat();
         let data = [0x0; BlockSize::FiveTwelve as usize];
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut fs = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 3).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
 
         let block = Block {
             number: 7,
@@ -201,16 +201,16 @@ mod test {
 
     #[test]
     fn block_too_bukoo() {
-        const TEST_DIR: &str = "/tmp/block_too_bukoo";
+        let test_dir = [TEST_ROOT, "block_too_bukoo"].concat();
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut fs = FileStore::new(TEST_DIR, BlockSize::TenTwentyFour, 0x10).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut fs = FileStore::new(&test_dir, BlockSize::TenTwentyFour, 0x10).unwrap();
         assert_eq!(fs.write_block(1, &data).is_err(), true);
     }
 
     #[test]
     fn write_block() {
-        const TEST_DIR: &str = "/tmp/write_block";
+        let test_dir = [TEST_ROOT, "write_block"].concat();
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -218,8 +218,8 @@ mod test {
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
 
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut fs = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 0x10).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
 
         let mut data_block = vec![0x0; BlockSize::FiveTwelve as usize];
         data_block[..data.len()].copy_from_slice(&data[..]);
@@ -233,7 +233,7 @@ mod test {
             "validate checksum"
         );
 
-        let mut path = PathBuf::from(TEST_DIR);
+        let mut path = PathBuf::from(&test_dir);
         path.push("7");
         path.set_extension(BLOCK_EXT);
         assert_eq!(
@@ -245,7 +245,7 @@ mod test {
 
     #[test]
     fn read_block() {
-        const TEST_DIR: &str = "/tmp/read_block";
+        let test_dir = [TEST_ROOT, "read_block"].concat();
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -253,13 +253,13 @@ mod test {
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
 
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let fs = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 0x10).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
 
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
 
-        let mut path = PathBuf::from(TEST_DIR);
+        let mut path = PathBuf::from(&test_dir);
         path.push("0");
         path.set_extension(BLOCK_EXT);
         fs::write(path, &expected_block).unwrap();
@@ -280,7 +280,7 @@ mod test {
 
     #[test]
     fn read_block_bad_checksum() {
-        const TEST_DIR: &str = "/tmp/read_block_bad_checksum";
+        let test_dir = [TEST_ROOT, "read_block_bad_checksum"].concat();
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -288,8 +288,8 @@ mod test {
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
 
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let fs = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 0x10).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
 
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
@@ -297,7 +297,7 @@ mod test {
         // Corrupt the block data
         expected_block[0] = 0;
 
-        let mut path = PathBuf::from(TEST_DIR);
+        let mut path = PathBuf::from(&test_dir);
         path.push("0");
         path.set_extension(BLOCK_EXT);
         fs::write(path, &expected_block).unwrap();
@@ -318,9 +318,9 @@ mod test {
 
     #[test]
     fn construction_sanity() {
-        const TEST_DIR: &str = "/tmp/construction_sanity";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let fs = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 3).unwrap();
+        let test_dir = [TEST_ROOT, "construction_sanity"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
         assert_eq!(
             fs.free_block_count(),
             3,
@@ -340,9 +340,9 @@ mod test {
 
     #[test]
     fn not_enough_free_blocks_error() {
-        const TEST_DIR: &str = "/tmp/not_enough_free_blocks_error";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut bm = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 1).unwrap();
+        let test_dir = [TEST_ROOT, "not_enough_free_blocks_error"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 1).unwrap();
         let blocks = bm.write(&vec![0x0; 513][..]);
         assert_eq!(
             blocks.is_err(),
@@ -353,9 +353,9 @@ mod test {
 
     #[test]
     fn tiny_test() {
-        const TEST_DIR: &str = "/tmp/tiny_test";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut bm = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 1).unwrap();
+        let test_dir = [TEST_ROOT, "tiny_test"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 1).unwrap();
 
         let blocks = bm.write(b"abc").unwrap();
         println!("{:#?}", blocks);
@@ -381,9 +381,9 @@ mod test {
 
     #[test]
     fn write_data_smaller_than_blocksize() {
-        const TEST_DIR: &str = "/tmp/write_data_smaller_than_blocksize";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut bm = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 1).unwrap();
+        let test_dir = [TEST_ROOT, "write_data_smaller_than_blocksize"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 1).unwrap();
 
         let blocks = bm.write(&vec![0x38; 511][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -401,9 +401,9 @@ mod test {
 
     #[test]
     fn write_data_larger_than_blocksize() {
-        const TEST_DIR: &str = "/tmp/write_data_larger_than_blocksize";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut bm = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 2).unwrap();
+        let test_dir = [TEST_ROOT, "write_data_larger_than_blocksize"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
 
         let blocks = bm.write(&vec![0x38; 513][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -420,9 +420,9 @@ mod test {
 
     #[test]
     fn write_data_multiple_of_blocksize() {
-        const TEST_DIR: &str = "/tmp/write_data_multiple_of_blocksize";
-        fs::remove_dir_all(TEST_DIR).unwrap();
-        let mut bm = FileStore::new(TEST_DIR, BlockSize::FiveTwelve, 2).unwrap();
+        let test_dir = [TEST_ROOT, "write_data_multiple_of_blocksize"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
 
         let blocks = bm.write(&vec![0x38; 1024][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
