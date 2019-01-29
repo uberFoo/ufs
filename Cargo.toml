@@ -7,6 +7,8 @@ edition = "2018"
 [dependencies]
 sha2 = "0.8.0"
 failure = "0.1.5"
+ring = "0.14.3"
 
 [dev-dependencies]
-hex-literal = "0.1.1"
+hex-literal = "0.1.2"
+assert_matches = "1.3.0"

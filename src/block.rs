@@ -11,8 +11,11 @@
 //!
 //! Similarly, there are generally a fixed number of blocks in a file system, and that number is
 //! determined like the block size: when the file system is created.
+// mod bundle;
+mod container;
 mod file;
 mod memory;
+crate mod tree;
 
 pub use self::file::FileStore;
 pub use self::memory::MemoryStore;
@@ -25,7 +28,7 @@ use sha2::{Digest, Sha256};
 
 pub type BlockNumber = u64;
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 crate struct BlockChecksum {
     inner: [u8; 32],
 }
@@ -71,7 +74,7 @@ pub enum BlockSize {
     TwentyFortyEight = 2048,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 crate struct Block {
     number: BlockNumber,
     checksum: BlockChecksum,
