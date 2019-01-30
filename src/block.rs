@@ -23,7 +23,7 @@ use core::ops::Deref;
 use std::fmt;
 
 use failure::{format_err, Error};
-use sha2::{Digest, Sha256};
+use ring::digest;
 
 pub type BlockNumber = u64;
 
@@ -34,7 +34,7 @@ pub(crate) struct BlockChecksum {
 
 impl BlockChecksum {
     pub(crate) fn new(data: &[u8]) -> Self {
-        BlockChecksum::from(Sha256::digest(&data[..]).as_slice())
+        BlockChecksum::from(digest::digest(&digest::SHA256, &data[..]).as_ref())
     }
 }
 
@@ -81,26 +81,26 @@ pub(crate) struct Block {
 
 pub(crate) struct BlockListBuilder {
     blocks: Vec<Block>,
-    hasher: Sha256,
+    hasher: digest::Context,
 }
 
 impl BlockListBuilder {
     fn new(size: usize) -> Self {
         BlockListBuilder {
             blocks: Vec::with_capacity(size),
-            hasher: Sha256::new(),
+            hasher: digest::Context::new(&digest::SHA256),
         }
     }
 
     fn add_block(&mut self, block: Block) {
-        self.hasher.input(&block.checksum);
+        self.hasher.update(&block.checksum.as_ref());
         self.blocks.push(block);
     }
 
     fn complete(self) -> BlockList {
         BlockList {
             blocks: self.blocks,
-            checksum: BlockChecksum::from(self.hasher.result().as_slice()),
+            checksum: BlockChecksum::from(self.hasher.finish().as_ref()),
         }
     }
 }
@@ -182,7 +182,7 @@ pub(crate) trait BlockManager: BlockStorage {
     /// The list of blocks that now contain the bytes is returned.  Checksums will be created,
     /// Merkle tree, blah, blah.
     ///
-    /// FIXME
+    /// FIXME: I wonder is using slice::chunks() would be better?
     fn write(&mut self, data: &[u8]) -> Result<BlockList, Error> {
         let block_size = self.block_size() as usize;
         let block_count =
