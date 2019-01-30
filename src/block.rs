@@ -12,10 +12,9 @@
 //! Similarly, there are generally a fixed number of blocks in a file system, and that number is
 //! determined like the block size: when the file system is created.
 // mod bundle;
-mod container;
 mod file;
 mod memory;
-crate mod tree;
+mod tree;
 
 pub use self::file::FileStore;
 pub use self::memory::MemoryStore;
@@ -29,12 +28,12 @@ use sha2::{Digest, Sha256};
 pub type BlockNumber = u64;
 
 #[derive(Copy, Clone, PartialEq)]
-crate struct BlockChecksum {
+pub(crate) struct BlockChecksum {
     inner: [u8; 32],
 }
 
 impl BlockChecksum {
-    crate fn new(data: &[u8]) -> Self {
+    pub(crate) fn new(data: &[u8]) -> Self {
         BlockChecksum::from(Sha256::digest(&data[..]).as_slice())
     }
 }
@@ -75,12 +74,12 @@ pub enum BlockSize {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-crate struct Block {
+pub(crate) struct Block {
     number: BlockNumber,
     checksum: BlockChecksum,
 }
 
-crate struct BlockListBuilder {
+pub(crate) struct BlockListBuilder {
     blocks: Vec<Block>,
     hasher: Sha256,
 }
@@ -107,7 +106,7 @@ impl BlockListBuilder {
 }
 
 #[derive(Debug, PartialEq)]
-crate struct BlockList {
+pub(crate) struct BlockList {
     blocks: Vec<Block>,
     checksum: BlockChecksum,
 }
@@ -125,7 +124,7 @@ impl Deref for BlockList {
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
 /// responsibility for mapping block numbers to _some_ storage location.  Additionally they are
 /// able to read and write data to blocks.
-crate trait BlockStorage {
+pub(crate) trait BlockStorage {
     /// The system-wide Block Size, in bytes.
     ///
     fn block_size(&self) -> BlockSize;
@@ -161,7 +160,7 @@ crate trait BlockStorage {
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
 /// checksums are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
-crate trait BlockManager: BlockStorage {
+pub(crate) trait BlockManager: BlockStorage {
     /// The number of available, un-allocated Blocks.
     ///
     fn free_block_count(&self) -> BlockNumber;

@@ -9,7 +9,7 @@ use ring::{self, digest};
 use crate::block::{Block, BlockChecksum};
 
 #[derive(Debug, PartialEq)]
-crate enum BlockTree {
+pub(crate) enum BlockTree {
     Empty,
     File(Box<InnerNode>),
     // Directory(Box<InnerNode>),
@@ -116,14 +116,14 @@ impl BlockTree {
 }
 
 #[derive(Debug, PartialEq)]
-crate struct InnerNode {
+pub(crate) struct InnerNode {
     left: BlockTree,
     right: BlockTree,
     checksum: BlockChecksum,
 }
 
 #[derive(Debug, PartialEq)]
-crate struct LeafNode {
+pub(crate) struct LeafNode {
     block: Block,
 }
 
