@@ -11,16 +11,27 @@ use crate::block::{Block, BlockChecksum};
 #[derive(Debug, PartialEq)]
 pub(crate) enum BlockTree {
     Empty,
-    File(Box<InnerNode>),
-    // Directory(Box<InnerNode>),
+    Root(Box<InnerNode>),
     Inner(Box<InnerNode>),
     Leaf(Box<LeafNode>),
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct InnerNode {
+    left: BlockTree,
+    right: BlockTree,
+    checksum: BlockChecksum,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct LeafNode {
+    block: Block,
 }
 
 impl BlockTree {
     fn checksum(&self) -> Option<&BlockChecksum> {
         match self {
-            BlockTree::File(n) | BlockTree::Inner(n) => Some(&n.checksum),
+            BlockTree::Root(n) | BlockTree::Inner(n) => Some(&n.checksum),
             BlockTree::Leaf(n) => Some(&n.block.checksum),
             BlockTree::Empty => None,
         }
@@ -33,7 +44,7 @@ impl BlockTree {
     ///  * We are having to clone the blocks because of the way that I'm chunking the blocks.  I
     ///    can either revert to using block_list.into_iter, or just live with it.  In fact, at this
     ///    point, I'm not sure which way it should be.
-    pub fn new_file(block_list: Vec<Block>) -> Self {
+    pub fn new(block_list: Vec<Block>) -> Self {
         let mut inner_nodes = VecDeque::<BlockTree>::new();
 
         // Iterate over the Vec of blocks, pair-wise, in order to build inner nodes.  Those nodes
@@ -102,29 +113,19 @@ impl BlockTree {
             };
 
             // Note that the deque is a stack at this point, otherwise the nodes come out
-            // backwards.
+            // backwards.  IOW, the leaves need to be in the same order as the Vec they arrived in,
+            // which is their allocation order.  To maintain that constraint, the inner nodes, which
+            // contain the leaf nodes, need to remain on the "left".
             inner_nodes.push_front(inner_node);
         }
 
         inner_nodes
             .pop_front()
             .map_or(BlockTree::Empty, |i| match i {
-                BlockTree::Inner(i) => BlockTree::File(Box::new(*i)),
+                BlockTree::Inner(i) => BlockTree::Root(Box::new(*i)),
                 _ => unreachable!(),
             })
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct InnerNode {
-    left: BlockTree,
-    right: BlockTree,
-    checksum: BlockChecksum,
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct LeafNode {
-    block: Block,
 }
 
 #[cfg(test)]
@@ -134,7 +135,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn one_block_file() {
+    fn one_block_tree() {
         let b0 = Block {
             number: 0,
             checksum: BlockChecksum::new(b"block0"),
@@ -142,7 +143,7 @@ mod test {
         let mut block_list = Vec::new();
         block_list.push(b0.clone());
 
-        let tree = BlockTree::new_file(block_list);
+        let tree = BlockTree::new(block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -151,7 +152,7 @@ mod test {
 
         assert_matches!(
             tree,
-            BlockTree::File(node) => {
+            BlockTree::Root(node) => {
                 assert_matches!(
                     node.left,
                     BlockTree::Leaf(node) => {
@@ -165,7 +166,7 @@ mod test {
     }
 
     #[test]
-    fn two_block_file() {
+    fn two_block_tree() {
         let b0 = Block {
             number: 0,
             checksum: BlockChecksum::new(b"block0"),
@@ -178,7 +179,7 @@ mod test {
         block_list.push(b0.clone());
         block_list.push(b1.clone());
 
-        let tree = BlockTree::new_file(block_list);
+        let tree = BlockTree::new(block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -187,7 +188,7 @@ mod test {
 
         assert_matches!(
             tree,
-            BlockTree::File(node) => {
+            BlockTree::Root(node) => {
                 assert_matches!(
                     node.left,
                     BlockTree::Leaf(node) => {
@@ -207,7 +208,7 @@ mod test {
 
     #[test]
     #[allow(clippy::cyclomatic_complexity)]
-    fn five_block_file() {
+    fn five_block_tree() {
         let b0 = Block {
             number: 0,
             checksum: BlockChecksum::new(b"block0"),
@@ -236,7 +237,7 @@ mod test {
         block_list.push(b3.clone());
         block_list.push(b4.clone());
 
-        let tree = BlockTree::new_file(block_list);
+        let tree = BlockTree::new(block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -266,7 +267,7 @@ mod test {
 
         assert_matches!(
             tree,
-            BlockTree::File(node) => {
+            BlockTree::Root(node) => {
                 assert_matches!(
                     node.left,
                     BlockTree::Inner(node) => {
