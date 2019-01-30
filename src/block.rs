@@ -19,6 +19,8 @@ mod tree;
 pub use self::file::FileStore;
 pub use self::memory::MemoryStore;
 
+use self::tree::BlockTree;
+
 use core::ops::Deref;
 use std::fmt;
 
@@ -79,38 +81,22 @@ pub(crate) struct Block {
     checksum: BlockChecksum,
 }
 
-pub(crate) struct BlockListBuilder {
-    blocks: Vec<Block>,
-    hasher: digest::Context,
-}
-
-impl BlockListBuilder {
-    fn new(size: usize) -> Self {
-        BlockListBuilder {
-            blocks: Vec::with_capacity(size),
-            hasher: digest::Context::new(&digest::SHA256),
-        }
-    }
-
-    fn add_block(&mut self, block: Block) {
-        self.hasher.update(&block.checksum.as_ref());
-        self.blocks.push(block);
-    }
-
-    fn complete(self) -> BlockList {
-        BlockList {
-            blocks: self.blocks,
-            checksum: BlockChecksum::from(self.hasher.finish().as_ref()),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub(crate) struct BlockList {
     blocks: Vec<Block>,
-    checksum: BlockChecksum,
+    checksum: BlockTree,
 }
 
+impl BlockList {
+    pub(crate) fn new(blocks: Vec<Block>) -> Self {
+        BlockList {
+            checksum: BlockTree::new(&blocks),
+            blocks,
+        }
+    }
+}
+
+// This impl allows us to treat a BlockList like a Vec, as far as method calls are concerned.
 impl Deref for BlockList {
     type Target = Vec<Block>;
 
@@ -188,7 +174,7 @@ pub(crate) trait BlockManager: BlockStorage {
         let block_count =
             data.len() / block_size + if data.len() % block_size == 0 { 0 } else { 1 };
         if block_count <= self.free_block_count() as usize {
-            let mut blocks = BlockListBuilder::new(block_count);
+            let mut blocks = Vec::with_capacity(block_count);
 
             for i in 0..block_count {
                 // Size checked above.  If we were to rely on the option result here, what would be
@@ -201,10 +187,10 @@ pub(crate) trait BlockManager: BlockStorage {
                 // leaning in the direction of not checking at the beginning.
                 let block = self.write_block(free_block_num, block_data_slice)?;
 
-                blocks.add_block(block);
+                blocks.push(block);
             }
 
-            Ok(blocks.complete())
+            Ok(BlockList::new(blocks))
         } else {
             Err(format_err!(
                 "write would require {} blocks, and only {} are free",

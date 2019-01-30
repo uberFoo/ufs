@@ -25,26 +25,22 @@ pub(crate) struct InnerNode {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct LeafNode {
-    block: Block,
+    checksum: BlockChecksum,
 }
 
 impl BlockTree {
     fn checksum(&self) -> Option<&BlockChecksum> {
         match self {
             BlockTree::Root(n) | BlockTree::Inner(n) => Some(&n.checksum),
-            BlockTree::Leaf(n) => Some(&n.block.checksum),
+            BlockTree::Leaf(n) => Some(&n.checksum),
             BlockTree::Empty => None,
         }
     }
 
     /// FIXME:
     ///  * don't unwrap() checksums below
-    ///  * maybe use a slice of Blocks?
     ///  * should be hardened to second pre-image attack
-    ///  * We are having to clone the blocks because of the way that I'm chunking the blocks.  I
-    ///    can either revert to using block_list.into_iter, or just live with it.  In fact, at this
-    ///    point, I'm not sure which way it should be.
-    pub fn new(block_list: Vec<Block>) -> Self {
+    pub fn new(block_list: &Vec<Block>) -> Self {
         let mut inner_nodes = VecDeque::<BlockTree>::new();
 
         // Iterate over the Vec of blocks, pair-wise, in order to build inner nodes.  Those nodes
@@ -58,10 +54,12 @@ impl BlockTree {
 
                     BlockTree::Inner(Box::new(InnerNode {
                         left: BlockTree::Leaf(Box::new(LeafNode {
-                            block: left.clone(),
+                            // block: left.clone(),
+                            checksum: left.checksum,
                         })),
                         right: BlockTree::Leaf(Box::new(LeafNode {
-                            block: right.clone(),
+                            // block: right.clone(),
+                            checksum: right.checksum,
                         })),
                         checksum: BlockChecksum::from(ctx.finish().as_ref()),
                     }))
@@ -73,7 +71,8 @@ impl BlockTree {
 
                     BlockTree::Inner(Box::new(InnerNode {
                         left: BlockTree::Leaf(Box::new(LeafNode {
-                            block: left.clone(),
+                            // block: left.clone(),
+                            checksum: left.checksum,
                         })),
                         right: BlockTree::Empty,
                         checksum: BlockChecksum::from(ctx.finish().as_ref()),
@@ -89,6 +88,8 @@ impl BlockTree {
             let inner_node = match (inner_nodes.pop_front(), inner_nodes.pop_front()) {
                 (Some(left), Some(right)) => {
                     let mut ctx = digest::Context::new(&digest::SHA256);
+                    // ctx.update(left.checksum().unwrap().as_ref());
+                    // ctx.update(right.checksum().unwrap().as_ref());
                     ctx.update(left.checksum().unwrap().as_ref());
                     ctx.update(right.checksum().unwrap().as_ref());
 
@@ -143,7 +144,7 @@ mod test {
         let mut block_list = Vec::new();
         block_list.push(b0.clone());
 
-        let tree = BlockTree::new(block_list);
+        let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -156,7 +157,7 @@ mod test {
                 assert_matches!(
                     node.left,
                     BlockTree::Leaf(node) => {
-                        assert_eq!(node.block, b0);
+                        assert_eq!(node.checksum, b0.checksum);
                     }
                 );
                 assert_eq!(node.right, BlockTree::Empty);
@@ -179,7 +180,7 @@ mod test {
         block_list.push(b0.clone());
         block_list.push(b1.clone());
 
-        let tree = BlockTree::new(block_list);
+        let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -192,13 +193,13 @@ mod test {
                 assert_matches!(
                     node.left,
                     BlockTree::Leaf(node) => {
-                        assert_eq!(node.block, b0);
+                        assert_eq!(node.checksum, b0.checksum);
                     }
                 );
                 assert_matches!(
                     node.right,
                     BlockTree::Leaf(node) => {
-                        assert_eq!(node.block, b1);
+                        assert_eq!(node.checksum, b1.checksum);
                     }
                 );
                 assert_eq!(node.checksum.as_ref(), ctx.finish().as_ref());
@@ -237,7 +238,7 @@ mod test {
         block_list.push(b3.clone());
         block_list.push(b4.clone());
 
-        let tree = BlockTree::new(block_list);
+        let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);
 
         let mut ctx = digest::Context::new(&digest::SHA256);
@@ -277,13 +278,13 @@ mod test {
                                 assert_matches!(
                                     node.left,
                                     BlockTree::Leaf(node) => {
-                                        assert_eq!(node.block, b0);
+                                        assert_eq!(node.checksum, b0.checksum);
                                     }
                                 );
                                 assert_matches!(
                                     node.right,
                                     BlockTree::Leaf(node) => {
-                                        assert_eq!(node.block, b1);
+                                        assert_eq!(node.checksum, b1.checksum);
                                     }
                                 );
                                 assert_eq!(node.checksum.as_ref(), b01.as_ref());
@@ -295,13 +296,13 @@ mod test {
                                 assert_matches!(
                                     node.left,
                                     BlockTree::Leaf(node) => {
-                                        assert_eq!(node.block, b2);
+                                        assert_eq!(node.checksum, b2.checksum);
                                     }
                                 );
                                 assert_matches!(
                                     node.right,
                                     BlockTree::Leaf(node) => {
-                                        assert_eq!(node.block, b3);
+                                        assert_eq!(node.checksum, b3.checksum);
                                     }
                                 );
                                 assert_eq!(node.checksum.as_ref(), b23.as_ref());
@@ -317,7 +318,7 @@ mod test {
                         assert_matches!(
                             node.left,
                             BlockTree::Leaf(node) => {
-                                assert_eq!(node.block, b4);
+                                assert_eq!(node.checksum, b4.checksum);
                             }
                         );
                         assert_matches!(
