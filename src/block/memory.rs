@@ -5,18 +5,18 @@ use std::collections::VecDeque;
 
 use failure::{format_err, Error};
 
-use crate::block::{Block, BlockHash, BlockManager, BlockNumber, BlockSize, BlockStorage};
+use crate::block::{Block, BlockCardinality, BlockHash, BlockManager, BlockSize, BlockStorage};
 
 #[derive(Debug)]
 pub struct MemoryStore {
     block_size: BlockSize,
-    block_count: BlockNumber,
-    free_blocks: VecDeque<BlockNumber>,
+    block_count: BlockCardinality,
+    free_blocks: VecDeque<BlockCardinality>,
     blocks: Vec<Vec<u8>>,
 }
 
 impl MemoryStore {
-    pub fn new(size: BlockSize, count: BlockNumber) -> Self {
+    pub fn new(size: BlockSize, count: BlockCardinality) -> Self {
         MemoryStore {
             block_size: size,
             block_count: count,
@@ -29,7 +29,7 @@ impl MemoryStore {
 }
 
 impl BlockStorage for MemoryStore {
-    fn block_count(&self) -> BlockNumber {
+    fn block_count(&self) -> BlockCardinality {
         self.block_count
     }
 
@@ -37,7 +37,7 @@ impl BlockStorage for MemoryStore {
         self.block_size
     }
 
-    fn write_block(&mut self, bn: BlockNumber, data: &[u8]) -> Result<Block, Error> {
+    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error> {
         if data.len() > self.block_size as usize {
             return Err(format_err!("data is larger than block size"));
         }
@@ -78,15 +78,15 @@ impl BlockStorage for MemoryStore {
 }
 
 impl BlockManager for MemoryStore {
-    fn free_block_count(&self) -> BlockNumber {
-        self.free_blocks.len() as BlockNumber
+    fn free_block_count(&self) -> BlockCardinality {
+        self.free_blocks.len() as BlockCardinality
     }
 
-    fn get_free_block(&mut self) -> Option<BlockNumber> {
+    fn get_free_block(&mut self) -> Option<BlockCardinality> {
         self.free_blocks.pop_front()
     }
 
-    fn recycle_block(&mut self, block: BlockNumber) {
+    fn recycle_block(&mut self, block: BlockCardinality) {
         self.free_blocks.push_back(block);
     }
 }

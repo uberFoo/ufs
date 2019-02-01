@@ -13,56 +13,21 @@
 //! determined like the block size: when the file system is created.
 // mod bundle;
 mod file;
+mod hash;
 mod memory;
 mod tree;
 
-pub use self::file::FileStore;
-pub use self::memory::MemoryStore;
+pub use self::{file::FileStore, memory::MemoryStore};
+
+use self::hash::BlockHash;
 
 use self::tree::BlockTree;
 
 use core::ops::Deref;
-use std::fmt;
 
 use failure::{format_err, Error};
-use ring::digest;
 
-pub type BlockNumber = u64;
-
-#[derive(Copy, Clone, PartialEq)]
-pub(crate) struct BlockHash {
-    inner: [u8; 32],
-}
-
-impl BlockHash {
-    pub(crate) fn new(data: &[u8]) -> Self {
-        BlockHash::from(digest::digest(&digest::SHA256, &data[..]).as_ref())
-    }
-}
-
-impl AsRef<[u8]> for BlockHash {
-    fn as_ref(&self) -> &[u8] {
-        &self.inner
-    }
-}
-
-impl From<&[u8]> for BlockHash {
-    fn from(data: &[u8]) -> Self {
-        let mut hash: [u8; 32] = [0; 32];
-        hash.copy_from_slice(data);
-        BlockHash { inner: hash }
-    }
-}
-
-impl fmt::Debug for BlockHash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for i in &self.inner {
-            write!(f, "{:02x}", i)?;
-        }
-        // write!(f, "{:?}", self.0);
-        Ok(())
-    }
-}
+pub type BlockCardinality = u64;
 
 /// Available Block Sizes
 ///
@@ -77,7 +42,7 @@ pub enum BlockSize {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Block {
-    number: BlockNumber,
+    number: BlockCardinality,
     hash: BlockHash,
 }
 
@@ -105,6 +70,13 @@ impl Deref for BlockList {
     }
 }
 
+pub(crate) struct UberBlock {
+    next_block_number: BlockCardinality,
+    previous_block_hash: BlockHash,
+    hash_tree: BlockTree,
+    block: Block,
+}
+
 /// Persistent Storage for Blocks
 ///
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
@@ -117,13 +89,13 @@ pub(crate) trait BlockStorage {
 
     /// The number of Blocks in this file System
     ///
-    fn block_count(&self) -> BlockNumber;
+    fn block_count(&self) -> BlockCardinality;
 
     /// Storage Initialization
     ///
     /// This method is meant to be invoked once, when a new block storage device is created.  The
     /// method needs only the block size, and the number of them.
-    // fn reserve(&mut self, count: BlockNumber, size: BlockSize) -> Result<(), Error>;
+    // fn reserve(&mut self, count: BlockCardinality, size: BlockSize) -> Result<(), Error>;
     // fn reserve_blocks(&mut self) -> Result<(), Error>;
 
     /// Write a Block
@@ -131,7 +103,7 @@ pub(crate) trait BlockStorage {
     /// Passing a block number, and a slice of bytes, this method will copy the bytes the to
     /// specified block.  If the slice is smaller than the block size, zeroes will be used to pad
     /// the missing bytes.
-    fn write_block(&mut self, bn: BlockNumber, data: &[u8]) -> Result<Block, Error>;
+    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error>;
 
     /// Read a Block
     ///
@@ -148,18 +120,18 @@ pub(crate) trait BlockStorage {
 pub(crate) trait BlockManager: BlockStorage {
     /// The number of available, un-allocated Blocks.
     ///
-    fn free_block_count(&self) -> BlockNumber;
+    fn free_block_count(&self) -> BlockCardinality;
 
     /// Request a Block
     ///
     /// The implementor maintains a pool of available blocks, and if there is one available, this
     /// method will return it.
-    fn get_free_block(&mut self) -> Option<BlockNumber>;
+    fn get_free_block(&mut self) -> Option<BlockCardinality>;
 
     /// Recycle a Block
     ///
     /// The block is no longer being used, and may be returned to the free block pool.
-    fn recycle_block(&mut self, block: BlockNumber);
+    fn recycle_block(&mut self, block: BlockCardinality);
 
     /// Write Some Bytes
     ///

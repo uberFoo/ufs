@@ -14,7 +14,7 @@
 //! * Option for sparse blocks?
 use failure::{format_err, Error};
 
-use crate::block::{Block, BlockHash, BlockManager, BlockNumber, BlockSize, BlockStorage};
+use crate::block::{Block, BlockCardinality, BlockHash, BlockManager, BlockSize, BlockStorage};
 
 use std::{
     collections::VecDeque,
@@ -29,8 +29,8 @@ const BLOCK_EXT: &str = "ufsb";
 #[derive(Debug)]
 pub struct FileStore {
     block_size: BlockSize,
-    block_count: BlockNumber,
-    free_blocks: VecDeque<BlockNumber>,
+    block_count: BlockCardinality,
+    free_blocks: VecDeque<BlockCardinality>,
     root_path: PathBuf,
 }
 
@@ -40,7 +40,7 @@ impl FileStore {
     pub fn new<P: AsRef<Path>>(
         path: P,
         size: BlockSize,
-        count: BlockNumber,
+        count: BlockCardinality,
     ) -> Result<Self, Error> {
         // let p = path.as_ref();
         let root_path: PathBuf = path.as_ref().into();
@@ -54,11 +54,11 @@ impl FileStore {
         })
     }
 
-    fn init(path: &PathBuf, size: BlockSize, count: BlockNumber) -> Result<(), Error> {
+    fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
         /// Little function that calls itself to create the directories in which we store our
         /// blocks.  Note that it currently makes more directories than strictly necessary.  I just
         /// don't feel like adding (figuring out really) the additional logic to minimize things.
-        fn make_dirs(root: &PathBuf, count: BlockNumber) -> io::Result<()> {
+        fn make_dirs(root: &PathBuf, count: BlockCardinality) -> io::Result<()> {
             if count > 0 {
                 let count = count - 1;
                 for i in 0x0..0x10 {
@@ -96,8 +96,8 @@ impl FileStore {
         Ok(())
     }
 
-    /// It'd be cool to impl From<BlockNumber> for PathBuf
-    fn path_for_block(root: &PathBuf, mut block: BlockNumber) -> PathBuf {
+    /// It'd be cool to impl From<BlockCardinality> for PathBuf
+    fn path_for_block(root: &PathBuf, mut block: BlockCardinality) -> PathBuf {
         let mut path = root.clone();
         while block > 0xf {
             let nibble = block & 0xf;
@@ -112,7 +112,7 @@ impl FileStore {
 }
 
 impl BlockStorage for FileStore {
-    fn block_count(&self) -> BlockNumber {
+    fn block_count(&self) -> BlockCardinality {
         self.block_count
     }
 
@@ -120,7 +120,7 @@ impl BlockStorage for FileStore {
         self.block_size
     }
 
-    fn write_block(&mut self, bn: BlockNumber, data: &[u8]) -> Result<Block, Error> {
+    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error> {
         let mut zeroes = [0u8; BlockSize::TwentyFortyEight as usize];
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -164,15 +164,15 @@ impl BlockStorage for FileStore {
 }
 
 impl BlockManager for FileStore {
-    fn free_block_count(&self) -> BlockNumber {
-        self.free_blocks.len() as BlockNumber
+    fn free_block_count(&self) -> BlockCardinality {
+        self.free_blocks.len() as BlockCardinality
     }
 
-    fn get_free_block(&mut self) -> Option<BlockNumber> {
+    fn get_free_block(&mut self) -> Option<BlockCardinality> {
         self.free_blocks.pop_front()
     }
 
-    fn recycle_block(&mut self, block: BlockNumber) {
+    fn recycle_block(&mut self, block: BlockCardinality) {
         self.free_blocks.push_back(block);
     }
 }
