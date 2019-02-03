@@ -7,6 +7,12 @@ use failure::{format_err, Error};
 
 use crate::block::{Block, BlockCardinality, BlockHash, BlockManager, BlockSize, BlockStorage};
 
+/// An in-memory [BlockStorage]
+///
+/// This is a transient block storage implementation.  It's certainly useful for testing, and may
+/// turn out to be so otherwise.  Perhaps as a fast cache, or something, in the future.  Especially
+/// if we implement a means of converting between different block storage implementations, which is
+/// something I think we'll want.  Especially given the scenario of mounting remote file systems.
 #[derive(Debug)]
 pub struct MemoryStore {
     block_size: BlockSize,
@@ -16,6 +22,9 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
+    /// Create a new MemoryStore
+    ///
+    /// Return a new in-memory [BlockStorage] given a [BlockSize] and the number of blocks.
     pub fn new(size: BlockSize, count: BlockCardinality) -> Self {
         MemoryStore {
             block_size: size,

@@ -33,10 +33,20 @@ pub type BlockCardinality = u64;
 ///
 /// Why not let someone choose a weird block size?  This isn't the Wild West!  Constraints exist so
 /// that we can work with physical media.
+///
+/// FIXME: I'm not sure allowing an option is the best idea.  I think that there may be an optimal
+/// block size, given this file system's unique characteristics.  We can always map a block across
+/// multiple physical sectors.
 #[derive(Debug, Copy, Clone)]
 pub enum BlockSize {
+    /// 512 byte block size
+    ///
     FiveTwelve = 512,
+    /// 1024 byte block size
+    ///
     TenTwentyFour = 1024,
+    /// 2048 byte block size
+    ///
     TwentyFortyEight = 2048,
 }
 

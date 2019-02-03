@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1.5"
-ring = "0.14.3"
+ring = "0.14.4"
 
 [dev-dependencies]
 hex-literal = "0.1.2"
