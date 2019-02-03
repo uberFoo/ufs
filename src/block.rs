@@ -80,13 +80,6 @@ impl Deref for BlockList {
     }
 }
 
-pub(crate) struct UberBlock {
-    next_block_number: BlockCardinality,
-    previous_block_hash: BlockHash,
-    hash_tree: BlockTree,
-    block: Block,
-}
-
 /// Persistent Storage for Blocks
 ///
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
@@ -150,7 +143,11 @@ pub(crate) trait BlockManager: BlockStorage {
     /// Merkle tree, blah, blah.
     ///
     /// FIXME: I wonder is using slice::chunks() would be better?
-    fn write(&mut self, data: &[u8]) -> Result<BlockList, Error> {
+    fn write<T>(&mut self, data: T) -> Result<BlockList, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        let data = data.as_ref();
         let block_size = self.block_size() as usize;
         let block_count =
             data.len() / block_size + if data.len() % block_size == 0 { 0 } else { 1 };
@@ -196,12 +193,4 @@ pub(crate) trait BlockManager: BlockStorage {
 
         Ok(data)
     }
-}
-
-#[cfg(test)]
-mod test {
-    use hex_literal::{hex, hex_impl};
-
-    use super::*;
-
 }
