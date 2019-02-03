@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use failure::{format_err, Error};
 
-use crate::block::{Block, BlockChecksum, BlockManager, BlockNumber, BlockSize, BlockStorage};
+use crate::block::{Block, BlockHash, BlockManager, BlockNumber, BlockSize, BlockStorage};
 
 #[derive(Debug)]
 pub struct MemoryStore {
@@ -52,7 +52,7 @@ impl BlockStorage for MemoryStore {
 
             Ok(Block {
                 number: bn,
-                checksum: BlockChecksum::new(&memory),
+                hash: BlockHash::new(&memory),
             })
         } else {
             Err(format_err!("request for bogus block {}", bn))
@@ -61,14 +61,14 @@ impl BlockStorage for MemoryStore {
 
     fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error> {
         if let Some(memory) = self.blocks.get(block.number as usize) {
-            let checksum = BlockChecksum::new(&memory);
-            if block.checksum == checksum {
+            let hash = BlockHash::new(&memory);
+            if block.hash == hash {
                 Ok(memory.clone())
             } else {
                 Err(format_err!(
-                    "checksum mismatch: expected {:?}, but calculated {:?}",
-                    block.checksum,
-                    checksum
+                    "hash mismatch: expected {:?}, but calculated {:?}",
+                    block.hash,
+                    hash
                 ))
             }
         } else {
@@ -104,7 +104,7 @@ mod test {
 
         let block = Block {
             number: 7,
-            checksum: BlockChecksum::from(
+            hash: BlockHash::from(
                 &hex!("62c2eacaf26c12f80eeb0b5b849c8805e0295db339dd793620190680799bec95")[..],
             ),
         };
@@ -144,9 +144,9 @@ mod test {
 
         assert_eq!(block.number, 1);
         assert_eq!(
-            block.checksum.as_ref(),
+            block.hash.as_ref(),
             hex!("62c2eacaf26c12f80eeb0b5b849c8805e0295db339dd793620190680799bec95"),
-            "validate checksum"
+            "validate hash"
         );
 
         assert_eq!(
@@ -172,7 +172,7 @@ mod test {
 
         let block = Block {
             number: 0,
-            checksum: BlockChecksum::from(
+            hash: BlockHash::from(
                 &hex!("62c2eacaf26c12f80eeb0b5b849c8805e0295db339dd793620190680799bec95")[..],
             ),
         };
@@ -185,7 +185,7 @@ mod test {
     }
 
     #[test]
-    fn read_block_bad_checksum() {
+    fn read_block_bad_hash() {
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -204,7 +204,7 @@ mod test {
 
         let block = Block {
             number: 0,
-            checksum: BlockChecksum::from(
+            hash: BlockHash::from(
                 &hex!("62c2eacaf26c12f80eeb0b5b849c8805e0295db339dd793620190680799bec95")[..],
             ),
         };
@@ -214,7 +214,7 @@ mod test {
         assert_eq!(
             ms.read_block(&block).is_err(),
             true,
-            "detect a checksum mismatch"
+            "detect a hash mismatch"
         );
     }
 
@@ -258,9 +258,9 @@ mod test {
         assert_eq!(bm.free_block_count(), 0);
         assert_eq!(blocks.len(), 1);
         assert_eq!(
-            blocks[0].checksum.as_ref(),
+            blocks[0].hash.as_ref(),
             hex!("b064446561934ed673ed230b6c0e68ebde7d574bf81288b00ac88ff6e518ade4"),
-            "validate checksum"
+            "validate hash"
         );
 
         let mut expected = vec![0x0; 512];

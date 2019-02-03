@@ -30,31 +30,31 @@ use ring::digest;
 pub type BlockNumber = u64;
 
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) struct BlockChecksum {
+pub(crate) struct BlockHash {
     inner: [u8; 32],
 }
 
-impl BlockChecksum {
+impl BlockHash {
     pub(crate) fn new(data: &[u8]) -> Self {
-        BlockChecksum::from(digest::digest(&digest::SHA256, &data[..]).as_ref())
+        BlockHash::from(digest::digest(&digest::SHA256, &data[..]).as_ref())
     }
 }
 
-impl AsRef<[u8]> for BlockChecksum {
+impl AsRef<[u8]> for BlockHash {
     fn as_ref(&self) -> &[u8] {
         &self.inner
     }
 }
 
-impl From<&[u8]> for BlockChecksum {
+impl From<&[u8]> for BlockHash {
     fn from(data: &[u8]) -> Self {
-        let mut checksum: [u8; 32] = [0; 32];
-        checksum.copy_from_slice(data);
-        BlockChecksum { inner: checksum }
+        let mut hash: [u8; 32] = [0; 32];
+        hash.copy_from_slice(data);
+        BlockHash { inner: hash }
     }
 }
 
-impl fmt::Debug for BlockChecksum {
+impl fmt::Debug for BlockHash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for i in &self.inner {
             write!(f, "{:02x}", i)?;
@@ -78,19 +78,19 @@ pub enum BlockSize {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Block {
     number: BlockNumber,
-    checksum: BlockChecksum,
+    hash: BlockHash,
 }
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct BlockList {
     blocks: Vec<Block>,
-    checksum: BlockTree,
+    hash_tree: BlockTree,
 }
 
 impl BlockList {
     pub(crate) fn new(blocks: Vec<Block>) -> Self {
         BlockList {
-            checksum: BlockTree::new(&blocks),
+            hash_tree: BlockTree::new(&blocks),
             blocks,
         }
     }
@@ -131,7 +131,6 @@ pub(crate) trait BlockStorage {
     /// Passing a block number, and a slice of bytes, this method will copy the bytes the to
     /// specified block.  If the slice is smaller than the block size, zeroes will be used to pad
     /// the missing bytes.
-    /// The checksum of the written block is returned.
     fn write_block(&mut self, bn: BlockNumber, data: &[u8]) -> Result<Block, Error>;
 
     /// Read a Block
@@ -144,7 +143,7 @@ pub(crate) trait BlockStorage {
 ///
 /// This sits atop a BlockStorage and provides higher-level operations over blocks.  For example,
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
-/// checksums are calculated when writing, and validated when reading, a block.  Data written across
+/// hashes are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
 pub(crate) trait BlockManager: BlockStorage {
     /// The number of available, un-allocated Blocks.
@@ -165,7 +164,7 @@ pub(crate) trait BlockManager: BlockStorage {
     /// Write Some Bytes
     ///
     /// The bytes are written to the minimum number of blocks required to store the furnished slice.
-    /// The list of blocks that now contain the bytes is returned.  Checksums will be created,
+    /// The list of blocks that now contain the bytes is returned.  Hashes will be created,
     /// Merkle tree, blah, blah.
     ///
     /// FIXME: I wonder is using slice::chunks() would be better?
@@ -202,7 +201,7 @@ pub(crate) trait BlockManager: BlockStorage {
 
     /// Read Some Bytes
     ///
-    /// Given a [BlockList], the bytes previously written to the list will be returned. Checksums
+    /// Given a [BlockList], the bytes previously written to the list will be returned. Hashes
     /// will be checked, blah, blah, blah.
     ///
     /// FIXME
