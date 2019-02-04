@@ -5,10 +5,11 @@
 use std::collections::VecDeque;
 
 use ring::{self, digest};
+use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{Block, BlockHash};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum BlockTree {
     Empty,
     Root(Box<InnerNode>),
@@ -16,14 +17,14 @@ pub(crate) enum BlockTree {
     Leaf(Box<LeafNode>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct InnerNode {
     left: BlockTree,
     right: BlockTree,
     hash: BlockHash,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct LeafNode {
     hash: BlockHash,
 }
@@ -141,8 +142,7 @@ mod test {
             number: 0,
             hash: BlockHash::new(b"block0"),
         };
-        let mut block_list = Vec::new();
-        block_list.push(b0.clone());
+        let block_list = vec![b0.clone()];
 
         let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);
@@ -176,9 +176,7 @@ mod test {
             number: 1,
             hash: BlockHash::new(b"block1"),
         };
-        let mut block_list = Vec::new();
-        block_list.push(b0.clone());
-        block_list.push(b1.clone());
+        let block_list = vec![b0.clone(), b1.clone()];
 
         let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);
@@ -231,12 +229,7 @@ mod test {
             hash: BlockHash::new(b"block4"),
         };
 
-        let mut block_list = Vec::new();
-        block_list.push(b0.clone());
-        block_list.push(b1.clone());
-        block_list.push(b2.clone());
-        block_list.push(b3.clone());
-        block_list.push(b4.clone());
+        let block_list = vec![b0.clone(), b1.clone(), b2.clone(), b3.clone(), b4.clone()];
 
         let tree = BlockTree::new(&block_list);
         println!("tree: {:#?}", tree);

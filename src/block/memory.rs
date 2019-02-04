@@ -5,7 +5,10 @@ use std::collections::VecDeque;
 
 use failure::{format_err, Error};
 
-use crate::block::{Block, BlockCardinality, BlockHash, BlockManager, BlockSize, BlockStorage};
+use crate::block::{
+    Block, BlockCardinality, BlockHash, BlockList, BlockManager, BlockMetadata, BlockSize,
+    BlockStorage,
+};
 
 /// An in-memory [BlockStorage]
 ///
@@ -25,11 +28,13 @@ impl MemoryStore {
     /// Create a new MemoryStore
     ///
     /// Return a new in-memory [BlockStorage] given a [BlockSize] and the number of blocks.
+    ///
+    /// Note that block 0 is reserved to store block-level metadata.
     pub fn new(size: BlockSize, count: BlockCardinality) -> Self {
         MemoryStore {
             block_size: size,
             block_count: count,
-            free_blocks: (0..count).collect(),
+            free_blocks: (1..count).collect(),
             blocks: (0..count)
                 .map(|_| Vec::with_capacity(size as usize))
                 .collect(),
@@ -46,7 +51,11 @@ impl BlockStorage for MemoryStore {
         self.block_size
     }
 
-    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error> {
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<Block, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        let data = data.as_ref();
         if data.len() > self.block_size as usize {
             return Err(format_err!("data is larger than block size"));
         }
@@ -68,25 +77,41 @@ impl BlockStorage for MemoryStore {
         }
     }
 
-    fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error> {
-        if let Some(memory) = self.blocks.get(block.number as usize) {
-            let hash = BlockHash::new(&memory);
-            if block.hash == hash {
-                Ok(memory.clone())
-            } else {
-                Err(format_err!(
-                    "hash mismatch: expected {:?}, but calculated {:?}",
-                    block.hash,
-                    hash
-                ))
-            }
+    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
+        if let Some(memory) = self.blocks.get(bn as usize) {
+            Ok(memory.clone())
         } else {
-            Err(format_err!("request for bogus block {}", block.number))
+            Err(format_err!("request for bogus block {}", bn))
         }
     }
+
+    // fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error> {
+    //     if let Some(memory) = self.blocks.get(block.number as usize) {
+    //         let hash = BlockHash::new(&memory);
+    //         if block.hash == hash {
+    //             Ok(memory.clone())
+    //         } else {
+    //             Err(format_err!(
+    //                 "hash mismatch: expected {:?}, but calculated {:?}",
+    //                 block.hash,
+    //                 hash
+    //             ))
+    //         }
+    //     } else {
+    //         Err(format_err!("request for bogus block {}", block.number))
+    //     }
+    // }
 }
 
 impl BlockManager for MemoryStore {
+    fn metadata(&self) -> BlockMetadata {
+        BlockMetadata {
+            size: self.block_size,
+            count: self.block_count,
+            next_free_block: self.free_blocks.get(0).cloned(),
+        }
+    }
+
     fn free_block_count(&self) -> BlockCardinality {
         self.free_blocks.len() as BlockCardinality
     }
@@ -119,12 +144,12 @@ mod test {
         };
 
         assert_eq!(
-            ms.read_block(&block).is_err(),
+            ms.read(&BlockList::new(vec![block])).is_err(),
             true,
             "read should fail with block number out of range"
         );
         assert_eq!(
-            ms.write_block(7, &data).is_err(),
+            ms.write_block(7, &data[..]).is_err(),
             true,
             "write should fail with block number out of range"
         );
@@ -134,7 +159,7 @@ mod test {
     fn block_too_bukoo() {
         let data = [0x0; BlockSize::FiveTwelve as usize + 1];
         let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
-        assert_eq!(ms.write_block(1, &data).is_err(), true);
+        assert_eq!(ms.write_block(1, &data[..]).is_err(), true);
     }
 
     #[test]
@@ -187,7 +212,7 @@ mod test {
         };
 
         assert_eq!(
-            ms.read_block(&block).unwrap(),
+            ms.read(&BlockList::new(vec![block])).unwrap(),
             expected_block,
             "write directly to block, and compare via the API"
         );
@@ -221,7 +246,7 @@ mod test {
         println!("block {:?}", &block);
 
         assert_eq!(
-            ms.read_block(&block).is_err(),
+            ms.read(&BlockList::new(vec![block])).is_err(),
             true,
             "detect a hash mismatch"
         );
@@ -229,28 +254,28 @@ mod test {
 
     #[test]
     fn construction_sanity() {
-        let bm = MemoryStore::new(BlockSize::FiveTwelve, 3);
+        let ms = MemoryStore::new(BlockSize::FiveTwelve, 4);
         assert_eq!(
-            bm.free_block_count(),
+            ms.free_block_count(),
             3,
             "verify that there are three free blocks"
         );
         assert_eq!(
-            bm.block_size() as usize,
+            ms.block_size() as usize,
             512,
             "verify block size as 512 bytes"
         );
         assert_eq!(
-            bm.block_count(),
-            3,
-            "verify that there are three blocks total"
+            ms.block_count(),
+            4,
+            "verify that there are four blocks total"
         );
     }
 
     #[test]
     fn not_enough_free_blocks_error() {
-        let mut bm = MemoryStore::new(BlockSize::FiveTwelve, 1);
-        let blocks = bm.write(&vec![0x0; 513][..]);
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 1);
+        let blocks = ms.write(&vec![0x0; 513][..]);
         assert_eq!(
             blocks.is_err(),
             true,
@@ -260,11 +285,11 @@ mod test {
 
     #[test]
     fn tiny_test() {
-        let mut bm = MemoryStore::new(BlockSize::FiveTwelve, 1);
-        let blocks = bm.write(b"abc").unwrap();
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 2);
+        let blocks = ms.write(b"abc").unwrap();
         println!("{:#?}", blocks);
 
-        assert_eq!(bm.free_block_count(), 0);
+        assert_eq!(ms.free_block_count(), 0);
         assert_eq!(blocks.len(), 1);
         assert_eq!(
             blocks[0].hash.as_ref(),
@@ -277,7 +302,7 @@ mod test {
         expected[1] = 98;
         expected[2] = 99;
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            ms.read(&blocks).unwrap(),
             &expected[..],
             "compare stored data with expected values"
         );
@@ -285,31 +310,31 @@ mod test {
 
     #[test]
     fn write_data_smaller_than_blocksize() {
-        let mut bm = MemoryStore::new(BlockSize::FiveTwelve, 1);
-        let blocks = bm.write(&vec![0x38; 511][..]).unwrap();
-        assert_eq!(bm.free_block_count(), 0);
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 2);
+        let blocks = ms.write(&vec![0x38; 511][..]).unwrap();
+        assert_eq!(ms.free_block_count(), 0);
         assert_eq!(blocks.len(), 1);
         let mut expected = vec![0x38; 511];
         expected.push(0x0);
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            ms.read(&blocks).unwrap(),
             &expected[..],
             "compare stored data with expected values"
         );
         println!("{:#?}", blocks);
-        println!("{:?}", bm.read(&blocks));
+        println!("{:?}", ms.read(&blocks));
     }
 
     #[test]
     fn write_data_larger_than_blocksize() {
-        let mut bm = MemoryStore::new(BlockSize::FiveTwelve, 2);
-        let blocks = bm.write(&vec![0x38; 513][..]).unwrap();
-        assert_eq!(bm.free_block_count(), 0);
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
+        let blocks = ms.write(&vec![0x38; 513][..]).unwrap();
+        assert_eq!(ms.free_block_count(), 0);
         assert_eq!(blocks.len(), 2);
         let mut expected = vec![0x0; 1024];
         expected[..513].copy_from_slice(&vec![0x38; 513][..]);
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            ms.read(&blocks).unwrap(),
             &expected[..],
             "compare stored data with expected values"
         );
@@ -318,17 +343,33 @@ mod test {
 
     #[test]
     fn write_data_multiple_of_blocksize() {
-        let mut bm = MemoryStore::new(BlockSize::FiveTwelve, 2);
-        let blocks = bm.write(&vec![0x38; 1024][..]).unwrap();
-        assert_eq!(bm.free_block_count(), 0);
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
+        let blocks = ms.write(&vec![0x38; 1024][..]).unwrap();
+        assert_eq!(ms.free_block_count(), 0);
         assert_eq!(blocks.len(), 2);
         // let mut expected = vec![0x0; 1024];
         // expected[..513].copy_from_slice(&vec![0x38; 513][..]);
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            ms.read(&blocks).unwrap(),
             &vec![0x38; 1024][..],
             "compare stored data with expected values"
         );
         println!("{:#?}", blocks);
+    }
+
+    #[test]
+    fn metadata() {
+        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 4);
+        ms.serialize();
+
+        assert_eq!(
+            ms.metadata(),
+            BlockMetadata {
+                size: BlockSize::FiveTwelve,
+                count: 4,
+                next_free_block: Some(1)
+            },
+            "validate metadata"
+        );
     }
 }

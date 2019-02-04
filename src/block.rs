@@ -17,15 +17,16 @@ mod hash;
 mod memory;
 mod tree;
 
+use bincode;
+use core::ops::Deref;
+use serde_derive::{Deserialize, Serialize};
+
+use failure::{format_err, Error};
+
 pub use self::{file::FileStore, memory::MemoryStore};
 
 use self::hash::BlockHash;
-
 use self::tree::BlockTree;
-
-use core::ops::Deref;
-
-use failure::{format_err, Error};
 
 pub type BlockCardinality = u64;
 
@@ -37,7 +38,7 @@ pub type BlockCardinality = u64;
 /// FIXME: I'm not sure allowing an option is the best idea.  I think that there may be an optimal
 /// block size, given this file system's unique characteristics.  We can always map a block across
 /// multiple physical sectors.
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum BlockSize {
     /// 512 byte block size
     ///
@@ -106,12 +107,72 @@ pub(crate) trait BlockStorage {
     /// Passing a block number, and a slice of bytes, this method will copy the bytes the to
     /// specified block.  If the slice is smaller than the block size, zeroes will be used to pad
     /// the missing bytes.
-    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error>;
+    ///
+    /// FIXME: Now that I've moved hash verification to `BlockManager::read`, I think that I should
+    /// look into moving the hash creation to `BlockManager::write`.
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<Block, Error>
+    where
+        T: AsRef<[u8]>;
 
     /// Read a Block
     ///
     /// Return a fresh copy of the bytes contained in the specified block, as a `Vec<u8>`.
-    fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error>;
+    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error>;
+    // fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error>;
+}
+
+/// Block-level File System Metadata
+///
+/// This is the information necessary to bootstrap the block management subsystem from storage.
+/// I plan on elaborating this quite extensively in the future. For now however, I'm applying
+/// Occam's Razor.  Minimally, we need to know how many blocks there are in the file system, and we
+/// need to know the block size.
+///
+/// Additionally, for now, I think it easiest to allocate the total number of blocks necessary to
+/// store the metadata at file system creation.  Eventually UberBlocks may allow us to bypass this
+/// need.
+///
+/// Then there is the issue of free blocks, or conversely used blocks.  Closely related to these
+/// is the number of free blocks.  As an aside, I don't think that the free block count is not
+/// strictly necessary, but makes things nicer when allocating blocks.  As such, I'm on the fence
+/// about keeping it.
+///
+/// Anyway, one assumption of this nascent file system is that blocks are write once.  This has
+/// nice side effects, like versioning, cloning, snapshots, etc.  None of which will I be
+/// considering at the moment!  Instead, the thought is that a free block list is sort of redundant
+/// when the next available block is a monotonically increasing integer.  So I think it best,
+/// keeping things simple for now, to store the next available block number.  A nice side effect is
+/// that the number of free blocks is easily calculated from that and the block count.
+///
+/// Another issue is that of Merkle Trees.  With my UberBlock idea, the block trees grew as
+/// necessary to accommodate used blocks.  In this case, I'd need to figure out the total size of
+/// the tree a-priori to allocate enough blocks when the file system is created.  While this isn't
+/// hard (n^{log_2(n) + 1} - 1, where n = |blocks|), I can't say how important this feature is
+/// just now.
+///
+/// Bootstrapping is an interesting problem in that it's strictly necessary that we are able to read
+/// block 0.
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct BlockMetadata {
+    size: BlockSize,
+    count: BlockCardinality,
+    next_free_block: Option<BlockCardinality>,
+    // tree: BlockTree,
+    // metadata_block_count: BlockCardinality
+}
+
+impl BlockMetadata {
+    /// Load the [BlockMetadata]
+    ///
+    /// This method retrieves the metadata from block 0 of the [BlockStorage].
+    ///
+    /// FIXME: If this fails, then what?
+    fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+    where
+        T: AsRef<[u8]>,
+    {
+        bincode::deserialize(bytes.as_ref())
+    }
 }
 
 /// Manager of Blocks
@@ -121,6 +182,14 @@ pub(crate) trait BlockStorage {
 /// hashes are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
 pub(crate) trait BlockManager: BlockStorage {
+    /// Return BlockManager Metadata
+    ///
+    /// The purpose of this method is to provide the means of obtaining a consistent representation
+    /// of the file sysetm's block-level metadata.  The main use of which is to serialize the
+    /// metadata.
+    ///
+    fn metadata(&self) -> BlockMetadata;
+
     /// The number of available, un-allocated Blocks.
     ///
     fn free_block_count(&self) -> BlockCardinality;
@@ -135,6 +204,15 @@ pub(crate) trait BlockManager: BlockStorage {
     ///
     /// The block is no longer being used, and may be returned to the free block pool.
     fn recycle_block(&mut self, block: BlockCardinality);
+
+    /// Save the [BlockMetadata]
+    ///
+    /// This method stores the metadata in the [BlockStorage], starting at block 0.
+    ///
+    /// FIXME: If this fails, then what?
+    fn serialize(&mut self) {
+        self.write_block(0, bincode::serialize(&self.metadata()).unwrap());
+    }
 
     /// Write Some Bytes
     ///
@@ -183,12 +261,22 @@ pub(crate) trait BlockManager: BlockStorage {
     /// Given a [BlockList], the bytes previously written to the list will be returned. Hashes
     /// will be checked, blah, blah, blah.
     ///
-    /// FIXME
+    /// FIXME: This is where we should also run a proof on the Merkle Tree.
     fn read(&self, blocks: &BlockList) -> Result<Vec<u8>, Error> {
         let mut data = Vec::<u8>::with_capacity(blocks.len() * self.block_size() as usize);
         for b in blocks.iter() {
-            let mut data_block = self.read_block(&b)?;
-            data.append(&mut data_block);
+            let mut data_block = self.read_block(b.number)?;
+            let hash = BlockHash::new(&data_block);
+            if hash == b.hash {
+                data.append(&mut data_block);
+            } else {
+                // Do we want to introduce the idea of a "bad hash sentinel block"?
+                return Err(format_err!(
+                    "hash mismatch: expected {:?}, but calculated {:?}",
+                    b.hash,
+                    hash
+                ));
+            }
         }
 
         Ok(data)

@@ -14,7 +14,10 @@
 //! * Option for sparse blocks?
 use failure::{format_err, Error};
 
-use crate::block::{Block, BlockCardinality, BlockHash, BlockManager, BlockSize, BlockStorage};
+use crate::block::{
+    Block, BlockCardinality, BlockHash, BlockList, BlockManager, BlockMetadata, BlockSize,
+    BlockStorage,
+};
 
 use std::{
     collections::VecDeque,
@@ -26,7 +29,7 @@ const BLOCK_EXT: &str = "ufsb";
 
 /// File-based Block Storage
 ///
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FileStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
@@ -37,19 +40,39 @@ pub struct FileStore {
 impl FileStore {
     /// FileStore Constructor
     ///
+    /// Note that block 0 is reserved to store block-level metadata.
     pub fn new<P: AsRef<Path>>(
         path: P,
         size: BlockSize,
         count: BlockCardinality,
     ) -> Result<Self, Error> {
-        // let p = path.as_ref();
         let root_path: PathBuf = path.as_ref().into();
         FileStore::init(&root_path, size, count)?;
 
         Ok(FileStore {
             block_size: size,
             block_count: count,
-            free_blocks: (0..count).collect(),
+            free_blocks: (1..count).collect(),
+            root_path,
+        })
+    }
+
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let root_path: PathBuf = path.as_ref().into();
+        let path = FileStore::path_for_block(&root_path, 0);
+
+        let metadata = BlockMetadata::deserialize(fs::read(path)?)?;
+
+        let free_blocks = if let Some(start) = metadata.next_free_block {
+            (start..metadata.count).collect()
+        } else {
+            VecDeque::new()
+        };
+
+        Ok(FileStore {
+            block_size: metadata.size,
+            block_count: metadata.count,
+            free_blocks,
             root_path,
         })
     }
@@ -120,7 +143,11 @@ impl BlockStorage for FileStore {
         self.block_size
     }
 
-    fn write_block(&mut self, bn: BlockCardinality, data: &[u8]) -> Result<Block, Error> {
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<Block, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        let data = data.as_ref();
         let mut zeroes = [0u8; BlockSize::TwentyFortyEight as usize];
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -143,27 +170,27 @@ impl BlockStorage for FileStore {
         }
     }
 
-    fn read_block(&self, block: &Block) -> Result<Vec<u8>, Error> {
-        if block.number > self.block_count {
-            Err(format_err!("request for bogus block {}", block.number))
+    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
+        if bn > self.block_count {
+            Err(format_err!("request for bogus block {}", bn))
         } else {
-            let path = FileStore::path_for_block(&self.root_path, block.number);
+            let path = FileStore::path_for_block(&self.root_path, bn);
             let data = fs::read(path)?;
             let hash = BlockHash::new(&data);
-            if block.hash == hash {
-                Ok(data)
-            } else {
-                Err(format_err!(
-                    "hash mismatch: expected {:?}, but calculated {:?}",
-                    block.hash,
-                    hash
-                ))
-            }
+            Ok(data)
         }
     }
 }
 
 impl BlockManager for FileStore {
+    fn metadata(&self) -> BlockMetadata {
+        BlockMetadata {
+            size: self.block_size,
+            count: self.block_count,
+            next_free_block: self.free_blocks.get(0).cloned(),
+        }
+    }
+
     fn free_block_count(&self) -> BlockCardinality {
         self.free_blocks.len() as BlockCardinality
     }
@@ -200,12 +227,12 @@ mod test {
         };
 
         assert_eq!(
-            fs.read_block(&block).is_err(),
+            fs.read(&BlockList::new(vec![block])).is_err(),
             true,
             "read should fail with block number out of range"
         );
         assert_eq!(
-            fs.write_block(7, &data).is_err(),
+            fs.write_block(7, &data[..]).is_err(),
             true,
             "write should fail with block number out of range"
         );
@@ -217,7 +244,7 @@ mod test {
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(&test_dir, BlockSize::TenTwentyFour, 0x10).unwrap();
-        assert_eq!(fs.write_block(1, &data).is_err(), true);
+        assert_eq!(fs.write_block(1, &data[..]).is_err(), true);
     }
 
     #[test]
@@ -284,7 +311,7 @@ mod test {
         };
 
         assert_eq!(
-            fs.read_block(&block).unwrap(),
+            fs.read(&BlockList::new(vec![block])).unwrap(),
             expected_block,
             "write directly to block, and compare via the API"
         );
@@ -322,7 +349,7 @@ mod test {
         };
 
         assert_eq!(
-            fs.read_block(&block).is_err(),
+            fs.read(&BlockList::new(vec![block])).is_err(),
             true,
             "detect a hash mismatch"
         );
@@ -332,7 +359,7 @@ mod test {
     fn construction_sanity() {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
+        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 4).unwrap();
         assert_eq!(
             fs.free_block_count(),
             3,
@@ -345,8 +372,8 @@ mod test {
         );
         assert_eq!(
             fs.block_count(),
-            3,
-            "verify that there are three blocks total"
+            4,
+            "verify that there are four blocks total"
         );
     }
 
@@ -367,7 +394,7 @@ mod test {
     fn tiny_test() {
         let test_dir = [TEST_ROOT, "tiny_test"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 1).unwrap();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
 
         let blocks = bm.write(b"abc").unwrap();
         println!("{:#?}", blocks);
@@ -395,7 +422,7 @@ mod test {
     fn write_data_smaller_than_blocksize() {
         let test_dir = [TEST_ROOT, "write_data_smaller_than_blocksize"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 1).unwrap();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
 
         let blocks = bm.write(&vec![0x38; 511][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -415,7 +442,7 @@ mod test {
     fn write_data_larger_than_blocksize() {
         let test_dir = [TEST_ROOT, "write_data_larger_than_blocksize"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
 
         let blocks = bm.write(&vec![0x38; 513][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -434,18 +461,50 @@ mod test {
     fn write_data_multiple_of_blocksize() {
         let test_dir = [TEST_ROOT, "write_data_multiple_of_blocksize"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 2).unwrap();
+        let mut bm = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
 
         let blocks = bm.write(&vec![0x38; 1024][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
         assert_eq!(blocks.len(), 2);
-        // let mut expected = vec![0x0; 1024];
-        // expected[..513].copy_from_slice(&vec![0x38; 513][..]);
         assert_eq!(
             bm.read(&blocks).unwrap(),
             &vec![0x38; 1024][..],
             "compare stored data with expected values"
         );
         println!("{:#?}", blocks);
+    }
+
+    #[test]
+    fn metadata() {
+        let test_dir = [TEST_ROOT, "metadata"].concat();
+        fs::remove_dir_all(&test_dir).unwrap_or_default();
+        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 4).unwrap();
+
+        assert_eq!(
+            fs.metadata(),
+            BlockMetadata {
+                size: BlockSize::FiveTwelve,
+                count: 4,
+                next_free_block: Some(1)
+            },
+            "validate metadata"
+        );
+
+        // Just change something from the default.
+        fs.get_free_block().unwrap();
+        fs.serialize();
+
+        let fs2 = FileStore::load(&test_dir).unwrap();
+        assert_eq!(fs, fs2);
+
+        assert_eq!(
+            fs.metadata(),
+            BlockMetadata {
+                size: BlockSize::FiveTwelve,
+                count: 4,
+                next_free_block: Some(2)
+            },
+            "validate metadata"
+        );
     }
 }

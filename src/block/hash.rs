@@ -1,8 +1,9 @@
 use std::fmt;
 
 use ring::digest;
+use serde_derive::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BlockHash {
     inner: [u8; 32],
 }
