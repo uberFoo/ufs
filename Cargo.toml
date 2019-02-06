@@ -6,9 +6,9 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1.5"
-ring = "0.14.4"
-serde = "1.0.86"
-serde_derive = "1.0.86"
+ring = "0.14.5"
+serde = "1.0.87"
+serde_derive = "1.0.87"
 bincode = "1.0.1"
 
 [dev-dependencies]

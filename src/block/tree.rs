@@ -9,7 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{Block, BlockHash};
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum BlockTree {
     Empty,
     Root(Box<InnerNode>),
@@ -17,14 +17,14 @@ pub(crate) enum BlockTree {
     Leaf(Box<LeafNode>),
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct InnerNode {
     left: BlockTree,
     right: BlockTree,
     hash: BlockHash,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct LeafNode {
     hash: BlockHash,
 }
