@@ -60,16 +60,26 @@ pub(crate) struct Block {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BlockList {
+    size: u64,
     blocks: Vec<Block>,
     hash_tree: BlockTree,
 }
 
 impl BlockList {
-    pub(crate) fn new(blocks: Vec<Block>) -> Self {
+    pub(crate) fn new(blocks: Vec<Block>, size: u64) -> Self {
         BlockList {
+            size,
             hash_tree: BlockTree::new(&blocks),
             blocks,
         }
+    }
+
+    pub(crate) fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub(crate) fn block_count(&self) -> u64 {
+        self.blocks.len() as u64
     }
 }
 

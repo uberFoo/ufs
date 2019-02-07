@@ -4,7 +4,8 @@ use bincode;
 use failure::{format_err, Error};
 
 use crate::block::{
-    hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality, BlockList,
+    hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality,
+    BlockList, BlockSize,
 };
 
 /// Manager of Blocks
@@ -22,7 +23,7 @@ where
     free_blocks: VecDeque<BlockCardinality>,
     // FIXME: This should be pulled out into a struct, and the keys should be SHA256 hashes for
     // security sake.
-    block_list_map: HashMap<String, BlockList>,
+    pub(crate) block_list_map: HashMap<String, Option<BlockList>>,
 }
 
 impl<BS> BlockManager<BS>
@@ -55,16 +56,20 @@ where
     /// FIXME:
     ///  * This does not belong here -- it's hacky and gross.
     ///  * The `name` should be hashed and stored that way.
-    pub(crate) fn write_bytes<T>(&mut self, name: String, data: T) -> Result<(), Error>
+    ///  * the `unwrap_or` below smells bad.
+    ///  * should return the number of bytes written
+    pub(crate) fn write_bytes<S, T>(&mut self, name: S, data: T) -> Result<(), Error>
     where
         T: AsRef<[u8]>,
+        S: Into<String>,
     {
+        let name = name.into();
         match self.write(data) {
             Ok(blocks) => {
                 let _previous_blocks = self
                     .block_list_map
-                    .insert(name, blocks)
-                    .unwrap_or(BlockList::new(vec![]));
+                    .insert(name, Some(blocks))
+                    .unwrap_or(None);
                 Ok(())
             }
             Err(e) => Err(format_err!("failed to write bytes {}", e)),
@@ -80,9 +85,18 @@ where
     {
         let name = name.into();
         match self.block_list_map.get(&name) {
-            Some(blocks) => self.read(blocks),
+            Some(Some(blocks)) => self.read(blocks),
+            Some(None) => Ok(Vec::new()),
             None => Err(format_err!("key '{}' not found", name)),
         }
+    }
+
+    pub(crate) fn block_count(&self) -> BlockCardinality {
+        self.store.block_count()
+    }
+
+    pub(crate) fn block_size(&self) -> BlockSize {
+        self.store.block_size()
     }
 
     /// The number of available, un-allocated Blocks.
@@ -159,7 +173,7 @@ where
                 });
             }
 
-            Ok(BlockList::new(blocks))
+            Ok(BlockList::new(blocks, data.len() as u64))
         } else {
             Err(format_err!(
                 "write would require {} blocks, and only {} are free",

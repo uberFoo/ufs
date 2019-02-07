@@ -40,7 +40,7 @@ pub(crate) struct BlockMetadata {
     pub size: BlockSize,
     pub count: BlockCardinality,
     pub next_free_block: Option<BlockCardinality>,
-    pub block_list_map: HashMap<String, BlockList>,
+    pub block_list_map: HashMap<String, Option<BlockList>>,
 }
 
 impl BlockMetadata {
