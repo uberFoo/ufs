@@ -11,25 +11,28 @@
 //!
 //! Similarly, there are generally a fixed number of blocks in a file system, and that number is
 //! determined like the block size: when the file system is created.
-mod hash;
+//!
+//! FIXME: BlockLists should serialize when dropped.
+
 mod meta;
 
 pub(crate) mod manager;
 pub(crate) mod storage;
-pub(crate) mod tree;
 
-use core::ops::Deref;
+mod hash;
+// pub(crate) mod tree;
 
 use serde_derive::{Deserialize, Serialize};
 
-pub(crate) use self::{
+pub use self::{
     manager::BlockManager,
-    storage::{file::FileStore, memory::MemoryStore},
+    storage::{file::FileStore, memory::MemoryStore, BlockStorage},
 };
 
-use self::{hash::BlockHash, tree::BlockTree};
+use self::hash::BlockHash;
 
 pub type BlockCardinality = u64;
+pub type BlockSizeType = u16;
 
 /// Available Block Sizes
 ///
@@ -52,42 +55,34 @@ pub enum BlockSize {
     TwentyFortyEight = 2048,
 }
 
+impl From<u32> for BlockSize {
+    fn from(n: u32) -> Self {
+        match n {
+            512 => BlockSize::FiveTwelve,
+            1024 => BlockSize::TenTwentyFour,
+            2048 => BlockSize::TwentyFortyEight,
+            _ => panic!("Invalid Block Size"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Block {
-    number: BlockCardinality,
-    hash: BlockHash,
+    byte_count: BlockSizeType,
+    number: Option<BlockCardinality>,
+    hash: Option<BlockHash>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct BlockList {
-    size: u64,
-    blocks: Vec<Block>,
-    hash_tree: BlockTree,
-}
-
-impl BlockList {
-    pub(crate) fn new(blocks: Vec<Block>, size: u64) -> Self {
-        BlockList {
-            size,
-            hash_tree: BlockTree::new(&blocks),
-            blocks,
+impl Block {
+    pub(crate) fn null_block() -> Self {
+        Block {
+            byte_count: 0,
+            number: None,
+            hash: None,
         }
     }
 
-    pub(crate) fn size(&self) -> u64 {
-        self.size
-    }
-
-    pub(crate) fn block_count(&self) -> u64 {
-        self.blocks.len() as u64
-    }
-}
-
-// This impl allows us to treat a BlockList like a Vec, as far as method calls are concerned.
-impl Deref for BlockList {
-    type Target = Vec<Block>;
-
-    fn deref(&self) -> &Vec<Block> {
-        &self.blocks
+    pub(crate) fn size(&self) -> usize {
+        self.byte_count as usize
     }
 }

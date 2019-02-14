@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ffi::OsStr,
-    path::Path,
-};
+use std::{collections::HashMap, ffi::OsStr};
 
 use failure::{format_err, Error};
 use fuse::{
@@ -13,7 +9,10 @@ use libc::ENOENT;
 use log::{debug, error, info};
 use time::Timespec;
 
-use crate::block::{BlockCardinality, BlockList, BlockManager, BlockSize, FileStore};
+use crate::{
+    block::{Block, BlockCardinality, FileStore},
+    UberFileSystem,
+};
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };
 const TIME: Timespec = Timespec {
@@ -21,12 +20,11 @@ const TIME: Timespec = Timespec {
     nsec: 0,
 };
 
-/// FIXME: blocks should be an Option to a reference of BlockList
 #[derive(Clone, Debug)]
 struct Inode {
     number: u64,
     name: String,
-    blocks: Option<BlockList>,
+    size: Option<u64>,
 }
 
 impl Inode {
@@ -41,11 +39,11 @@ impl Inode {
     fn file_attr(&self) -> FileAttr {
         let kind = self.kind();
 
-        match &self.blocks {
-            Some(b) => FileAttr {
+        match self.size {
+            Some(s) => FileAttr {
                 ino: self.number,
-                size: b.size(),
-                blocks: b.block_count(),
+                size: s,
+                blocks: 1,
                 atime: TIME,
                 mtime: TIME,
                 ctime: TIME,
@@ -78,74 +76,59 @@ impl Inode {
     }
 }
 
-pub struct UberFSFuse {
+pub struct UberFSFuse<'a> {
     next_inode: BlockCardinality,
-    block_manager: BlockManager<FileStore>,
-    inodes: BTreeMap<BlockCardinality, Inode>,
-    // FIXME: Grrrr.  should be reference...
-    files: HashMap<String, Inode>,
+    file_system: &'a mut UberFileSystem<FileStore>,
+    // `inodes` is a mapping from "inode" number to an Inode
+    inodes: Vec<Inode>,
+    // `files` is a mapping from a file name to an Inode
+    files: HashMap<String, BlockCardinality>,
 }
 
-impl UberFSFuse {
+impl<'a> UberFSFuse<'a> {
     /// Create a new file system
     ///
     /// FIXME: This is ok for testing and building, but otherwise crap.  Need now to accept
     /// block size, and block count, etc.  Furthermore, there should be a load method for something
     /// that already exists.
-    pub fn new<P>(path: P) -> Result<Self, Error>
-    where
-        P: AsRef<Path>,
-    {
-        match FileStore::new(path.as_ref(), BlockSize::TwentyFortyEight, 0x100) {
-            Ok(store) => {
-                let mut fs = UberFSFuse {
-                    next_inode: 0,
-                    block_manager: BlockManager::new(store),
-                    inodes: BTreeMap::new(),
-                    files: HashMap::new(),
-                };
+    pub fn new(file_system: &'a mut UberFileSystem<FileStore>) -> Self {
+        let mut fs = UberFSFuse {
+            next_inode: 0,
+            file_system,
+            inodes: Vec::new(),
+            files: HashMap::new(),
+        };
 
-                // Put some files in there.
-                fs.block_manager
-                    .write_bytes("test.txt".to_string(), b"Hello World!\n")
-                    .unwrap();
-                fs.block_manager
-                    .write_bytes(
-                        "foo.sh".to_string(),
-                        &b"#!/bin/bash\n\necho \"Hello World!\"\n"[..],
-                    )
-                    .unwrap();
+        // Populate the name->inode and inode_num->inode tables.
+        // The first inode is always the root of the file system
+        fs.inodes.push(Inode {
+            name: "hack".to_string(),
+            number: 0,
+            size: None,
+        });
+        fs.inodes.push(Inode {
+            name: "root".to_string(),
+            number: 1,
+            size: None,
+        });
 
-                let mut number = 1;
-                fs.inodes.insert(
-                    number,
-                    Inode {
-                        name: "root".to_string(),
-                        number,
-                        blocks: None,
-                    },
-                );
+        fs
+    }
 
-                // FIXME: should block_list_map be pub?
-                for (name, blocks) in &fs.block_manager.block_list_map {
-                    number += 1;
+    pub fn load_files(&mut self) {
+        let mut number = self.inodes.len() as u64;
 
-                    let inode = Inode {
-                        number,
-                        // Bad clone!
-                        name: name.to_owned(),
-                        blocks: blocks.to_owned(),
-                    };
+        for (name, block) in self.file_system.block_manager.metadata().by_ref() {
+            println!("name {}", name);
+            let inode = Inode {
+                number,
+                name: name.clone(),
+                size: Some(block.size() as u64),
+            };
 
-                    fs.inodes.insert(number, inode.to_owned());
-                    fs.files.insert(name.to_owned(), inode);
-                }
-
-                fs.next_inode = number + 1;
-
-                Ok(fs)
-            }
-            Err(e) => Err(format_err!("something went stoopid-wrong {}", e)),
+            self.inodes.push(inode);
+            self.files.insert(name.clone(), number);
+            number += 1;
         }
     }
 }
@@ -165,12 +148,12 @@ impl UberFSFuse {
 ///  * `flush`
 ///  * `release`
 ///
-impl Filesystem for UberFSFuse {
+impl<'a> Filesystem for UberFSFuse<'a> {
     /// Return inode attributes
     ///
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         info!("getattr inode: {}", ino);
-        match self.inodes.get(&ino) {
+        match self.inodes.get(ino as usize) {
             Some(inode) => reply.attr(&TTL, &inode.file_attr()),
             None => reply.error(ENOENT),
         };
@@ -179,9 +162,11 @@ impl Filesystem for UberFSFuse {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent == 1 {
             if let Some(name) = name.to_str() {
-                if let Some(inode) = self.files.get(name) {
-                    reply.entry(&TTL, &inode.file_attr(), 0);
-                    return;
+                if let Some(index) = self.files.get(name) {
+                    if let Some(inode) = self.inodes.get(*index as usize) {
+                        reply.entry(&TTL, &inode.file_attr(), 0);
+                        return;
+                    }
                 }
             }
         }
@@ -225,8 +210,13 @@ impl Filesystem for UberFSFuse {
         );
         if ino == 1 {
             let skip = if offset == 0 { offset } else { offset + 1 } as usize;
-            for (i, (name, inode)) in self.files.iter().enumerate().skip(skip) {
-                reply.add(inode.number, i as i64, inode.kind(), name.as_str());
+            for (i, (name, index)) in self.files.iter().enumerate().skip(skip) {
+                if let Some(inode) = self.inodes.get(*index as usize) {
+                    reply.add(inode.number, (i + 1) as i64, inode.kind(), name);
+                } else {
+                    reply.error(ENOENT);
+                    return;
+                }
             }
             reply.ok();
         } else {
@@ -252,18 +242,30 @@ impl Filesystem for UberFSFuse {
         );
         if parent == 1 {
             let name = String::from(name.to_str().unwrap());
-            self.block_manager.write_bytes(name.to_owned(), vec![]);
-            let number = self.next_inode;
-            self.next_inode += 1;
+
+            self.file_system
+                .block_manager
+                .reserve_metadata(name.clone());
+            // if self
+            //     .file_system
+            //     .block_manager
+            //     .write_metadata(name.clone(), vec![])
+            //     .is_ok()
+            // {
+            let number = self.inodes.len() as u64;
             let inode = Inode {
-                name: name.to_owned(),
+                name: name.clone(),
                 number,
-                blocks: None,
+                size: None,
             };
-            self.inodes.insert(number, inode.to_owned());
-            self.files.insert(name, inode.to_owned());
 
             reply.created(&TTL, &inode.file_attr(), 0, 0, flags);
+
+            self.inodes.push(inode);
+            self.files.insert(name, number);
+        // } else {
+        //     reply.error(ENOENT);
+        // }
         } else {
             reply.error(ENOENT);
         }
@@ -282,18 +284,15 @@ impl Filesystem for UberFSFuse {
         reply: ReplyData,
     ) {
         info!("read ino: {}, offset: {}, size: {}", ino, offset, size);
-        if let Some(inode) = self.inodes.get(&ino) {
-            match &inode.blocks {
-                Some(blocks) => match self.block_manager.read(&blocks) {
-                    Ok(bytes) => {
-                        reply.data(&bytes[offset as usize..size as usize]);
-                        return;
-                    }
-                    Err(e) => {
-                        error!("error reading inode {:?}: {}", inode, e);
-                    }
-                },
-                None => (),
+        if let Some(inode) = self.inodes.get(ino as usize) {
+            match self.file_system.block_manager.read_metadata(&inode.name) {
+                Ok(bytes) => {
+                    reply.data(&bytes[offset as usize..size as usize]);
+                    return;
+                }
+                Err(e) => {
+                    error!("error reading inode {:?}: {}", inode, e);
+                }
             };
         };
 
@@ -311,15 +310,18 @@ impl Filesystem for UberFSFuse {
         reply: ReplyWrite,
     ) {
         info!("write ino: {}, offset: {}, data: {:?}", ino, offset, data);
-        let bm = &mut self.block_manager;
 
-        if self.inodes.contains_key(&ino) {
-            self.inodes.entry(ino).and_modify(|inode| {
-                bm.write_bytes(inode.name.to_owned(), &data[offset as usize..])
-                    .unwrap();
-                inode.blocks = bm.block_list_map.get(&inode.name).unwrap().clone();
+        if let Some(inode) = self.inodes.get_mut(ino as usize) {
+            if let Ok(size) = self
+                .file_system
+                .block_manager
+                .write_metadata(inode.name.to_owned(), &data[offset as usize..])
+            {
+                inode.size.replace(size as u64);
                 reply.written(data[offset as usize..].len() as u32);
-            });
+            } else {
+                reply.error(ENOENT);
+            }
         } else {
             reply.error(ENOENT);
         }
@@ -349,17 +351,18 @@ impl Filesystem for UberFSFuse {
     /// FIXME: What to do about maximum file name length?
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         debug!("statfs");
+        let block_manager = &self.file_system.block_manager;
         reply.statfs(
-            self.block_manager.block_count(),
-            self.block_manager.free_block_count(),
-            self.block_manager.free_block_count(),
+            block_manager.block_count(),
+            block_manager.free_block_count(),
+            block_manager.free_block_count(),
             // I'm using i64 below, because it's consistent with what I'm seeing from APFS.
             i64::max_value() as u64,
             // i64::max_value() as u64 - self.files.len() as u64,
             i64::max_value() as u64,
-            self.block_manager.block_size() as u32, // I'd had 2048 hardcoded here once...
+            block_manager.block_size() as u32, // I'd had 2048 hardcoded here once...
             0xff,
-            self.block_manager.block_size() as u32,
+            block_manager.block_size() as u32,
         );
     }
 }

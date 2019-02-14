@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_derive::{Deserialize, Serialize};
 
-use crate::block::{BlockCardinality, BlockList, BlockSize};
+use crate::block::{Block, BlockCardinality, BlockSize};
 
 /// Block-level File System Metadata
 ///
@@ -40,7 +40,7 @@ pub(crate) struct BlockMetadata {
     pub size: BlockSize,
     pub count: BlockCardinality,
     pub next_free_block: Option<BlockCardinality>,
-    pub block_list_map: HashMap<String, Option<BlockList>>,
+    pub directory: HashMap<String, Block>,
 }
 
 impl BlockMetadata {
@@ -54,13 +54,5 @@ impl BlockMetadata {
         T: AsRef<[u8]>,
     {
         bincode::deserialize(bytes.as_ref())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_metadata() {
-        unimplemented!();
     }
 }

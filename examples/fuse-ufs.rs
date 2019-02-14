@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use ::fuse::mount;
 use env_logger;
 use failure::Error;
 use structopt::StructOpt;
-use ufs::fuse::UberFSFuse;
+use ufs::{fuse::UberFSFuse, UberFileSystem};
 
 /// Mount the file system using FUSE.
 ///
@@ -23,6 +23,18 @@ struct Opt {
 fn main() -> Result<(), Error> {
     env_logger::init();
     let opt = Opt::from_args();
-    mount(UberFSFuse::new(&opt.bundle_path)?, &opt.mount_path, &[])?;
+    let mut ufs = if fs::read_dir(&opt.bundle_path).is_ok() {
+        UberFileSystem::load_file_backed(&opt.bundle_path)?
+    } else {
+        UberFileSystem::new_file_backed(&opt.bundle_path, 2048, 0x100)?
+    };
+
+    let mut ufs_fuse = UberFSFuse::new(&mut ufs);
+    ufs_fuse.load_files();
+
+    mount(ufs_fuse, &opt.mount_path, &[])?;
+
+    ufs.save_file_backed();
+
     Ok(())
 }

@@ -5,7 +5,7 @@ use failure::{format_err, Error};
 
 use crate::block::{
     hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality,
-    BlockList, BlockSize,
+    BlockSize, BlockSizeType,
 };
 
 /// Manager of Blocks
@@ -15,25 +15,23 @@ use crate::block::{
 /// hashes are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
 #[derive(Debug, PartialEq)]
-pub(crate) struct BlockManager<BS>
+pub struct BlockManager<BS>
 where
     BS: BlockStorage,
 {
     store: BS,
     free_blocks: VecDeque<BlockCardinality>,
-    // FIXME: This should be pulled out into a struct, and the keys should be SHA256 hashes for
-    // security sake.
-    pub(crate) block_list_map: HashMap<String, Option<BlockList>>,
+    directory: HashMap<String, Block>,
 }
 
-impl<BS> BlockManager<BS>
+impl<'a, BS> BlockManager<BS>
 where
     BS: BlockStorage,
 {
-    pub(crate) fn new(store: BS) -> Self {
+    pub fn new(store: BS) -> Self {
         BlockManager {
             free_blocks: (1..store.block_count()).collect(),
-            block_list_map: HashMap::new(),
+            directory: HashMap::new(),
             store,
         }
     }
@@ -46,48 +44,8 @@ where
         };
         BlockManager {
             free_blocks,
-            block_list_map: metadata.block_list_map,
+            directory: metadata.directory,
             store,
-        }
-    }
-
-    /// Store some bytes and reference them with a name.
-    ///
-    /// FIXME:
-    ///  * This does not belong here -- it's hacky and gross.
-    ///  * The `name` should be hashed and stored that way.
-    ///  * the `unwrap_or` below smells bad.
-    ///  * should return the number of bytes written
-    pub(crate) fn write_bytes<S, T>(&mut self, name: S, data: T) -> Result<(), Error>
-    where
-        T: AsRef<[u8]>,
-        S: Into<String>,
-    {
-        let name = name.into();
-        match self.write(data) {
-            Ok(blocks) => {
-                let _previous_blocks = self
-                    .block_list_map
-                    .insert(name, Some(blocks))
-                    .unwrap_or(None);
-                Ok(())
-            }
-            Err(e) => Err(format_err!("failed to write bytes {}", e)),
-        }
-    }
-
-    /// Retrieve some bytes, given a name
-    ///
-    /// FIXME: Same as `write_bites` above.
-    pub(crate) fn read_bytes<S>(&self, name: S) -> Result<Vec<u8>, Error>
-    where
-        S: Into<String>,
-    {
-        let name = name.into();
-        match self.block_list_map.get(&name) {
-            Some(Some(blocks)) => self.read(blocks),
-            Some(None) => Ok(Vec::new()),
-            None => Err(format_err!("key '{}' not found", name)),
         }
     }
 
@@ -130,7 +88,7 @@ where
             size: self.store.block_size(),
             count: self.store.block_count(),
             next_free_block: self.free_blocks.get(0).cloned(),
-            block_list_map: self.block_list_map.clone(),
+            directory: self.directory.clone(),
         };
 
         self.store
@@ -138,75 +96,89 @@ where
             .unwrap();
     }
 
-    /// Write Some Bytes
+    /// Write a slice to a Block Storage
     ///
-    /// The bytes are written to the minimum number of blocks required to store the furnished slice.
-    /// The list of blocks that now contain the bytes is returned.  Hashes will be created,
-    /// Merkle tree, blah, blah.
-    ///
-    /// FIXME: I wonder is using slice::chunks() would be better?
-    pub(crate) fn write<T>(&mut self, data: T) -> Result<BlockList, Error>
-    where
-        T: AsRef<[u8]>,
-    {
+    /// This function will write up to `self.store.block_size()` bytes from the given slice to a
+    /// free block.  A new [Block] is returned.
+    pub(crate) fn write<T: AsRef<[u8]>>(&mut self, data: T) -> Result<Block, Error> {
         let data = data.as_ref();
-        let block_size = self.store.block_size() as usize;
-        let block_count =
-            data.len() / block_size + if data.len() % block_size == 0 { 0 } else { 1 };
-        if block_count <= self.free_block_count() as usize {
-            let mut blocks = Vec::with_capacity(block_count);
-
-            for i in 0..block_count {
-                // Size checked above.  If we were to rely on the option result here, what would be
-                // the best way of returning already allocated blocks to the free list?  Would they
-                // have already been written to the BlockStorage?
-                let free_block_num = self.get_free_block().unwrap();
-                let block_data_slice = &data[i * block_size..data.len().min((i + 1) * block_size)];
-
-                // Sort of the same question here as above.  Given that this may fail as well, I'm
-                // leaning in the direction of not checking at the beginning.
-                self.store.write_block(free_block_num, block_data_slice)?;
-
-                blocks.push(Block {
-                    number: free_block_num,
-                    hash: BlockHash::new(block_data_slice),
-                });
-            }
-
-            Ok(BlockList::new(blocks, data.len() as u64))
+        if let Some(number) = self.get_free_block() {
+            let end = data.len().min(self.store.block_size() as usize);
+            let bytes = &data[..end];
+            let byte_count = self.store.write_block(number, bytes)?;
+            Ok(Block {
+                byte_count,
+                number: Some(number),
+                hash: Some(BlockHash::new(bytes)),
+            })
         } else {
             Err(format_err!(
-                "write would require {} blocks, and only {} are free",
-                block_count,
-                self.free_block_count()
+                "I was unable to complete the write operation.  I could not find a free block!"
             ))
         }
     }
 
-    /// Read Some Bytes
+    /// Read data from a Block into a u8 vector
     ///
-    /// Given a [BlockList], the bytes previously written to the list will be returned. Hashes
-    /// will be checked, blah, blah, blah.
-    ///
-    /// FIXME: This is where we should also run a proof on the Merkle Tree.
-    pub(crate) fn read(&self, blocks: &BlockList) -> Result<Vec<u8>, Error> {
-        let mut data = Vec::<u8>::with_capacity(blocks.len() * self.store.block_size() as usize);
-        for b in blocks.iter() {
-            let mut data_block = self.store.read_block(b.number)?;
-            let hash = BlockHash::new(&data_block);
-            if hash == b.hash {
-                data.append(&mut data_block);
+    pub(crate) fn read(&self, block: &Block) -> Result<Vec<u8>, Error> {
+        if let Block {
+            number: Some(block_number),
+            hash: Some(block_hash),
+            byte_count: _,
+        } = block
+        {
+            let bytes = self.store.read_block(*block_number)?;
+            let hash = BlockHash::new(&bytes);
+            if hash == *block_hash {
+                Ok(bytes)
             } else {
-                // Do we want to introduce the idea of a "bad hash sentinel block"?
-                return Err(format_err!(
+                Err(format_err!(
                     "hash mismatch: expected {:?}, but calculated {:?}",
-                    b.hash,
+                    block.hash,
                     hash
-                ));
+                ))
             }
+        } else {
+            Err(format_err!("cannot read null Block"))
         }
+    }
 
-        Ok(data)
+    pub(crate) fn reserve_metadata<K>(&mut self, key: K)
+    where
+        K: Into<String>,
+    {
+        self.directory
+            .entry(key.into())
+            .or_insert(Block::null_block());
+    }
+
+    pub(crate) fn write_metadata<K, D>(&mut self, key: K, data: D) -> Result<BlockSizeType, Error>
+    where
+        K: Into<String>,
+        D: AsRef<[u8]>,
+    {
+        let block = self.write(data)?;
+        let size = block.size();
+        self.directory.insert(key.into(), block);
+        Ok(size as BlockSizeType)
+    }
+
+    /// Return file system-level matadata
+    ///
+    /// FIXME: Should this instead return an `Option`?
+    pub(crate) fn read_metadata<K>(&self, key: K) -> Result<Vec<u8>, Error>
+    where
+        K: AsRef<str>,
+    {
+        if let Some(block) = self.directory.get(key.as_ref()) {
+            self.read(block)
+        } else {
+            Err(format_err!("key not found"))
+        }
+    }
+
+    pub(crate) fn metadata(&self) -> std::collections::hash_map::Iter<String, Block> {
+        self.directory.iter()
     }
 }
 
@@ -238,21 +210,20 @@ mod test {
     fn tiny_test() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
 
-        let blocks = bm.write(b"abc").unwrap();
-        println!("{:#?}", blocks);
+        let block = bm.write(b"abc").unwrap();
+        println!("{:#?}", block);
 
         assert_eq!(bm.free_block_count(), 0);
-        assert_eq!(blocks.len(), 1);
+        let hash = block.hash.unwrap();
         assert_eq!(
-            blocks[0].hash.as_ref(),
+            hash.as_ref(),
             hex!("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
             "validate hash"
         );
 
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            bm.read(&block).unwrap(),
             b"abc",
-            // &expected[..],
             "compare stored data with expected values"
         );
     }
@@ -261,46 +232,28 @@ mod test {
     fn write_data_smaller_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
 
-        let blocks = bm.write(&vec![0x38; 511][..]).unwrap();
+        let block = bm.write(&vec![0x38; 511][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
-        assert_eq!(blocks.len(), 1);
         assert_eq!(
-            bm.read(&blocks).unwrap(),
+            bm.read(&block).unwrap(),
             &vec![0x38; 511][..],
             "compare stored data with expected values"
         );
-        println!("{:#?}", blocks);
-        println!("{:?}", bm.read(&blocks));
+        println!("{:#?}", block);
     }
 
     #[test]
     fn write_data_larger_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
 
-        let blocks = bm.write(&vec![0x38; 513][..]).unwrap();
-        assert_eq!(bm.free_block_count(), 0);
-        assert_eq!(blocks.len(), 2);
+        let block = bm.write(&vec![0x38; 513][..]).unwrap();
+        assert_eq!(bm.free_block_count(), 1);
         assert_eq!(
-            bm.read(&blocks).unwrap(),
-            &vec![0x38; 513][..],
+            bm.read(&block).unwrap(),
+            &vec![0x38; 512][..],
             "compare stored data with expected values"
         );
-        println!("{:#?}", blocks);
-    }
-
-    #[test]
-    fn write_data_multiple_of_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
-
-        let blocks = bm.write(&vec![0x38; 1024][..]).unwrap();
-        assert_eq!(bm.free_block_count(), 0);
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(
-            bm.read(&blocks).unwrap(),
-            &vec![0x38; 1024][..],
-            "compare stored data with expected values"
-        );
-        println!("{:#?}", blocks);
+        println!("{:#?}", block);
     }
 
     #[test]
@@ -353,12 +306,13 @@ mod test {
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);
 
-        bm.write_bytes("test".to_string(), b"Hello World!");
-        assert_eq!(bm.read_bytes("test").unwrap(), b"Hello World!");
+        bm.write_metadata("test", b"Hello World!").unwrap();
+        assert_eq!(bm.read_metadata("test").unwrap(), b"Hello World!");
 
         // Just another random change.
         bm.get_free_block().unwrap();
         bm.serialize();
+
         let (fs, metadata) = FileStore::load(&path).unwrap();
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);

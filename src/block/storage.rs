@@ -1,16 +1,16 @@
-pub(crate) mod file;
-pub(crate) mod memory;
+pub mod file;
+pub mod memory;
 
 use failure::Error;
 
-use crate::block::{Block, BlockCardinality, BlockSize};
+use crate::block::{Block, BlockCardinality, BlockSize, BlockSizeType};
 
 /// Persistent Storage for Blocks
 ///
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
 /// responsibility for mapping block numbers to _some_ storage location.  Additionally they are
 /// able to read and write data to blocks.
-pub(crate) trait BlockStorage {
+pub trait BlockStorage {
     /// The system-wide Block Size, in bytes.
     ///
     fn block_size(&self) -> BlockSize;
@@ -28,7 +28,7 @@ pub(crate) trait BlockStorage {
     /// FIXME:
     /// * Implementations should check that the size of the data is not larger than the block size.
     /// * Create some Error type that we can use when something like the above happens.
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<(), Error>
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>;
 

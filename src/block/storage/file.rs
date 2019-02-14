@@ -14,7 +14,9 @@
 //! * Option for sparse blocks?
 use failure::{format_err, Error};
 
-use crate::block::{meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockSize};
+use crate::block::{
+    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType,
+};
 
 use std::{
     fmt, fs, io,
@@ -26,7 +28,7 @@ const BLOCK_EXT: &str = "ufsb";
 /// File-based Block Storage
 ///
 #[derive(Debug, PartialEq)]
-pub(crate) struct FileStore {
+pub struct FileStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -36,12 +38,13 @@ impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub(crate) fn new<P: AsRef<Path>>(
-        path: P,
-        size: BlockSize,
-        count: BlockCardinality,
-    ) -> Result<Self, Error> {
+    pub fn new<P, BS>(path: P, size: BS, count: BlockCardinality) -> Result<Self, Error>
+    where
+        P: AsRef<Path>,
+        BS: Into<BlockSize>,
+    {
         let root_path: PathBuf = path.as_ref().into();
+        let size = size.into();
         FileStore::init(&root_path, size, count)?;
 
         Ok(FileStore {
@@ -132,7 +135,7 @@ impl BlockStorage for FileStore {
         self.block_size
     }
 
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<(), Error>
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>,
     {
@@ -149,7 +152,7 @@ impl BlockStorage for FileStore {
             let path = FileStore::path_for_block(&self.root_path, bn);
             fs::write(path, data);
 
-            Ok(())
+            Ok(data.len() as BlockSizeType)
         }
     }
 

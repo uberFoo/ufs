@@ -7,7 +7,7 @@
 
 use failure::{format_err, Error};
 
-use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize};
+use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType};
 
 /// An in-memory [BlockStorage]
 ///
@@ -16,7 +16,7 @@ use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize};
 /// if we implement a means of converting between different block storage implementations, which is
 /// something I think we'll want.  Especially given the scenario of mounting remote file systems.
 #[derive(Debug, PartialEq)]
-pub(crate) struct MemoryStore {
+pub struct MemoryStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
     blocks: Vec<Vec<u8>>,
@@ -48,7 +48,7 @@ impl BlockStorage for MemoryStore {
         self.block_size
     }
 
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<(), Error>
+    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>,
     {
@@ -60,7 +60,7 @@ impl BlockStorage for MemoryStore {
         if let Some(memory) = self.blocks.get_mut(bn as usize) {
             memory.extend_from_slice(data);
 
-            Ok(())
+            Ok(data.len() as BlockSizeType)
         } else {
             Err(format_err!("request for bogus block {}", bn))
         }
@@ -115,7 +115,10 @@ mod test {
         );
 
         let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
-        let block = ms.write_block(1, &data[..]).unwrap();
+        assert_eq!(
+            ms.write_block(1, &data[..]).unwrap(),
+            data.len() as BlockSizeType
+        );
 
         assert_eq!(
             ms.blocks[1],
