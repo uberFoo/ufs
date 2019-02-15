@@ -14,20 +14,15 @@
 //!
 //! FIXME: BlockLists should serialize when dropped.
 
-mod meta;
-
-pub(crate) mod manager;
-pub(crate) mod storage;
-
 mod hash;
-// pub(crate) mod tree;
+pub(crate) mod manager;
+mod meta;
+pub(crate) mod storage;
+pub(crate) mod tree;
 
 use serde_derive::{Deserialize, Serialize};
 
-pub use self::{
-    manager::BlockManager,
-    storage::{file::FileStore, memory::MemoryStore, BlockStorage},
-};
+pub(crate) use self::storage::file::FileStore;
 
 use self::hash::BlockHash;
 
@@ -74,6 +69,27 @@ pub(crate) struct Block {
 }
 
 impl Block {
+    pub(crate) fn new<B>(number: BlockCardinality, bytes: Option<B>) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        match bytes {
+            Some(bytes) => {
+                let bytes = bytes.as_ref();
+                Block {
+                    byte_count: bytes.len() as BlockSizeType,
+                    number: Some(number),
+                    hash: Some(BlockHash::new(bytes)),
+                }
+            }
+            None => Block {
+                byte_count: 0,
+                number: Some(number),
+                hash: None,
+            },
+        }
+    }
+
     pub(crate) fn null_block() -> Self {
         Block {
             byte_count: 0,

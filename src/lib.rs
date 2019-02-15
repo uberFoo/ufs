@@ -6,6 +6,7 @@ use std::path::Path;
 use failure::Error;
 
 mod block;
+mod directory;
 pub mod fuse;
 
 pub(crate) use block::{BlockCardinality, BlockSize};
@@ -15,11 +16,17 @@ pub use block::{
     storage::{file::FileStore, BlockStorage},
 };
 
+/// Main File System Implementation
+///
 pub struct UberFileSystem<BS: BlockStorage> {
+    /// Where we store blocks.
+    ///
     pub block_manager: BlockManager<BS>,
 }
 
 impl<'a> UberFileSystem<FileStore> {
+    /// Create a new file-backed File System
+    ///
     pub fn new_file_backed<P, B>(
         path: P,
         block_size: B,
@@ -35,6 +42,8 @@ impl<'a> UberFileSystem<FileStore> {
         })
     }
 
+    /// Load an existing file-backed File System
+    ///
     pub fn load_file_backed<P>(path: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
@@ -45,6 +54,8 @@ impl<'a> UberFileSystem<FileStore> {
         })
     }
 
+    /// Persist file-backed File System
+    ///
     pub fn save_file_backed(&mut self) {
         self.block_manager.serialize();
     }

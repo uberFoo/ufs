@@ -150,7 +150,7 @@ impl BlockStorage for FileStore {
             }
 
             let path = FileStore::path_for_block(&self.root_path, bn);
-            fs::write(path, data);
+            fs::write(path, data)?;
 
             Ok(data.len() as BlockSizeType)
         }

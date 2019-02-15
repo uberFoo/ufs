@@ -119,7 +119,6 @@ impl<'a> UberFSFuse<'a> {
         let mut number = self.inodes.len() as u64;
 
         for (name, block) in self.file_system.block_manager.metadata().by_ref() {
-            println!("name {}", name);
             let inode = Inode {
                 number,
                 name: name.clone(),
