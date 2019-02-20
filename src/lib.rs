@@ -8,6 +8,7 @@ use failure::Error;
 mod block;
 mod directory;
 pub mod fuse;
+pub mod io;
 
 pub(crate) use block::{BlockCardinality, BlockSize};
 

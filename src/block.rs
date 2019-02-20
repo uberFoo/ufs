@@ -69,6 +69,18 @@ pub(crate) struct Block {
 }
 
 impl Block {
+    pub(crate) fn nasty_hack(
+        number: BlockCardinality,
+        size: BlockSizeType,
+        hash: BlockHash,
+    ) -> Self {
+        Block {
+            byte_count: size,
+            number: Some(number),
+            hash: Some(hash),
+        }
+    }
+
     pub(crate) fn new<B>(number: BlockCardinality, bytes: Option<B>) -> Self
     where
         B: AsRef<[u8]>,
@@ -98,7 +110,15 @@ impl Block {
         }
     }
 
+    pub(crate) fn number(&self) -> Option<BlockCardinality> {
+        self.number
+    }
+
     pub(crate) fn size(&self) -> usize {
         self.byte_count as usize
+    }
+
+    pub(crate) fn hash(&self) -> Option<BlockHash> {
+        self.hash
     }
 }

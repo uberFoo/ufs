@@ -2,6 +2,7 @@
 //!
 //! Merkle Tree Implementation for Block Validation
 //!
+//! I'm implementing Read and Write on this for now.  I don't think it'll live here long term.
 use std::collections::VecDeque;
 
 use ring::{self, digest};
@@ -11,7 +12,7 @@ use crate::block::{Block, BlockCardinality, BlockHash, BlockSizeType};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BlockTree {
-    references: u32,
+    byte_count: u64,
     //FIXME: This is a huge waste of space.  We should instead build a Vec<&LeafNode> when we lead
     // the tree.  Or build something that's useful when we validate block checksums, or something...
     block_list: Vec<LeafNode>,
@@ -24,6 +25,7 @@ impl BlockTree {
     pub(crate) fn new(blocks: &Vec<Block>) -> Self {
         let mut inner_nodes = VecDeque::<BlockTreeNode>::new();
         let mut block_list = Vec::<LeafNode>::with_capacity(blocks.len());
+        let mut byte_count = 0_u64;
 
         // Iterate over the Vec of blocks, pair-wise, in order to build inner nodes.  Those nodes
         // are added to a deque which will then be used to construct the rest of the tree.
@@ -45,6 +47,8 @@ impl BlockTree {
                         hash: right.hash.unwrap(),
                     };
 
+                    byte_count = byte_count + left.byte_count as u64 + right.byte_count as u64;
+
                     block_list.push(left.clone());
                     block_list.push(right.clone());
 
@@ -65,6 +69,8 @@ impl BlockTree {
                         block_number: left.number.unwrap(),
                         hash: left.hash.unwrap(),
                     };
+
+                    byte_count += left.byte_count as u64;
 
                     block_list.push(left.clone());
 
@@ -116,21 +122,29 @@ impl BlockTree {
             // contain the leaf nodes, need to remain on the "left".
             inner_nodes.push_front(inner_node);
         }
-        println!("inner {:#?}", inner_nodes);
+
         BlockTree {
-            references: 0,
+            byte_count,
             block_list,
             inner: inner_nodes.pop_front().map_or(BlockTreeNode::Empty, |i| i),
         }
     }
 
-    pub(crate) fn get(&self, n: usize) -> Option<Block> {
-        if let Some(leaf) = self.block_list.get(n) {
-            let block = Block::new(leaf.block_number, None::<&[u8]>);
+    pub(crate) fn get(&self, n: BlockCardinality) -> Option<Block> {
+        if let Some(leaf) = self.block_list.get(n as usize) {
+            let block = Block::nasty_hack(leaf.block_number, leaf.byte_count, leaf.hash);
             Some(block)
         } else {
             None
         }
+    }
+
+    pub(crate) fn block_count(&self) -> BlockCardinality {
+        self.inner.child_count()
+    }
+
+    pub(crate) fn size(&self) -> u64 {
+        self.byte_count
     }
 }
 
@@ -192,8 +206,14 @@ mod test {
         ctx.update(b0.hash.unwrap().as_ref());
         ctx.update(b0.hash.unwrap().as_ref());
 
-        assert_eq!(tree.references, 0);
-        assert_eq!(tree.get(0).unwrap(), Block::new(0, None::<&[u8]>));
+        assert_eq!(tree.size(), 11);
+        assert_eq!(tree.block_count(), 1);
+
+        let block = tree.get(0).unwrap();
+
+        assert_eq!(block.number(), b0.number());
+        assert_eq!(block.size(), b0.size());
+        assert_eq!(block.hash(), b0.hash());
 
         assert_matches!(
             tree.inner,
@@ -227,9 +247,20 @@ mod test {
         ctx.update(b0.hash.unwrap().as_ref());
         ctx.update(b1.hash.unwrap().as_ref());
 
-        assert_eq!(tree.references, 0);
-        assert_eq!(tree.get(0).unwrap(), Block::new(20, None::<&[u8]>));
-        assert_eq!(tree.get(1).unwrap(), Block::new(21, None::<&[u8]>));
+        assert_eq!(tree.size(), 23);
+        assert_eq!(tree.block_count(), 2);
+
+        // quick-ish way to test each individual block
+        block_list
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let block = tree.get(i as u64).unwrap();
+                assert_eq!(block.number(), b.number());
+                assert_eq!(block.size(), b.size());
+                assert_eq!(block.hash(), b.hash());
+            })
+            .for_each(|()| ());
 
         assert_matches!(
             tree.inner,
@@ -297,12 +328,20 @@ mod test {
         ctx.update(b44.as_ref());
         let b012344 = ctx.finish();
 
-        assert_eq!(tree.references, 0);
-        assert_eq!(tree.get(0).unwrap(), Block::new(0, None::<&[u8]>));
-        assert_eq!(tree.get(1).unwrap(), Block::new(10, None::<&[u8]>));
-        assert_eq!(tree.get(2).unwrap(), Block::new(200, None::<&[u8]>));
-        assert_eq!(tree.get(3).unwrap(), Block::new(3000, None::<&[u8]>));
-        assert_eq!(tree.get(4).unwrap(), Block::new(40000, None::<&[u8]>));
+        assert_eq!(tree.size(), 70);
+        assert_eq!(tree.block_count(), 5);
+
+        // quick-ish way to test each individual block
+        block_list
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let block = tree.get(i as u64).unwrap();
+                assert_eq!(block.number(), b.number());
+                assert_eq!(block.size(), b.size());
+                assert_eq!(block.hash(), b.hash());
+            })
+            .for_each(|()| ());
 
         assert_matches!(
             tree.inner,

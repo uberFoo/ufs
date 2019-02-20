@@ -120,6 +120,11 @@ where
 
     /// Read data from a Block into a u8 vector
     ///
+    /// FIXME: Thinking about memory and the like last night, it occurred to me why `std::io::Read`
+    /// takes a reference to a slice of bytes, rather than what I'm doing here.  The reason (as I
+    /// see it anyway) is to avoid copying memory.  At this point, we can't know how the memory
+    /// is going to be used.  By returning a `Vec<u8>` the caller is forced to use the vector --
+    /// even if they have their own buffer allocated to take the bytes.
     pub(crate) fn read(&self, block: &Block) -> Result<Vec<u8>, Error> {
         if let Block {
             number: Some(block_number),
