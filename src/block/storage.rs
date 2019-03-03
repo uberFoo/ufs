@@ -3,7 +3,7 @@ pub mod memory;
 
 use failure::Error;
 
-use crate::block::{Block, BlockCardinality, BlockSize, BlockSizeType};
+use crate::block::{BlockCardinality, BlockSize, BlockSizeType};
 
 /// Persistent Storage for Blocks
 ///

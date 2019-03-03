@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bincode;
 use failure::{format_err, Error};
+use log::{trace};
 
 use crate::block::{
     hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality,
@@ -106,6 +107,7 @@ where
             let end = data.len().min(self.store.block_size() as usize);
             let bytes = &data[..end];
             let byte_count = self.store.write_block(number, bytes)?;
+            trace!("write block 0x{:x?}", number);
             Ok(Block {
                 byte_count,
                 number: Some(number),
@@ -135,6 +137,7 @@ where
             let bytes = self.store.read_block(*block_number)?;
             let hash = BlockHash::new(&bytes);
             if hash == *block_hash {
+                trace!("read block 0x{:x?}", *block_number);
                 Ok(bytes)
             } else {
                 Err(format_err!(
@@ -187,6 +190,15 @@ where
     }
 }
 
+impl<'a, BS> Drop for BlockManager<BS>
+where
+    BS: BlockStorage,
+{
+    fn drop(&mut self) {
+        self.serialize();
+    }
+}
+
 #[cfg(test)]
 // FIXME: It seems like I should be able to make these tests generic over all of the available
 //        BlockStorage implementations?
@@ -201,7 +213,7 @@ mod test {
 
     #[test]
     fn not_enough_free_blocks_error() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 1));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
 
         let blocks = bm.write(&vec![0x0; 513][..]);
         assert_eq!(
@@ -213,7 +225,7 @@ mod test {
 
     #[test]
     fn tiny_test() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 4));
 
         let block = bm.write(b"abc").unwrap();
         println!("{:#?}", block);
@@ -235,7 +247,7 @@ mod test {
 
     #[test]
     fn write_data_smaller_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 4));
 
         let block = bm.write(&vec![0x38; 511][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -249,7 +261,7 @@ mod test {
 
     #[test]
     fn write_data_larger_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 5));
 
         let block = bm.write(&vec![0x38; 513][..]).unwrap();
         assert_eq!(bm.free_block_count(), 1);
@@ -304,7 +316,7 @@ mod test {
     #[test]
     fn metadata() {
         let path = "/tmp/ufs_test/meta";
-        let mut bm = BlockManager::new(FileStore::new(&path, BlockSize::FiveTwelve, 4).unwrap());
+        let mut bm = BlockManager::new(FileStore::new(&path, BlockSize::FiveTwelve, 5).unwrap());
 
         bm.serialize();
         let (fs, metadata) = FileStore::load(&path).unwrap();

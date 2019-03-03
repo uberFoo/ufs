@@ -5,6 +5,7 @@
 //! I'm implementing Read and Write on this for now.  I don't think it'll live here long term.
 use std::collections::VecDeque;
 
+use bincode;
 use ring::{self, digest};
 use serde_derive::{Deserialize, Serialize};
 
@@ -20,6 +21,20 @@ pub(crate) struct BlockTree {
 }
 
 impl BlockTree {
+    pub(crate) fn deserialize_using<R>(reader: R) -> bincode::Result<Self>
+    where
+        R: std::io::Read,
+    {
+        bincode::deserialize_from(reader)
+    }
+
+    pub(crate) fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+    where
+        T: AsRef<[u8]>,
+    {
+        bincode::deserialize_from(bytes.as_ref())
+    }
+
     /// FIXME:
     ///  * should be hardened to second pre-image attack
     pub(crate) fn new(blocks: &Vec<Block>) -> Self {

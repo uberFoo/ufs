@@ -1,10 +1,12 @@
 //! Buffered Reader for BlockTrees
 //!
 use std::{
-    cmp,
+    cell::RefCell,
     io::{self, prelude::*},
-    ptr,
+    rc::Rc,
 };
+
+use log::trace;
 
 use crate::block::{
     manager::BlockManager, storage::BlockStorage, tree::BlockTree, BlockCardinality,
@@ -13,14 +15,16 @@ use crate::block::{
 /// True NFB
 /// Note that it _does_ need to be at least as large as the largest available block size.  It should
 /// also probably be some multiple of that block size.
-const DEFAULT_BUF_SIZE: usize = 512; // 8192;
+const DEFAULT_BUF_SIZE: usize = 8192;
 
-pub(crate) struct BlockTreeReader<'a, S>
+pub(crate) struct BlockTreeReader<S>
 where
     S: BlockStorage,
 {
-    list: &'a BlockTree,
-    manager: &'a BlockManager<S>,
+    // list: &'a BlockTree,
+    list: Box<BlockTree>,
+    // manager: &'a BlockManager<S>,
+    manager: Rc<RefCell<BlockManager<S>>>,
     // A cursor that points to the current read position, as a function of the total size of all of
     // the blocks combined.
     pos: usize,
@@ -34,11 +38,12 @@ where
     buf_extent: usize,
 }
 
-impl<'a, S> BlockTreeReader<'a, S>
+impl<S> BlockTreeReader<S>
 where
     S: BlockStorage,
 {
-    pub(crate) fn new(list: &'a BlockTree, manager: &'a BlockManager<S>) -> Self {
+    // pub(crate) fn new(list: &'a BlockTree, manager: &'a BlockManager<S>) -> Self {
+    pub(crate) fn new(list: Box<BlockTree>, manager: Rc<RefCell<BlockManager<S>>>) -> Self {
         unsafe {
             let mut buf = Vec::with_capacity(DEFAULT_BUF_SIZE);
             // This is so that into_boxed_slice does not shrink our buffer to 0 len.
@@ -60,17 +65,24 @@ where
 
     fn read_block(&mut self) {
         if let Some(block) = self.list.get(self.next_block) {
-            if let Ok(data) = self.manager.read(&block) {
-                let len = data.len();
-                self.next_block += 1;
-                self.buf_extent += len;
-                let read = data.as_slice().read(&mut self.buf);
+            if let Ok(data) = self.manager.borrow().read(&block) {
+                if let Ok(read) = data.as_slice().read(&mut self.buf) {
+                    // let len = data.len();
+                    self.next_block += 1;
+                    self.buf_extent += read;
+                    trace!(
+                        "read_block bytes read {}, next_block {}, buf_extent {}",
+                        read,
+                        self.next_block,
+                        self.buf_extent
+                    );
+                }
             }
         }
     }
 }
 
-impl<'a, S> Read for BlockTreeReader<'a, S>
+impl<S> Read for BlockTreeReader<S>
 where
     S: BlockStorage,
 {
@@ -86,7 +98,7 @@ where
     }
 }
 
-impl<'a, S> BufRead for BlockTreeReader<'a, S>
+impl<S> BufRead for BlockTreeReader<S>
 where
     S: BlockStorage,
 {
@@ -98,6 +110,19 @@ where
             self.buf_offset = offset;
         }
 
+        // let end = cmp::min(self.buf_extent - self.buf_offset, )
+
+        trace!(
+            "pos {}, buf_offset {}, buf_extent {}",
+            self.pos,
+            self.buf_offset,
+            self.buf_extent
+        );
+        trace!(
+            "start {}, end {}",
+            self.pos - self.buf_offset,
+            self.buf_extent - self.buf_offset
+        );
         Ok(&self.buf[self.pos - self.buf_offset..self.buf_extent - self.buf_offset])
     }
 

@@ -61,6 +61,24 @@ impl From<u32> for BlockSize {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) enum BlockType {
+    Pointer(Block),
+}
+
+impl BlockType {
+    pub(crate) fn serialize(&self) -> bincode::Result<Vec<u8>> {
+        bincode::serialize(&self)
+    }
+
+    pub(crate) fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+    where
+        T: AsRef<[u8]>,
+    {
+        bincode::deserialize(bytes.as_ref())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Block {
     byte_count: BlockSizeType,

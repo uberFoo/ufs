@@ -30,11 +30,9 @@ fn main() -> Result<(), Error> {
     };
 
     let mut ufs_fuse = UberFSFuse::new(&mut ufs);
-    ufs_fuse.load_files();
+    ufs_fuse.load_root_directory();
 
     mount(ufs_fuse, &opt.mount_path, &[])?;
-
-    ufs.save_file_backed();
 
     Ok(())
 }
