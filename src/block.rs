@@ -14,20 +14,15 @@
 //!
 //! FIXME: BlockLists should serialize when dropped.
 
-mod meta;
-
-pub(crate) mod manager;
-pub(crate) mod storage;
-
 mod hash;
-// pub(crate) mod tree;
+pub(crate) mod manager;
+mod meta;
+pub(crate) mod storage;
+pub(crate) mod tree;
 
 use serde_derive::{Deserialize, Serialize};
 
-pub use self::{
-    manager::BlockManager,
-    storage::{file::FileStore, memory::MemoryStore, BlockStorage},
-};
+pub(crate) use self::storage::file::FileStore;
 
 use self::hash::BlockHash;
 
@@ -66,6 +61,24 @@ impl From<u32> for BlockSize {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) enum BlockType {
+    Pointer(Block),
+}
+
+impl BlockType {
+    pub(crate) fn serialize(&self) -> bincode::Result<Vec<u8>> {
+        bincode::serialize(&self)
+    }
+
+    pub(crate) fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+    where
+        T: AsRef<[u8]>,
+    {
+        bincode::deserialize(bytes.as_ref())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Block {
     byte_count: BlockSizeType,
@@ -74,6 +87,39 @@ pub(crate) struct Block {
 }
 
 impl Block {
+    pub(crate) fn nasty_hack(
+        number: BlockCardinality,
+        size: BlockSizeType,
+        hash: BlockHash,
+    ) -> Self {
+        Block {
+            byte_count: size,
+            number: Some(number),
+            hash: Some(hash),
+        }
+    }
+
+    pub(crate) fn new<B>(number: BlockCardinality, bytes: Option<B>) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        match bytes {
+            Some(bytes) => {
+                let bytes = bytes.as_ref();
+                Block {
+                    byte_count: bytes.len() as BlockSizeType,
+                    number: Some(number),
+                    hash: Some(BlockHash::new(bytes)),
+                }
+            }
+            None => Block {
+                byte_count: 0,
+                number: Some(number),
+                hash: None,
+            },
+        }
+    }
+
     pub(crate) fn null_block() -> Self {
         Block {
             byte_count: 0,
@@ -82,7 +128,15 @@ impl Block {
         }
     }
 
+    pub(crate) fn number(&self) -> Option<BlockCardinality> {
+        self.number
+    }
+
     pub(crate) fn size(&self) -> usize {
         self.byte_count as usize
+    }
+
+    pub(crate) fn hash(&self) -> Option<BlockHash> {
+        self.hash
     }
 }

@@ -13,6 +13,7 @@
 //! * Option for sparse initialization?
 //! * Option for sparse blocks?
 use failure::{format_err, Error};
+use log::trace;
 
 use crate::block::{
     meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType,
@@ -150,8 +151,9 @@ impl BlockStorage for FileStore {
             }
 
             let path = FileStore::path_for_block(&self.root_path, bn);
-            fs::write(path, data);
+            fs::write(path, data)?;
 
+            trace!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
             Ok(data.len() as BlockSizeType)
         }
     }
@@ -162,6 +164,8 @@ impl BlockStorage for FileStore {
         } else {
             let path = FileStore::path_for_block(&self.root_path, bn);
             let data = fs::read(path)?;
+            trace!("read {} bytes from block 0x{:x?}", data.len(), bn);
+
             Ok(data)
         }
     }

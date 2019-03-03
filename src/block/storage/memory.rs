@@ -6,6 +6,7 @@
 //! implementation, albeit one that would be memory constrained.
 
 use failure::{format_err, Error};
+use log::trace;
 
 use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType};
 
@@ -60,6 +61,7 @@ impl BlockStorage for MemoryStore {
         if let Some(memory) = self.blocks.get_mut(bn as usize) {
             memory.extend_from_slice(data);
 
+            trace!("wrote {} bytes to block {}", data.len(), bn);
             Ok(data.len() as BlockSizeType)
         } else {
             Err(format_err!("request for bogus block {}", bn))
@@ -68,6 +70,7 @@ impl BlockStorage for MemoryStore {
 
     fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
         if let Some(memory) = self.blocks.get(bn as usize) {
+            trace!("read {} bytes from block {}", memory.len(), bn);
             Ok(memory.clone())
         } else {
             Err(format_err!("request for bogus block {}", bn))
