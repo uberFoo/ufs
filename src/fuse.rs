@@ -25,7 +25,7 @@ const TIME: Timespec = Timespec {
 };
 
 enum InodeBlocks {
-    Tree(BlockTree),
+    // Tree(BlockTree),
     Reader(Box<dyn Read>),
     Writer(Box<dyn Write>),
     None,
@@ -187,7 +187,10 @@ impl<'a> Filesystem for UberFSFuse<'a> {
         trace!("getattr inode: {}", ino);
         match self.inodes.get(ino as usize) {
             Some(inode) => reply.attr(&TTL, &inode.file_attr()),
-            None => reply.error(ENOENT),
+            None => {
+                error!("can't find requested inode {}", ino);
+                reply.error(ENOENT)
+            }
         };
     }
 
@@ -205,6 +208,7 @@ impl<'a> Filesystem for UberFSFuse<'a> {
             }
         }
 
+        debug!("can't find ({:?}) under parent ({})", name, parent);
         reply.error(ENOENT);
     }
 
@@ -319,15 +323,12 @@ impl<'a> Filesystem for UberFSFuse<'a> {
             flags,
             flush
         );
+
         if let Some(inode) = self.inodes.get_mut(ino as usize) {
-            if let Some(ref mut writer) = inode.blocks.writer() {
-                // writer.flush();
-                inode.blocks = InodeBlocks::None;
-                reply.ok();
-            } else {
-                reply.error(ENOENT);
-            }
+            inode.blocks = InodeBlocks::None;
+            reply.ok();
         } else {
+            trace!("attempted to release unknown inode {}", ino);
             reply.error(ENOENT);
         }
     }
@@ -344,7 +345,12 @@ impl<'a> Filesystem for UberFSFuse<'a> {
         size: u32,
         reply: ReplyData,
     ) {
-        trace!("read ino: {}, offset: {}, size: {}", ino, offset, size);
+        trace!(
+            "read ino: {}, offset: {}, bytes remaining: {}",
+            ino,
+            offset,
+            size
+        );
 
         if let Some(inode) = self.inodes.get_mut(ino as usize) {
             trace!(
@@ -353,32 +359,49 @@ impl<'a> Filesystem for UberFSFuse<'a> {
                 inode.name,
                 if let Some(b) = inode.size { b } else { 0 }
             );
-            let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
-            let reader = self.file_system.entry_reader(path);
-            inode.blocks = InodeBlocks::Reader(Box::new(reader));
-            if let Some(ref mut reader) = inode.blocks.reader() {
-                let mut buffer: Vec<u8> = vec![0; //Vec::with_capacity(
-                    self.file_system.block_manager.borrow().block_size() as usize];
-                // );
-                match reader.read(&mut buffer) {
-                    // match self.file_system.root_dir.get_entry(&inode.name) {
-                    // Some(block_tree) => {
-                    // reply.data(block_tree.read())
-                    // }
-                    Ok(bytes) => {
-                        // reply.data(&buffer[offset as usize..bytes]);
-                        reply.data(&buffer[..bytes]);
-                        return;
-                    }
-                    Err(e) => {
-                        // FIXME: Do I want/need to go to the trouble to impl Debug for Inode?
-                        error!("error reading inode {}: {}", ino, e);
-                        // error!("error reading inode {:?}: {}", inode, e);
-                    }
-                };
-            }
+
+            // FIXME: Refactor the inner reading bits below.
+            match inode.blocks.reader() {
+                Some(ref mut reader) => {
+                    trace!("using existing reader");
+                    let mut buffer: Vec<u8> =
+                        vec![0; self.file_system.block_manager.borrow().block_size() as usize];
+                    match reader.read(&mut buffer) {
+                        Ok(len) => {
+                            trace!("returning {} bytes", len);
+                            reply.data(&buffer[..len]);
+                            return;
+                        }
+                        Err(e) => {
+                            // FIXME: Do I want/need to go to the trouble to impl Debug for Inode?
+                            error!("error reading inode {}: {}", ino, e);
+                        }
+                    };
+                }
+                None => {
+                    trace!("making fresh reader");
+                    let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
+                    inode.blocks =
+                        InodeBlocks::Reader(Box::new(self.file_system.file_reader(path)));
+                    let reader = inode.blocks.reader().unwrap();
+                    let mut buffer: Vec<u8> =
+                        vec![0; self.file_system.block_manager.borrow().block_size() as usize];
+                    match reader.read(&mut buffer) {
+                        Ok(len) => {
+                            trace!("returning {} bytes", len);
+                            reply.data(&buffer[..len]);
+                            return;
+                        }
+                        Err(e) => {
+                            // FIXME: Do I want/need to go to the trouble to impl Debug for Inode?
+                            error!("error reading inode {}: {}", ino, e);
+                        }
+                    };
+                }
+            };
         }
 
+        error!("error in read");
         reply.error(ENOENT);
     }
 
@@ -400,24 +423,42 @@ impl<'a> Filesystem for UberFSFuse<'a> {
         );
 
         if let Some(inode) = self.inodes.get_mut(ino as usize) {
-            let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
-            let writer = self.file_system.entry_writer(path);
-            inode.blocks = InodeBlocks::Writer(Box::new(writer));
-            if let Some(ref mut writer) = inode.blocks.writer() {
-                // match writer.write(&data[offset as usize..]) {
-                match writer.write(&data[..]) {
-                    Ok(size) => {
-                        trace!("wrote {} bytes", size);
+            match inode.blocks.writer() {
+                Some(ref mut writer) => {
+                    trace!("using existing writer");
+                    match writer.write(&data[..]) {
+                        Ok(size) => {
+                            trace!("wrote {} bytes", size);
+                            // TODO: Need to sort out how this works, because adding the bytes we wrote
+                            // to the existing size isn't the right thing.
 
-                        let new_size: u64 = if let Some(n) = inode.size {
-                            n + size as u64
-                        } else {
-                            size as u64
-                        };
-                        inode.size.replace(new_size);
-                        reply.written(size as u32);
+                            let new_size: u64 = if let Some(n) = inode.size {
+                                n + size as u64
+                            } else {
+                                size as u64
+                            };
+                            inode.size.replace(new_size);
+
+                            reply.written(size as u32);
+                        }
+                        _ => reply.error(ENOENT),
                     }
-                    _ => reply.error(ENOENT),
+                }
+                None => {
+                    trace!("making fresh writer");
+                    let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
+                    let writer = self.file_system.file_writer(path);
+                    inode.blocks = InodeBlocks::Writer(Box::new(writer));
+                    let writer = inode.blocks.writer().unwrap();
+                    match writer.write(&data[..]) {
+                        Ok(size) => {
+                            trace!("wrote {} bytes", size);
+                            inode.size.replace(size as u64);
+
+                            reply.written(size as u32);
+                        }
+                        _ => reply.error(ENOENT),
+                    }
                 }
             }
         } else {

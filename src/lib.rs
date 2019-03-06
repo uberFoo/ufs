@@ -4,11 +4,13 @@
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use failure::Error;
+use log::trace;
 
 mod block;
 mod directory;
 pub mod fuse;
 pub mod io;
+// mod vm;
 
 pub(crate) use {
     block::{BlockCardinality, BlockSize, BlockType},
@@ -81,25 +83,34 @@ impl<'a> UberFileSystem<FileStore> {
         let (file_store, metadata) = FileStore::load(path.as_ref())?;
         let block_manager = BlockManager::load(file_store, metadata);
 
-        let root_dir = if let Ok(block_ptr_bytes) = block_manager.read_metadata("@root_dir_ptr") {
-            if let Ok(BlockType::Pointer(block)) = BlockType::deserialize(block_ptr_bytes) {
-                if let Ok(tree_bytes) = block_manager.read(&block) {
-                    if let Ok(root_dir) = Directory::deserialize(tree_bytes) {
-                        root_dir
-                    } else {
-                        panic!("Serious problem reading file system root directory");
-                    }
-                } else {
-                    panic!("Serious problem reading block tree");
-                }
-            } else {
-                panic!("Serious problem reading block");
-            }
-        } else {
-            panic!("Serious problem reading file system root directory location");
-        };
+        let root_dir = match block_manager.read_metadata("@root_dir_ptr") {
+            Ok(block_ptr_bytes) => {
+                trace!("read block_ptr_bytes {:?}", block_ptr_bytes);
+                match BlockType::deserialize(block_ptr_bytes) {
+                    Ok(BlockType::Pointer(block)) => {
+                        trace!("deserialized block_ptr_bytes to {:#?}", block);
+                        match block_manager.read(&block) {
+                            Ok(tree_bytes) => {
+                                trace!("read block_ptr block bytes {:?}", tree_bytes);
+                                match Directory::deserialize(tree_bytes) {
+                                    Ok(root_dir) => {
+                                        trace!("deserialized root_dir {:#?}", root_dir);
+                                        root_dir
+                                    }
+                                    Err(e) => {
+                                        panic!("problem deserializing root directory {:?}", e);
+                                    }
+                                }
+                            }
 
-        // let block_manager = Rc::new(RefCell::new(block_manager));
+                            Err(e) => panic!("problem reading root_dir blocks {:?}", e),
+                        }
+                    }
+                    Err(e) => panic!("problem deserializing root direcory block_ptr {:?}", e),
+                }
+            }
+            Err(e) => panic!("problem reading metadata for `@root_dir_ptr` {:?}", e),
+        };
 
         Ok(UberFileSystem {
             block_manager: Rc::new(RefCell::new(block_manager)),
@@ -109,9 +120,12 @@ impl<'a> UberFileSystem<FileStore> {
         })
     }
 
-    /// Return the contents of a Directory
+    /// List the contents of a Directory
     ///
+    /// This function takes a Path and returns a Vec of (name, size) tuples -- one for each file
+    /// contained within the specified directory.
     ///
+    /// TODO: Verify that the path exists, and do something with it!
     pub fn list_files<P>(&self, path: P) -> Vec<(String, u64)>
     where
         P: AsRef<Path>,
@@ -148,7 +162,7 @@ impl<'a> UberFileSystem<FileStore> {
     /// Write bytes to a file
     ///
     ///
-    pub fn entry_writer<P>(&mut self, path: P) -> DirectoryEntryWriter<FileStore>
+    pub fn file_writer<P>(&mut self, path: P) -> DirectoryEntryWriter<FileStore>
     where
         P: AsRef<Path>,
     {
@@ -160,7 +174,7 @@ impl<'a> UberFileSystem<FileStore> {
     /// Read bytes from a file
     ///
     ///
-    pub fn entry_reader<P>(&mut self, path: P) -> DirectoryEntryReader<FileStore>
+    pub fn file_reader<P>(&mut self, path: P) -> DirectoryEntryReader<FileStore>
     where
         P: AsRef<Path>,
     {

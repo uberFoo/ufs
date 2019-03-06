@@ -51,6 +51,7 @@ where
             // This initializes the buffer to zeroes...and I don't think that it's actually
             // necessary.
             // ptr::write_bytes(buf.as_mut_ptr(), 0, DEFAULT_BUF_SIZE);
+            trace!("new BlockTreeReader with {:#?}", list);
             BlockTreeReader {
                 list,
                 manager,
