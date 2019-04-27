@@ -10,8 +10,7 @@
 //!
 //! ## FIXME
 //! * It might be better to build a more shallow directory tree: `root_dir/a2/3d/f0.ufsb`.
-//! * Option for sparse initialization?
-//! * Option for sparse blocks?
+//! * Optionally don't create files for every block.
 use failure::{format_err, Error};
 use log::trace;
 
@@ -28,7 +27,7 @@ const BLOCK_EXT: &str = "ufsb";
 
 /// File-based Block Storage
 ///
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FileStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
@@ -103,10 +102,9 @@ impl FileStore {
         make_dirs(&path, depth).unwrap();
 
         // Now allocate the blocks.
-        let block_data = vec![0u8];
         for block in 0..count {
             let path = FileStore::path_for_block(&path, block);
-            fs::write(path, &block_data)?;
+            fs::File::create(path).expect(&format!("Unable to create file for block {}.", block));
         }
 
         Ok(())

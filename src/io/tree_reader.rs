@@ -144,7 +144,7 @@ mod test {
         let block = bm.write(b"abc").unwrap();
         let tree = BlockTree::new(&vec![block]);
 
-        let mut btr = BlockTreeReader::new(&tree, &bm);
+        let mut btr = BlockTreeReader::new(Box::new(tree), Rc::new(RefCell::new(bm)));
 
         let mut buffer = [0_u8; 0x10];
         let n_read = btr.read(&mut buffer).unwrap();
@@ -161,7 +161,7 @@ mod test {
             bm.write(b"hi").unwrap(),
         ]);
 
-        let mut btr = BlockTreeReader::new(&tree, &bm);
+        let mut btr = BlockTreeReader::new(Box::new(tree), Rc::new(RefCell::new(bm)));
 
         let mut buffer = [0_u8; 0x10];
         let n_read = btr.read(&mut buffer).unwrap();
@@ -183,7 +183,7 @@ mod test {
             bm.write(b"hi").unwrap(),
         ]);
 
-        let mut btr = BlockTreeReader::new(&tree, &bm);
+        let mut btr = BlockTreeReader::new(Box::new(tree), Rc::new(RefCell::new(bm)));
 
         let mut buffer = [0_u8; 0x3];
         let n_read = btr.read(&mut buffer).unwrap();
