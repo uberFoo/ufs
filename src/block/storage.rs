@@ -3,7 +3,7 @@ pub mod memory;
 
 use failure::Error;
 
-use crate::block::{BlockCardinality, BlockSize, BlockSizeType};
+use crate::block::{BlockCardinality, BlockNumber, BlockSize, BlockSizeType};
 
 /// Persistent Storage for Blocks
 ///
@@ -28,12 +28,12 @@ pub trait BlockStorage {
     /// FIXME:
     /// * Implementations should check that the size of the data is not larger than the block size.
     /// * Create some Error type that we can use when something like the above happens.
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
+    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>;
 
     /// Read a Block
     ///
     /// Return a fresh copy of the bytes contained in the specified block, as a `Vec<u8>`.
-    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error>;
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error>;
 }

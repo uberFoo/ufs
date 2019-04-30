@@ -151,11 +151,6 @@ where
         }
     }
 
-    pub fn read_raw_number(&self, number: BlockCardinality) -> Result<Vec<u8>, Error> {
-        let bytes = self.store.read_block(number)?;
-        Ok(bytes)
-    }
-
     pub(crate) fn reserve_metadata<K>(&mut self, key: K)
     where
         K: Into<String>,
@@ -324,7 +319,7 @@ mod test {
         let mut bm = BlockManager::new(FileStore::new(&path, BlockSize::FiveTwelve, 5).unwrap());
 
         bm.serialize();
-        let (fs, metadata) = FileStore::load(&path).unwrap();
+        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);
 
@@ -335,7 +330,7 @@ mod test {
         bm.get_free_block().unwrap();
         bm.serialize();
 
-        let (fs, metadata) = FileStore::load(&path).unwrap();
+        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);
     }

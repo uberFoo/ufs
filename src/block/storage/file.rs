@@ -15,7 +15,8 @@ use failure::{format_err, Error};
 use log::trace;
 
 use crate::block::{
-    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType,
+    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize,
+    BlockSizeType,
 };
 
 use std::{
@@ -54,7 +55,28 @@ impl FileStore {
         })
     }
 
-    pub(crate) fn load<P: AsRef<Path>>(path: P) -> Result<(Self, BlockMetadata), Error> {
+    /// Construct Existing
+    ///
+    /// Load an existing file store from disk.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let root_path: PathBuf = path.as_ref().into();
+        let path = FileStore::path_for_block(&root_path, 0);
+
+        let metadata = BlockMetadata::deserialize(fs::read(path)?)?;
+
+        Ok(FileStore {
+            block_size: metadata.size,
+            block_count: metadata.count,
+            root_path,
+        })
+    }
+
+    /// Construct Existing
+    ///
+    /// Crate level load that also returns the loaded metadata.
+    pub(crate) fn load_and_return_metadata<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, BlockMetadata), Error> {
         let root_path: PathBuf = path.as_ref().into();
         let path = FileStore::path_for_block(&root_path, 0);
 
@@ -110,8 +132,8 @@ impl FileStore {
         Ok(())
     }
 
-    /// It'd be cool to impl From<BlockCardinality> for PathBuf
-    fn path_for_block(root: &PathBuf, mut block: BlockCardinality) -> PathBuf {
+    /// It'd be cool to impl From<BlockNumber> for PathBuf
+    fn path_for_block(root: &PathBuf, mut block: BlockNumber) -> PathBuf {
         let mut path = root.clone();
         while block > 0xf {
             let nibble = block & 0xf;
@@ -134,7 +156,7 @@ impl BlockStorage for FileStore {
         self.block_size
     }
 
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
+    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>,
     {
@@ -156,7 +178,7 @@ impl BlockStorage for FileStore {
         }
     }
 
-    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {

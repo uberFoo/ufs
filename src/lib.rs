@@ -1,17 +1,10 @@
 #![warn(missing_docs)]
-//! A different sort of file system: UberFS
-//!
-//! # FIXME
-//! I need to touch on the following topics:
-//!  * Distributed block storage
-//!  * Block level encryption
-//!  * Merkle Tree usage
-//!  * WASM support
+//! A different sort of file system: *uberFS*
 //!
 //! # File System Structure
 //!
 //! Like every other file system, with some possible few exceptions, fixed-size blocks are the
-//! foundation of UberFS. What's different across all file systems is how they are utilized.
+//! foundation of *uberFS*. What's different across all file systems is how they are utilized.
 //! Particularly, in how the file system metadata is represented.  We'll touch on blocks, and other
 //! miscellany, but the primary focus of this section will be metadata representation.
 //!
@@ -25,9 +18,6 @@
 //! type may exist under the `@metadata` key.  Data specific to the block type lives under the
 //! `@data` key. Finally, each dictionary contains a `@checksum` key that contains the checksum
 //! for the entire dictionary.
-//!
-//! ### Block Trees
-//!
 //!
 //! ## Blocks
 //!
@@ -56,10 +46,73 @@
 //! Note that the above flies in the face of what was described above -- this is clearly not a
 //! dictionary.  Instead, it's legacy code that needs to be updated.
 //!
+//! ## Addressing
+//!
+//! Each file system has a unique ID, as discussed elsewhere. This ID forms a namespace for block
+//! numbers. Each block has a number, assigned by the file system starting at 0, and increasing
+//! until the file system is full.  Note that this does not preclude growing the file system.
+//!
+//! ## Block Lists
+//!
+//! A block list is how data (files, directories, metadata, etc.) is stitched together from
+//! disparate blocks. Below the discussion degrades to talking about files, but it is equally
+//! applicable to other entities stored on the file system.
+//!
+//! As files change, the history of it's contents is preserved via a block list. Blocks may be
+//! inserted into, and deleted from a block list, and a history is maintained. It is imagined that a
+//! user may intentionally delete an entire file, or some portion of it's history, but that is not
+//! the default use case. To this end blocks are for the most part write-once.
+//!
+//! Blocks are encrypted. Period. One of the main intentions of *uberFS* is privacy, and that's
+//! simply not possible without encryption. Additionally, the data must be preserved, and secured
+//! from bit-rot, intentional tampering, etc.
+//!
+//! Blocks are encrypted using an AEAD algorithm, and it's MAC is stored, along with the block
+//! number in a block list.  Prior to encryption each block is hashed with SHA256, and it's hash
+//! is also stored in the block list.  While this may seem a bit belt-and-suspenders, it allows
+//! validation of files based on either encrypted or clear-text blocks, and ensures against
+//! man-in-the-middle attacks on remote blocks.
+//!
+//! A block list is thus an array of tuples that include an *operation* (insert, or delete), a
+//! *block address* (note that this allows for files comprised of blocks distributed across file
+//! systems), a plain-text *hash*, and an encryption *MAC*.
+//!
+//! # API
+//!
+//! There are a number of services that need to be built on top of this library, and likely as not
+//! quite a few that I have not yet conceived. Therefore the API needs flexibility and generality.
+//!
+//! The services that I have in mind include:
+//!
+//!  * A remote *Block* service with a RESTful API. The purpose of this service is to provide an
+//! online block storage, with read/write capability. Encrypted blocks may be read, and written by
+//! remote file systems.
+//!
+//!  * A remote *execution* service that, with appropriate authentication, will execute WASM code
+//! against files, returning possibly transformed information based on the underlying data. This is
+//! distinct from the block service, but may be integrated into the same.
+//!
+//! * A FUSE-based file system adaptor to mount an *uberFS* as a native file system.
+//!
+//! * A web-based view for *uberFS*.
+//!
+//! ## Block Server
+//!
+//! The block service's main contribution is distributing blocks. It may or may not decrypt blocks,
+//! depending on whether proper authentication is provided. It is however intended to utilize TLS
+//! in order to preserve encryption in the event that it is returning decrypted blocks.
+
+//! ### Required End-Points
+//!
+//! * `read_block(number)`
+//! * `write_block(number)`
+//!
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use failure::Error;
+use lazy_static::lazy_static;
 use log::trace;
+use uuid::Uuid;
 
 mod block;
 mod directory;
@@ -68,18 +121,28 @@ pub mod io;
 // mod vm;
 
 pub(crate) use {
-    block::{BlockSize, BlockType},
+    block::{BlockCardinality, BlockSize, BlockType},
     directory::{Directory, DirectoryEntryReader, DirectoryEntryWriter, MutableDirectory},
 };
 
 pub use block::{
-    load_file_store,
     manager::BlockManager,
     storage::{file::FileStore, BlockStorage},
-    BlockCardinality,
+    BlockAddress, BlockNumber,
 };
 
+lazy_static! {
+    /// The UUID to rule them all
+    ///
+    /// This is the main V5 uuid namespace from which all UUIDs in ufs are derived.
+    static ref ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"uberfoo.com");
+}
+
 use crate::io::{BlockTreeReader, BlockTreeWriter};
+
+/// uberFS unique ID
+///
+pub type UfsUuid = Uuid;
 
 /// Main File System Implementation
 ///
@@ -137,7 +200,7 @@ impl<'a> UberFileSystem<FileStore> {
     where
         P: AsRef<Path>,
     {
-        let (file_store, metadata) = FileStore::load(path.as_ref())?;
+        let (file_store, metadata) = FileStore::load_and_return_metadata(path.as_ref())?;
         let block_manager = BlockManager::load(file_store, metadata);
 
         let root_dir = match block_manager.read_metadata("@root_dir_ptr") {

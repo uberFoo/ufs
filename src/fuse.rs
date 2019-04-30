@@ -1,3 +1,5 @@
+//! FUSE Interface for uberFS
+//!
 use std::{
     collections::HashMap,
     ffi::OsStr,

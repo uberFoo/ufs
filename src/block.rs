@@ -1,6 +1,6 @@
 //! Logical File Blocks
 //!
-//! This file system is comprized of blocks; file contents and metadata are stored in blocks.  The
+//! This file system is comprised of blocks; file contents and metadata are stored in blocks.  The
 //! blocks will generally exist on a disk, but net necessarily.  Even in the case when the blocks
 //! are on disk, they may be stored as files on another file system.
 //!
@@ -20,13 +20,25 @@ mod meta;
 pub(crate) mod storage;
 pub(crate) mod tree;
 
+use std::path::Path;
+
+use failure::Error;
 use serde_derive::{Deserialize, Serialize};
 
-pub(crate) use self::storage::file::FileStore;
+pub(crate) use self::{manager::BlockManager, storage::file::FileStore};
 
 use self::hash::BlockHash;
+use crate::UfsUuid;
 
+/// A logical block number.
+pub type BlockNumber = u64;
+/// Where a block lives?
+///
+/// The address is a two-tuple consisting of the file system ID, and a logical block number.
+pub struct BlockAddress(UfsUuid, BlockNumber);
+/// The number of blocks in a file system.
 pub type BlockCardinality = u64;
+/// The size of a block, in bytes.
 pub type BlockSizeType = u16;
 
 /// Available Block Sizes
