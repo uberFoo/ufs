@@ -11,7 +11,7 @@ use failure::Error;
 use futures::future;
 use hyper::{
     header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE},
-    rt::Future,
+    rt::{Future, Stream},
     service::service_fn,
     Body, Method, Request, Response, Server, StatusCode,
 };
@@ -23,6 +23,42 @@ use ufs::{BlockNumber, BlockStorage, FileStore};
 
 // Just a simple type alias
 type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
+
+fn get_store(
+    uri_path: &str,
+    bundle_root: &Path,
+    store_map: &mut HashMap<String, Option<FileStore>>,
+) -> Option<(String, FileStore)> {
+    trace!("store map {:#?}", store_map);
+    let path = Path::new(uri_path).strip_prefix("/").unwrap();
+    if path.iter().count() != 1 {
+        // Don't allow arbitrary paths within the host file system -- this is just an ID.
+        error!("Bundle ID is malformed {:?}", path);
+        None
+    } else {
+        let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
+        let bundle_path = bundle_root.join(bundle);
+
+        let store = store_map.entry(bundle.to_string()).or_insert_with(|| {
+            match FileStore::load(bundle_path.clone()) {
+                Ok(bs) => Some(bs),
+                Err(e) => {
+                    error!(
+                        "Unable to open File Store {}: {}",
+                        bundle_path.to_str().unwrap(),
+                        e
+                    );
+                    None
+                }
+            }
+        });
+
+        match store {
+            Some(store) => Some((bundle.to_string(), store.clone())),
+            None => None,
+        }
+    }
+}
 
 fn block_manager(
     req: Request<Body>,
@@ -36,70 +72,81 @@ fn block_manager(
 
     match (req.method(), req.uri().path()) {
         (&Method::GET, path) => {
-            let path = Path::new(path).strip_prefix("/").unwrap();
-            if path.iter().count() != 1 {
-                // Don't allow arbitrary paths within the file system.  This is just an ID.
-                error!("Bundle ID is malformed {:?}", path);
-                *response.status_mut() = StatusCode::BAD_REQUEST;
-            } else {
-                let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
-                let bundle_path = bundle_root.join(bundle);
+            if let Some((bundle, store)) = get_store(path, bundle_root, store_map) {
+                if let Some(query) = req.uri().query() {
+                    // FIXME:
+                    // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
+                    // * Allow a range of blocks, e.g., 5-9
+                    if let Ok(block) = query.parse::<BlockNumber>() {
+                        debug!("Request to read {}:{}", bundle, block);
+                        if let Ok(data) = store.read_block(block) {
+                            trace!("Read {} bytes", data.len());
 
-                println!("store {:?}", store_map);
-
-                let store = store_map.entry(bundle.to_string()).or_insert_with(|| {
-                    match FileStore::load(bundle_path.clone()) {
-                        // load_file_store(bundle_path.clone()) {
-                        Ok(bs) => Some(bs),
-                        Err(e) => {
-                            error!(
-                                "Unable to open File Store {}: {}",
-                                bundle_path.to_str().unwrap(),
-                                e
+                            response.headers_mut().insert(
+                                CONTENT_TYPE,
+                                HeaderValue::from_static("application/octet-stream"),
                             );
-                            None
-                        }
-                    }
-                });
-
-                if let Some(store) = store {
-                    if let Some(query) = req.uri().query() {
-                        // FIXME:
-                        // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
-                        // * Allow a range of blocks, e.g., 5-9
-                        if let Ok(block) = query.parse::<BlockNumber>() {
-                            debug!("Request for {}:{}", bundle, block);
-                            if let Ok(data) = store.read_block(block) {
-                                trace!("read data {:?}", data);
-
-                                response.headers_mut().insert(
-                                    CONTENT_TYPE,
-                                    HeaderValue::from_static("application/octet-stream"),
-                                );
-                                response.headers_mut().insert(
-                                    ACCESS_CONTROL_ALLOW_ORIGIN,
-                                    HeaderValue::from_static("*"),
-                                );
-                                *response.body_mut() = Body::from(data);
-                                *response.status_mut() = StatusCode::OK;
-                            } else {
-                                error!("Problem reading block '{}'", block);
-                            }
+                            response
+                                .headers_mut()
+                                .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+                            *response.body_mut() = Body::from(data);
+                            *response.status_mut() = StatusCode::OK;
                         } else {
-                            error!("Invalid block number: '{}'", query);
-                            *response.status_mut() = StatusCode::BAD_REQUEST;
+                            error!("Problem reading block {}", block);
                         }
                     } else {
-                        warn!("Missing block number.");
+                        error!("Invalid block number: '{}'", query);
                         *response.status_mut() = StatusCode::BAD_REQUEST;
                     }
+                } else {
+                    warn!("Missing block number.");
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
                 }
             }
         }
 
-        (&Method::POST, "/") => {
-            info!("Got a POST");
-            *response.status_mut() = StatusCode::OK;
+        (&Method::POST, path) => {
+            if let Some((bundle, mut store)) = get_store(path, bundle_root, store_map) {
+                if let Some(query) = req.uri().query() {
+                    if let Ok(block) = query.parse::<BlockNumber>() {
+                        debug!("Request to write {}:{}", bundle, block);
+
+                        let bytes_written = req
+                            .into_body()
+                            // A future of when we finally have the full body...
+                            .concat2()
+                            // `move` the `Response` into this future...
+                            .map(move |chunk| {
+                                let body = chunk.iter().cloned().collect::<Vec<u8>>();
+
+                                if let Ok(bytes_written) = store.write_block(block, body) {
+                                    trace!("Wrote {} bytes", bytes_written);
+                                    *response.body_mut() = Body::from(bytes_written.to_string());
+                                    *response.status_mut() = StatusCode::OK;
+                                    response
+                                } else {
+                                    error!("Problem writing block {}", block);
+                                    response
+                                }
+                            });
+
+                        // We can't just return the `Response` from this match arm,
+                        // because we can't set the body until the `concat` future
+                        // completed...
+                        //
+                        // However, `reversed` is actually a `Future` that will return
+                        // a `Response`! So, let's return it immediately instead of
+                        // falling through to the default return of this function.
+                        return Box::new(bytes_written);
+                    } else {
+                        error!("Invalid block number: '{}'", query);
+                        *response.status_mut() = StatusCode::BAD_REQUEST;
+                    }
+                } else {
+                    warn!("Missing block number.");
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                }
+            }
         }
 
         _ => {
@@ -121,7 +168,7 @@ fn main() -> Result<(), Error> {
     let addr = ([127, 0, 0, 1], port).into();
 
     let bundle_root =
-        env::var("BUNDLE_DIR").expect("BUNDLE_DIR must point to theh file system bundle directory");
+        env::var("BUNDLE_DIR").expect("BUNDLE_DIR must point to the file system bundle directory");
     if !Path::new(&bundle_root).is_dir() {
         panic!(
             "BUNDLE_DIR, {}, is not a directory, or does not exist.",
@@ -129,9 +176,13 @@ fn main() -> Result<(), Error> {
         );
     }
 
+    // FIXME: This does _not_ work as expected.
+    let store: HashMap<String, Option<FileStore>> = HashMap::new();
+
     let new_service = move || {
+        debug!("Starting a new service");
         let bundle_root = bundle_root.clone();
-        let mut store: HashMap<String, Option<FileStore>> = HashMap::new();
+        let mut store = store.clone();
 
         service_fn(move |req| block_manager(req, &Path::new(&bundle_root), &mut store))
     };
