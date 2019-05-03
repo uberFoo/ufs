@@ -22,10 +22,18 @@ for the entire dictionary.
 
 ### Blocks
 
-The blocks are fixed-size, and uniform for a 044iven file system.  Blocks contain nothing more
+The blocks are fixed-size, and uniform for a given file system.  Blocks contain nothing more
 than the raw data that is written to them.  Put another way, there is no metadata _about_ the
 block stored in the block _itself_.  Rather, metadata blocks contain information about blocks
 that make up files and directories.
+
+#### Working with Blocks
+
+Blocks storage is abstracted by the [BlockStorage] trait.  There are implementations that
+support storing blocks as files in on a host file system, in memory, and over the network.
+
+The BlockStorage trait has methods for reading (`read_block`) and, writing (`write_block`)
+blocks to implemented media.
 
 #### Block 0
 
