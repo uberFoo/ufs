@@ -16,7 +16,7 @@ use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSize
 /// turn out to be so otherwise.  Perhaps as a fast cache, or something, in the future.  Especially
 /// if we implement a means of converting between different block storage implementations, which is
 /// something I think we'll want.  Especially given the scenario of mounting remote file systems.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MemoryStore {
     block_size: BlockSize,
     block_count: BlockCardinality,

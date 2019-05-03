@@ -14,8 +14,12 @@ use crate::block::{Block, BlockCardinality, BlockHash, BlockSizeType};
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BlockTree {
     byte_count: u64,
-    //FIXME: This is a huge waste of space.  We should instead build a Vec<&LeafNode> when we lead
+    //FIXME: This is a huge waste of space.  We should instead build a Vec<&LeafNode> when we load
     // the tree.  Or build something that's useful when we validate block checksums, or something...
+    // Or...
+    // only store the vec, and store the inner node checksums in an array.  Just do away with the
+    // tree altogether.  But first, we need to compare the resulting size of each.  And benchmarks
+    // too.  And then pick the one with the best trade-off.
     block_list: Vec<LeafNode>,
     inner: BlockTreeNode,
 }

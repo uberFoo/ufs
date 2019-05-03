@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bincode;
 use failure::{format_err, Error};
-use log::{trace};
+use log::trace;
 
 use crate::block::{
     hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality,
@@ -15,7 +15,7 @@ use crate::block::{
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
 /// hashes are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockManager<BS>
 where
     BS: BlockStorage,
@@ -213,7 +213,7 @@ mod test {
 
     #[test]
     fn not_enough_free_blocks_error() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 1));
 
         let blocks = bm.write(&vec![0x0; 513][..]);
         assert_eq!(
@@ -225,7 +225,7 @@ mod test {
 
     #[test]
     fn tiny_test() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 4));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
 
         let block = bm.write(b"abc").unwrap();
         println!("{:#?}", block);
@@ -247,7 +247,7 @@ mod test {
 
     #[test]
     fn write_data_smaller_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 4));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 2));
 
         let block = bm.write(&vec![0x38; 511][..]).unwrap();
         assert_eq!(bm.free_block_count(), 0);
@@ -261,7 +261,7 @@ mod test {
 
     #[test]
     fn write_data_larger_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 5));
+        let mut bm = BlockManager::new(MemoryStore::new(BlockSize::FiveTwelve, 3));
 
         let block = bm.write(&vec![0x38; 513][..]).unwrap();
         assert_eq!(bm.free_block_count(), 1);
@@ -319,7 +319,7 @@ mod test {
         let mut bm = BlockManager::new(FileStore::new(&path, BlockSize::FiveTwelve, 5).unwrap());
 
         bm.serialize();
-        let (fs, metadata) = FileStore::load(&path).unwrap();
+        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);
 
@@ -330,7 +330,7 @@ mod test {
         bm.get_free_block().unwrap();
         bm.serialize();
 
-        let (fs, metadata) = FileStore::load(&path).unwrap();
+        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
         let bm2 = BlockManager::load(fs, metadata);
         assert_eq!(bm, bm2);
     }

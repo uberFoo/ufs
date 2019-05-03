@@ -1,6 +1,6 @@
 //! Logical File Blocks
 //!
-//! This file system is comprized of blocks; file contents and metadata are stored in blocks.  The
+//! This file system is comprised of blocks; file contents and metadata are stored in blocks.  The
 //! blocks will generally exist on a disk, but net necessarily.  Even in the case when the blocks
 //! are on disk, they may be stored as files on another file system.
 //!
@@ -20,13 +20,25 @@ mod meta;
 pub(crate) mod storage;
 pub(crate) mod tree;
 
+use std::{fmt, path::Path, str::FromStr};
+
+use failure::Error;
 use serde_derive::{Deserialize, Serialize};
 
-pub(crate) use self::storage::file::FileStore;
+pub(crate) use self::{manager::BlockManager, storage::file::FileStore};
 
 use self::hash::BlockHash;
+use crate::UfsUuid;
 
+/// A logical block number.
+pub type BlockNumber = u64;
+/// Where a block lives?
+///
+/// The address is a two-tuple consisting of the file system ID, and a logical block number.
+pub struct BlockAddress(UfsUuid, BlockNumber);
+/// The number of blocks in a file system.
 pub type BlockCardinality = u64;
+/// The size of a block, in bytes.
 pub type BlockSizeType = u16;
 
 /// Available Block Sizes
@@ -50,6 +62,33 @@ pub enum BlockSize {
     TwentyFortyEight = 2048,
 }
 
+#[derive(Debug)]
+pub struct ParseBlockSizeError {
+    kind: BlockSizeErrorKind,
+}
+
+#[derive(Debug)]
+pub enum BlockSizeErrorKind {
+    /// Parsing error
+    ///
+    /// Error parsing the string to an integer
+    ParseIntError,
+    /// Invalid size error
+    ///
+    /// The string parsed ok, but the block size is not valid.
+    ///
+    InvalidBlockSize,
+}
+
+impl fmt::Display for ParseBlockSizeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.kind {
+            BlockSizeErrorKind::ParseIntError => "Cannot parse string as integer".fmt(f),
+            BlockSizeErrorKind::InvalidBlockSize => "Invalid block size".fmt(f),
+        }
+    }
+}
+
 impl From<u32> for BlockSize {
     fn from(n: u32) -> Self {
         match n {
@@ -57,6 +96,27 @@ impl From<u32> for BlockSize {
             1024 => BlockSize::TenTwentyFour,
             2048 => BlockSize::TwentyFortyEight,
             _ => panic!("Invalid Block Size"),
+        }
+    }
+}
+
+impl FromStr for BlockSize {
+    type Err = ParseBlockSizeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(size) = s.parse::<u32>() {
+            match size {
+                512 => Ok(BlockSize::FiveTwelve),
+                1024 => Ok(BlockSize::TenTwentyFour),
+                2048 => Ok(BlockSize::TwentyFortyEight),
+                _ => Err(ParseBlockSizeError {
+                    kind: BlockSizeErrorKind::InvalidBlockSize,
+                }),
+            }
+        } else {
+            Err(ParseBlockSizeError {
+                kind: BlockSizeErrorKind::ParseIntError,
+            })
         }
     }
 }
