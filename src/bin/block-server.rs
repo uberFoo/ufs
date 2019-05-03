@@ -185,6 +185,11 @@ fn main() -> Result<(), Error> {
     }
 
     // FIXME: This does _not_ work as expected.
+    // It looks like new_service is _only_ called when I'm not using client::reqwest.  In other
+    // words, creating a reqwest::Client, and then using get on it caches the FileStore as expected.
+    // So there is some session stuff happening?
+    // Also, even when it appears to "work", it isn't really.  I really want the caching to happen
+    // globally.
     let store: HashMap<String, Option<FileStore>> = HashMap::new();
 
     let new_service = move || {

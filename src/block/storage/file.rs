@@ -15,9 +15,8 @@ use failure::{format_err, Error};
 use log::{debug, trace};
 
 use crate::block::{
-    meta::BlockMetadata,
-    storage::{BlockStorage, BlockStorageMetadata},
-    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize,
+    BlockSizeType,
 };
 
 use std::{
