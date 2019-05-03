@@ -20,7 +20,7 @@ mod meta;
 pub(crate) mod storage;
 pub(crate) mod tree;
 
-use std::path::Path;
+use std::{fmt, path::Path, str::FromStr};
 
 use failure::Error;
 use serde_derive::{Deserialize, Serialize};
@@ -62,6 +62,33 @@ pub enum BlockSize {
     TwentyFortyEight = 2048,
 }
 
+#[derive(Debug)]
+pub struct ParseBlockSizeError {
+    kind: BlockSizeErrorKind,
+}
+
+#[derive(Debug)]
+pub enum BlockSizeErrorKind {
+    /// Parsing error
+    ///
+    /// Error parsing the string to an integer
+    ParseIntError,
+    /// Invalid size error
+    ///
+    /// The string parsed ok, but the block size is not valid.
+    ///
+    InvalidBlockSize,
+}
+
+impl fmt::Display for ParseBlockSizeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.kind {
+            BlockSizeErrorKind::ParseIntError => "Cannot parse string as integer".fmt(f),
+            BlockSizeErrorKind::InvalidBlockSize => "Invalid block size".fmt(f),
+        }
+    }
+}
+
 impl From<u32> for BlockSize {
     fn from(n: u32) -> Self {
         match n {
@@ -69,6 +96,27 @@ impl From<u32> for BlockSize {
             1024 => BlockSize::TenTwentyFour,
             2048 => BlockSize::TwentyFortyEight,
             _ => panic!("Invalid Block Size"),
+        }
+    }
+}
+
+impl FromStr for BlockSize {
+    type Err = ParseBlockSizeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(size) = s.parse::<u32>() {
+            match size {
+                512 => Ok(BlockSize::FiveTwelve),
+                1024 => Ok(BlockSize::TenTwentyFour),
+                2048 => Ok(BlockSize::TwentyFortyEight),
+                _ => Err(ParseBlockSizeError {
+                    kind: BlockSizeErrorKind::InvalidBlockSize,
+                }),
+            }
+        } else {
+            Err(ParseBlockSizeError {
+                kind: BlockSizeErrorKind::ParseIntError,
+            })
         }
     }
 }

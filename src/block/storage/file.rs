@@ -12,11 +12,12 @@
 //! * It might be better to build a more shallow directory tree: `root_dir/a2/3d/f0.ufsb`.
 //! * Optionally don't create files for every block.
 use failure::{format_err, Error};
-use log::trace;
+use log::{debug, trace};
 
 use crate::block::{
-    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize,
-    BlockSizeType,
+    meta::BlockMetadata,
+    storage::{BlockStorage, BlockStorageMetadata},
+    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
 };
 
 use std::{
@@ -93,6 +94,10 @@ impl FileStore {
     }
 
     fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
+        debug!(
+            "Creating new file-based storage at {:?} with {} blocks having block size {:?}.",
+            path, count, size
+        );
         /// Little function that calls itself to create the directories in which we store our
         /// blocks.  Note that it currently makes more directories than strictly necessary.  I just
         /// don't feel like adding (figuring out really) the additional logic to minimize things.
@@ -105,6 +110,7 @@ impl FileStore {
                     make_dirs(&path, count)?;
                 }
             } else {
+                trace!("creating directory {:?}", root);
                 fs::DirBuilder::new().recursive(true).create(&root)?;
             }
             Ok(())
@@ -126,6 +132,7 @@ impl FileStore {
         // Now allocate the blocks.
         for block in 0..count {
             let path = FileStore::path_for_block(&path, block);
+            trace!("creating block file {:}", block);
             fs::File::create(path).expect(&format!("Unable to create file for block {}.", block));
         }
 

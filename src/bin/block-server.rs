@@ -70,83 +70,91 @@ fn block_manager(
 
     trace!("Received a request {:?}", req);
 
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, path) => {
+    match (req.method(), req.uri().path(), req.uri().query()) {
+        // Read a block
+        //
+        // The path component specifies the file system UUID, and the sole query component the
+        // block number.
+        (&Method::GET, path, Some(query)) => {
             if let Some((bundle, store)) = get_store(path, bundle_root, store_map) {
-                if let Some(query) = req.uri().query() {
-                    // FIXME:
-                    // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
-                    // * Allow a range of blocks, e.g., 5-9
-                    if let Ok(block) = query.parse::<BlockNumber>() {
-                        debug!("Request to read {}:{}", bundle, block);
-                        if let Ok(data) = store.read_block(block) {
-                            trace!("Read {} bytes", data.len());
+                // FIXME:
+                // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
+                // * Allow a range of blocks, e.g., 5-9
+                if let Ok(block) = query.parse::<BlockNumber>() {
+                    debug!("Request to read {}:{}", bundle, block);
+                    if let Ok(data) = store.read_block(block) {
+                        trace!("Read {} bytes", data.len());
 
-                            response.headers_mut().insert(
-                                CONTENT_TYPE,
-                                HeaderValue::from_static("application/octet-stream"),
-                            );
-                            response
-                                .headers_mut()
-                                .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-                            *response.body_mut() = Body::from(data);
-                            *response.status_mut() = StatusCode::OK;
-                        } else {
-                            error!("Problem reading block {}", block);
-                        }
+                        response.headers_mut().insert(
+                            CONTENT_TYPE,
+                            HeaderValue::from_static("application/octet-stream"),
+                        );
+                        response
+                            .headers_mut()
+                            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+                        *response.body_mut() = Body::from(data);
+                        *response.status_mut() = StatusCode::OK;
                     } else {
-                        error!("Invalid block number: '{}'", query);
-                        *response.status_mut() = StatusCode::BAD_REQUEST;
+                        error!("Problem reading block {}", block);
                     }
                 } else {
-                    warn!("Missing block number.");
+                    error!("Invalid block number: '{}'", query);
                     *response.status_mut() = StatusCode::BAD_REQUEST;
                 }
             }
         }
 
-        (&Method::POST, path) => {
+        // Write a block
+        // The path component specifies the file system UUID, and the sole query component the
+        // block number.
+        (&Method::POST, path, Some(query)) => {
             if let Some((bundle, mut store)) = get_store(path, bundle_root, store_map) {
-                if let Some(query) = req.uri().query() {
-                    if let Ok(block) = query.parse::<BlockNumber>() {
-                        debug!("Request to write {}:{}", bundle, block);
+                if let Ok(block) = query.parse::<BlockNumber>() {
+                    debug!("Request to write {}:{}", bundle, block);
 
-                        let bytes_written = req
-                            .into_body()
-                            // A future of when we finally have the full body...
-                            .concat2()
-                            // `move` the `Response` into this future...
-                            .map(move |chunk| {
-                                let body = chunk.iter().cloned().collect::<Vec<u8>>();
+                    let bytes_written = req
+                        .into_body()
+                        // A future of when we finally have the full body...
+                        .concat2()
+                        // `move` the `Response` into this future...
+                        .map(move |chunk| {
+                            let body = chunk.iter().cloned().collect::<Vec<u8>>();
 
-                                if let Ok(bytes_written) = store.write_block(block, body) {
-                                    trace!("Wrote {} bytes", bytes_written);
-                                    *response.body_mut() = Body::from(bytes_written.to_string());
-                                    *response.status_mut() = StatusCode::OK;
-                                    response
-                                } else {
-                                    error!("Problem writing block {}", block);
-                                    response
-                                }
-                            });
+                            if let Ok(bytes_written) = store.write_block(block, body) {
+                                trace!("Wrote {} bytes", bytes_written);
+                                *response.body_mut() = Body::from(bytes_written.to_string());
+                                *response.status_mut() = StatusCode::OK;
+                                response
+                            } else {
+                                error!("Problem writing block {}", block);
+                                response
+                            }
+                        });
 
-                        // We can't just return the `Response` from this match arm,
-                        // because we can't set the body until the `concat` future
-                        // completed...
-                        //
-                        // However, `reversed` is actually a `Future` that will return
-                        // a `Response`! So, let's return it immediately instead of
-                        // falling through to the default return of this function.
-                        return Box::new(bytes_written);
-                    } else {
-                        error!("Invalid block number: '{}'", query);
-                        *response.status_mut() = StatusCode::BAD_REQUEST;
-                    }
+                    // We can't just return the `Response` from this match arm,
+                    // because we can't set the body until the `concat` future
+                    // completed...
+                    //
+                    // However, `reversed` is actually a `Future` that will return
+                    // a `Response`! So, let's return it immediately instead of
+                    // falling through to the default return of this function.
+                    return Box::new(bytes_written);
                 } else {
-                    warn!("Missing block number.");
+                    error!("Invalid block number: '{}'", query);
                     *response.status_mut() = StatusCode::BAD_REQUEST;
                 }
             }
+        }
+
+        // Create a new file system
+        //
+        // The query string contains the particulars:
+        // * uuid=<uuid> is the new file system's uuid
+        // * size=<size> is the block size
+        // * blocks=<block count> is the number of blocks to allocate
+        (&Method::POST, "/create", None) => {
+            trace!("body {:#?}", req.body());
+            debug!("Created new file system");
         }
 
         _ => {
