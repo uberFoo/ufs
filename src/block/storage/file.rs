@@ -13,10 +13,10 @@
 //! * Optionally don't create files for every block.
 use failure::{format_err, Error};
 use log::{debug, trace};
+use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
-    meta::BlockMetadata, storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize,
-    BlockSizeType,
+    storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
 };
 
 use std::{
@@ -25,6 +25,28 @@ use std::{
 };
 
 const BLOCK_EXT: &str = "ufsb";
+
+/// Internal Metadata
+///
+/// Each block type of block storage is responsible for storing it's metadata.  For file-based
+/// storage, we're choosing to store it in a separate file, and using simple bincode-based
+/// serialization.
+#[derive(Deserialize, Serialize)]
+struct MetaData {
+    size: BlockSize,
+    count: BlockCardinality,
+}
+
+impl MetaData {
+    fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+    where
+        T: AsRef<[u8]>,
+    {
+        bincode::deserialize(bytes.as_ref())
+    }
+}
+
+const META_FILE: &str = "metadata";
 
 /// File-based Block Storage
 ///
@@ -55,41 +77,37 @@ impl FileStore {
         })
     }
 
+    /// Consistency Check
+    ///
+    pub fn check<P>(path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path>,
+    {
+        println!("Running consistency check on {:?}", path.as_ref());
+
+        let fs = FileStore::load(path)?;
+        println!("File-based Block Storage:");
+        println!("\tblock count: {}", fs.block_count);
+        println!("\tblock size: {}", fs.block_size);
+
+        Ok(())
+    }
+
     /// Construct Existing
     ///
     /// Load an existing file store from disk.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let root_path: PathBuf = path.as_ref().into();
-        let path = FileStore::path_for_block(&root_path, 0);
+        let mut path: PathBuf = path.as_ref().into();
+        path.push(META_FILE);
 
-        let metadata = BlockMetadata::deserialize(fs::read(path)?)?;
+        let metadata = MetaData::deserialize(fs::read(path)?)?;
 
         Ok(FileStore {
             block_size: metadata.size,
             block_count: metadata.count,
             root_path,
         })
-    }
-
-    /// Construct Existing
-    ///
-    /// Crate level load that also returns the loaded metadata.
-    pub(crate) fn load_and_return_metadata<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<(Self, BlockMetadata), Error> {
-        let root_path: PathBuf = path.as_ref().into();
-        let path = FileStore::path_for_block(&root_path, 0);
-
-        let metadata = BlockMetadata::deserialize(fs::read(path)?)?;
-
-        Ok((
-            FileStore {
-                block_size: metadata.size,
-                block_count: metadata.count,
-                root_path,
-            },
-            metadata,
-        ))
     }
 
     fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
@@ -105,7 +123,8 @@ impl FileStore {
                 let count = count - 1;
                 for i in 0x0..0x10 {
                     let mut path = root.clone();
-                    path.push(fmt::format(format_args!("{:x?}", i)));
+                    // path.push(fmt::format(format_args!("{:x?}", i)));
+                    path.push(format!("{:x?}", i));
                     make_dirs(&path, count)?;
                 }
             } else {
@@ -132,8 +151,15 @@ impl FileStore {
         for block in 0..count {
             let path = FileStore::path_for_block(&path, block);
             trace!("creating block file {:}", block);
-            fs::File::create(path).expect(&format!("Unable to create file for block {}.", block));
+            fs::File::create(path)
+                .unwrap_or_else(|_| panic!("Unable to create file for block {}.", block));
         }
+
+        // Finally, save the metadata
+        let metadata = MetaData { size, count };
+        let mut metadata_file = path.clone();
+        metadata_file.push(META_FILE);
+        fs::write(metadata_file, bincode::serialize(&metadata).unwrap()).unwrap();
 
         Ok(())
     }
@@ -143,7 +169,8 @@ impl FileStore {
         let mut path = root.clone();
         while block > 0xf {
             let nibble = block & 0xf;
-            path.push(fmt::format(format_args!("{:x?}", nibble)));
+            // path.push(fmt::format(format_args!("{:x?}", nibble)));
+            path.push(format!("{:x?}", nibble));
             block >>= 4;
         }
         // Pulling this out of the loop avoids an issue with the `0` block.

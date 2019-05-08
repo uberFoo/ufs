@@ -87,7 +87,7 @@ mod test {
 
     #[test]
     fn read_and_write_block() {
-        let mut bs = NetworkStore::new("http://localhost:8888/bundle").unwrap();
+        let mut bs = NetworkStore::new("http://localhost:8888/test").unwrap();
         let block_number = 88;
         let expected = r#"ion<BlockCardinality>,
    pub directory: HashMap<String, Block>,

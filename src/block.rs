@@ -62,6 +62,16 @@ pub enum BlockSize {
     TwentyFortyEight = 2048,
 }
 
+impl fmt::Display for BlockSize {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BlockSize::FiveTwelve => "512-byte".fmt(f),
+            BlockSize::TenTwentyFour => "1k".fmt(f),
+            BlockSize::TwentyFortyEight => "2k".fmt(f),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ParseBlockSizeError {
     kind: BlockSizeErrorKind,

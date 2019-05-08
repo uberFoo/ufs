@@ -312,26 +312,4 @@ mod test {
         //     "detect a hash mismatch"
         // );
     }
-
-    #[test]
-    fn metadata() {
-        let path = "/tmp/ufs_test/meta";
-        let mut bm = BlockManager::new(FileStore::new(&path, BlockSize::FiveTwelve, 5).unwrap());
-
-        bm.serialize();
-        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
-        let bm2 = BlockManager::load(fs, metadata);
-        assert_eq!(bm, bm2);
-
-        bm.write_metadata("test", b"Hello World!").unwrap();
-        assert_eq!(bm.read_metadata("test").unwrap(), b"Hello World!");
-
-        // Just another random change.
-        bm.get_free_block().unwrap();
-        bm.serialize();
-
-        let (fs, metadata) = FileStore::load_and_return_metadata(&path).unwrap();
-        let bm2 = BlockManager::load(fs, metadata);
-        assert_eq!(bm, bm2);
-    }
 }
