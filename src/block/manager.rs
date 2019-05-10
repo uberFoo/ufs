@@ -4,9 +4,11 @@ use bincode;
 use failure::{format_err, Error};
 use log::trace;
 
-use crate::block::{
-    hash::BlockHash, meta::BlockMetadata, storage::BlockStorage, Block, BlockCardinality,
-    BlockSize, BlockSizeType,
+use crate::{
+    block::{
+        hash::BlockHash, storage::BlockStorage, Block, BlockCardinality, BlockSize, BlockSizeType,
+    },
+    metadata::{DirectoryMetadata, Metadata},
 };
 
 /// Manager of Blocks
@@ -15,14 +17,14 @@ use crate::block::{
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
 /// hashes are calculated when writing, and validated when reading, a block.  Data written across
 /// multiple blocks are stored as a [BlockList], etc.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct BlockManager<BS>
 where
     BS: BlockStorage,
 {
     store: BS,
     free_blocks: VecDeque<BlockCardinality>,
-    directory: HashMap<String, Block>,
+    directory: DirectoryMetadata,
 }
 
 impl<'a, BS> BlockManager<BS>
@@ -32,20 +34,22 @@ where
     pub fn new(store: BS) -> Self {
         BlockManager {
             free_blocks: (1..store.block_count()).collect(),
-            directory: HashMap::new(),
+            directory: DirectoryMetadata::new_root(),
             store,
         }
     }
 
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load(store: BS, metadata: BlockMetadata) -> Self {
+    pub(crate) fn load(store: BS) -> Self {
+        let block_0 = store.read_block(0).unwrap();
+        let metadata = Metadata::deserialize(block_0).unwrap();
         let free_blocks = match metadata.next_free_block {
-            Some(n) => (n..metadata.count).collect(),
+            Some(n) => (n..store.block_count()).collect(),
             None => VecDeque::new(),
         };
         BlockManager {
             free_blocks,
-            directory: metadata.directory,
+            directory: metadata.root_dir,
             store,
         }
     }
@@ -85,16 +89,12 @@ where
     ///
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
-        let meta = BlockMetadata {
-            size: self.store.block_size(),
-            count: self.store.block_count(),
+        let metadata = Metadata {
             next_free_block: self.free_blocks.get(0).cloned(),
-            directory: self.directory.clone(),
+            root_dir: self.directory.clone(),
         };
 
-        self.store
-            .write_block(0, bincode::serialize(&meta).unwrap())
-            .unwrap();
+        self.store.write_block(0, metadata.serialize()).unwrap();
     }
 
     /// Write a slice to a Block Storage
@@ -149,44 +149,6 @@ where
         } else {
             Err(format_err!("cannot read null Block"))
         }
-    }
-
-    pub(crate) fn reserve_metadata<K>(&mut self, key: K)
-    where
-        K: Into<String>,
-    {
-        self.directory
-            .entry(key.into())
-            .or_insert(Block::null_block());
-    }
-
-    pub(crate) fn write_metadata<K, D>(&mut self, key: K, data: D) -> Result<BlockSizeType, Error>
-    where
-        K: Into<String>,
-        D: AsRef<[u8]>,
-    {
-        let block = self.write(data)?;
-        let size = block.size();
-        self.directory.insert(key.into(), block);
-        Ok(size as BlockSizeType)
-    }
-
-    /// Return file system-level matadata
-    ///
-    /// FIXME: Should this instead return an `Option`?
-    pub(crate) fn read_metadata<K>(&self, key: K) -> Result<Vec<u8>, Error>
-    where
-        K: AsRef<str>,
-    {
-        if let Some(block) = self.directory.get(key.as_ref()) {
-            self.read(block)
-        } else {
-            Err(format_err!("key not found"))
-        }
-    }
-
-    pub(crate) fn metadata(&self) -> std::collections::hash_map::Iter<String, Block> {
-        self.directory.iter()
     }
 }
 
@@ -281,35 +243,5 @@ mod test {
     #[test]
     fn read_block_bad_hash() {
         unimplemented!();
-        // let data = hex!(
-        //     "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
-        //     d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
-        //     7a13479a462d71b56c19a74a40b655c58edfe0a188ad2cf46cbf30524f65d423c837dd1ff2bf462ac4198007
-        //     345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
-        // );
-        // let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
-        // expected_block[..data.len()].copy_from_slice(&data[..]);
-
-        // let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
-        // ms.blocks[0] = vec![0x0; BlockSize::FiveTwelve as usize];
-        // ms.blocks[0].copy_from_slice(&expected_block[..]);
-
-        // // Corrupt the block data
-        // ms.blocks[0][0] = 0;
-
-        // let block = Block {
-        //     number: 0,
-        //     hash: BlockHash::from(
-        //         &hex!("62c2eacaf26c12f80eeb0b5b849c8805e0295db339dd793620190680799bec95")[..],
-        //     ),
-        // };
-
-        // println!("block {:?}", &block);
-
-        // assert_eq!(
-        //     ms.read(&BlockList::new(vec![block])).is_err(),
-        //     true,
-        //     "detect a hash mismatch"
-        // );
     }
 }

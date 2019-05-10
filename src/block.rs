@@ -15,8 +15,9 @@
 //! FIXME: BlockLists should serialize when dropped.
 
 mod hash;
-pub(crate) mod manager;
 mod meta;
+
+pub(crate) mod manager;
 pub(crate) mod storage;
 pub(crate) mod tree;
 

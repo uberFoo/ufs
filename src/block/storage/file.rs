@@ -38,6 +38,10 @@ struct MetaData {
 }
 
 impl MetaData {
+    fn serialize(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap()
+    }
+
     fn deserialize<T>(bytes: T) -> bincode::Result<Self>
     where
         T: AsRef<[u8]>,
@@ -159,7 +163,7 @@ impl FileStore {
         let metadata = MetaData { size, count };
         let mut metadata_file = path.clone();
         metadata_file.push(META_FILE);
-        fs::write(metadata_file, bincode::serialize(&metadata).unwrap()).unwrap();
+        fs::write(metadata_file, metadata.serialize()).unwrap();
 
         Ok(())
     }

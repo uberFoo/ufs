@@ -13,7 +13,7 @@
 //! All metadata is stored in a dictionary. The dictionary is serialized with to a `Vec<u8>` with
 //! `Serde` and `Bincode`, and written to blocks. If the serialized dictionary does not fit within a
 //! single block, it will contain a pointer to the next block.  The pointer is stored under the key
-//! `@next_block`. Additionally, eac block is identified by a `@type` key, where the value may be
+//! `@next_block`. Additionally, each block is identified by a `@type` key, where the value may be
 //! something like `directory`, `fs-metadata`, etc.  Additional metadata for each specific block
 //! type may exist under the `@metadata` key.  Data specific to the block type lives under the
 //! `@data` key. Finally, each dictionary contains a `@checksum` key that contains the checksum
@@ -123,15 +123,14 @@ use log::trace;
 use uuid::Uuid;
 
 mod block;
-mod directory;
-pub mod fuse;
-pub mod io;
+// mod directory;
+mod metadata;
 // mod vm;
 
-pub(crate) use {
-    block::BlockType,
-    directory::{Directory, DirectoryEntryReader, DirectoryEntryWriter, MutableDirectory},
-};
+pub mod fuse;
+pub mod io;
+
+pub(crate) use block::BlockType;
 
 pub use block::{
     manager::BlockManager,
