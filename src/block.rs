@@ -15,8 +15,9 @@
 //! FIXME: BlockLists should serialize when dropped.
 
 mod hash;
-pub(crate) mod manager;
 mod meta;
+
+pub(crate) mod manager;
 pub(crate) mod storage;
 pub(crate) mod tree;
 
@@ -60,6 +61,16 @@ pub enum BlockSize {
     /// 2048 byte block size
     ///
     TwentyFortyEight = 2048,
+}
+
+impl fmt::Display for BlockSize {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BlockSize::FiveTwelve => "512-byte".fmt(f),
+            BlockSize::TenTwentyFour => "1k".fmt(f),
+            BlockSize::TwentyFortyEight => "2k".fmt(f),
+        }
+    }
 }
 
 #[derive(Debug)]

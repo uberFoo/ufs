@@ -1,15 +1,12 @@
 use std::path::PathBuf;
 
-use ::fuse::mount;
 use failure::Error;
 use log::debug;
 use pretty_env_logger;
 use structopt::StructOpt;
-use ufs::{BlockCardinality, BlockSize, FileStore};
 
-/// Mount the file system using FUSE.
-///
-/// FIXME: create options to mount or create new
+use ufs::{BlockCardinality, BlockManager, BlockSize, FileStore};
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "mkufs", about = "create an on-disk ufs file system")]
 struct Opt {
@@ -26,12 +23,17 @@ struct Opt {
 
 fn main() -> Result<(), Error> {
     pretty_env_logger::init();
+
     let opt = Opt::from_args();
     debug!("running with options {:?}", opt);
 
     match FileStore::new(&opt.bundle_path, opt.block_size, opt.block_count) {
-        Ok(_) => {
-            println!("Created new ufs file system at {:?}.", opt.bundle_path);
+        Ok(store) => {
+            BlockManager::new(store);
+            println!(
+                "Created new ufs file system with {} {} blocks at {:?}.",
+                opt.block_count, opt.block_size, opt.bundle_path
+            );
             Ok(())
         }
         Err(e) => {
