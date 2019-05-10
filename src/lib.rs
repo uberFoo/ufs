@@ -123,9 +123,7 @@ use log::trace;
 use uuid::Uuid;
 
 mod block;
-// mod directory;
 mod metadata;
-// mod vm;
 
 pub mod fuse;
 pub mod io;

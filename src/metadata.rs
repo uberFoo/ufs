@@ -1,7 +1,7 @@
 //! Metadata
 //!
-//! Fuck below.  Version one is a hashmap that fits in a single block, and lives at Block 0.  Here's
-//! some JSON that illustrates what it looks like:
+//! Version one is a hashmap that fits in a single block, and lives at Block 0.  Here's some JSON
+//! that illustrates how it's generally organized:
 //!
 //! ```JSON
 //! {
@@ -34,22 +34,6 @@
 //!     }
 //! }
 //! ```
-//!
-//! For now, there is a single block of file-system level metadata stored as a `HashMap` -- nothing
-//! fancy.  It is written to blocks by first serializing it to a `Vec<u8`, and chunking into `n`
-//! block-sized chunks.  A header block is written that contains some metadata and information to
-//! load the chunks, and reassemble later.  The header block is again a `HashMap`.
-//!
-//! The basic layout for the header block looks as follows (as JSON):
-//!
-//! ```JSON
-//! {
-//!     @type: "metadata"
-//!     @version: <monotonically increasing number>
-//!     @next_block: "<block number>"
-//! }
-//! ```
-use std::collections::HashMap;
 
 use serde_derive::{Deserialize, Serialize};
 

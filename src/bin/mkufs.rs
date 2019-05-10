@@ -5,7 +5,7 @@ use log::debug;
 use pretty_env_logger;
 use structopt::StructOpt;
 
-use ufs::{BlockCardinality, BlockSize, FileStore};
+use ufs::{BlockCardinality, BlockManager, BlockSize, FileStore};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "mkufs", about = "create an on-disk ufs file system")]
@@ -28,7 +28,8 @@ fn main() -> Result<(), Error> {
     debug!("running with options {:?}", opt);
 
     match FileStore::new(&opt.bundle_path, opt.block_size, opt.block_count) {
-        Ok(_) => {
+        Ok(store) => {
+            BlockManager::new(store);
             println!(
                 "Created new ufs file system with {} {} blocks at {:?}.",
                 opt.block_count, opt.block_size, opt.bundle_path
