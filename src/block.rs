@@ -15,11 +15,11 @@
 //! FIXME: BlockLists should serialize when dropped.
 
 mod hash;
+mod map;
 mod meta;
 
 pub(crate) mod manager;
 pub(crate) mod storage;
-pub(crate) mod tree;
 
 use std::{fmt, path::Path, str::FromStr};
 
@@ -28,8 +28,8 @@ use serde_derive::{Deserialize, Serialize};
 
 pub(crate) use self::{manager::BlockManager, storage::file::FileStore};
 
-use self::hash::BlockHash;
-use crate::UfsUuid;
+use self::{hash::BlockHash, map::BlockType};
+use crate::{metadata::Metadata, UfsUuid};
 
 /// A logical block number.
 pub type BlockNumber = u64;
@@ -111,6 +111,26 @@ impl From<u32> for BlockSize {
     }
 }
 
+impl From<BlockSize> for BlockSizeType {
+    fn from(n: BlockSize) -> Self {
+        match n {
+            BlockSize::FiveTwelve => 512,
+            BlockSize::TenTwentyFour => 1024,
+            BlockSize::TwentyFortyEight => 2048,
+        }
+    }
+}
+
+impl From<BlockSize> for usize {
+    fn from(n: BlockSize) -> Self {
+        match n {
+            BlockSize::FiveTwelve => 512,
+            BlockSize::TenTwentyFour => 1024,
+            BlockSize::TwentyFortyEight => 2048,
+        }
+    }
+}
+
 impl FromStr for BlockSize {
     type Err = ParseBlockSizeError;
 
@@ -132,74 +152,33 @@ impl FromStr for BlockSize {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub(crate) enum BlockType {
-    Pointer(Block),
-}
-
-impl BlockType {
-    pub(crate) fn serialize(&self) -> bincode::Result<Vec<u8>> {
-        bincode::serialize(&self)
-    }
-
-    pub(crate) fn deserialize<T>(bytes: T) -> bincode::Result<Self>
-    where
-        T: AsRef<[u8]>,
-    {
-        bincode::deserialize(bytes.as_ref())
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Block {
     byte_count: BlockSizeType,
-    number: Option<BlockCardinality>,
+    number: BlockNumber,
     hash: Option<BlockHash>,
+    block_type: BlockType,
 }
 
 impl Block {
-    pub(crate) fn nasty_hack(
-        number: BlockCardinality,
-        size: BlockSizeType,
-        hash: BlockHash,
-    ) -> Self {
-        Block {
-            byte_count: size,
-            number: Some(number),
-            hash: Some(hash),
-        }
-    }
-
-    pub(crate) fn new<B>(number: BlockCardinality, bytes: Option<B>) -> Self
-    where
-        B: AsRef<[u8]>,
-    {
-        match bytes {
-            Some(bytes) => {
-                let bytes = bytes.as_ref();
-                Block {
-                    byte_count: bytes.len() as BlockSizeType,
-                    number: Some(number),
-                    hash: Some(BlockHash::new(bytes)),
-                }
-            }
-            None => Block {
-                byte_count: 0,
-                number: Some(number),
-                hash: None,
-            },
-        }
-    }
-
-    pub(crate) fn null_block() -> Self {
+    pub(in crate::block) fn new_free(number: BlockNumber) -> Self {
         Block {
             byte_count: 0,
-            number: None,
+            number: number,
             hash: None,
+            block_type: BlockType::new_free(),
         }
     }
 
-    pub(crate) fn number(&self) -> Option<BlockCardinality> {
+    pub(in crate::block) fn tag_metadata(&mut self) {
+        self.block_type = BlockType::new_metadata();
+    }
+
+    pub(in crate::block) fn tag_data(&mut self) {
+        self.block_type = BlockType::new_data();
+    }
+
+    pub(crate) fn number(&self) -> BlockCardinality {
         self.number
     }
 
@@ -209,5 +188,17 @@ impl Block {
 
     pub(crate) fn hash(&self) -> Option<BlockHash> {
         self.hash
+    }
+
+    pub(in crate::block) fn is_free(&self) -> bool {
+        self.block_type.is_free()
+    }
+
+    pub(in crate::block) fn is_data(&self) -> bool {
+        self.block_type.is_data()
+    }
+
+    pub(in crate::block) fn is_metadata(&self) -> bool {
+        self.block_type.is_metadata()
     }
 }
