@@ -83,6 +83,7 @@ impl FileStore {
 
     /// Consistency Check
     ///
+    /// FIXME: Actually check consistency?
     pub fn check<P>(path: P) -> Result<(), Error>
     where
         P: AsRef<Path>,
@@ -210,7 +211,8 @@ impl BlockStorage for FileStore {
             let path = FileStore::path_for_block(&self.root_path, bn);
             fs::write(path, data)?;
 
-            trace!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
+            debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
+            trace!("{:#?}", data);
             Ok(data.len() as BlockSizeType)
         }
     }
@@ -221,7 +223,8 @@ impl BlockStorage for FileStore {
         } else {
             let path = FileStore::path_for_block(&self.root_path, bn);
             let data = fs::read(path)?;
-            trace!("read {} bytes from block 0x{:x?}", data.len(), bn);
+            debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
+            trace!("{:#?}", data);
 
             Ok(data)
         }
@@ -243,14 +246,12 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
 
-        assert_eq!(
+        assert!(
             fs.read_block(7).is_err(),
-            true,
             "read should fail with block number out of range"
         );
-        assert_eq!(
+        assert!(
             fs.write_block(7, &data[..]).is_err(),
-            true,
             "write should fail with block number out of range"
         );
     }
@@ -261,7 +262,7 @@ mod test {
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(&test_dir, BlockSize::TenTwentyFour, 0x10).unwrap();
-        assert_eq!(fs.write_block(1, &data[..]).is_err(), true);
+        assert!(fs.write_block(1, &data[..]).is_err());
     }
 
     #[test]

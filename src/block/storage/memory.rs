@@ -6,7 +6,7 @@
 //! implementation, albeit one that would be memory constrained.
 
 use failure::{format_err, Error};
-use log::trace;
+use log::{debug, trace};
 
 use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType};
 
@@ -55,13 +55,17 @@ impl BlockStorage for MemoryStore {
     {
         let data = data.as_ref();
         if data.len() > self.block_size as usize {
-            return Err(format_err!("data is larger than block size"));
+            return Err(format_err!(
+                "data ({}) is larger than block size",
+                data.len()
+            ));
         }
 
         if let Some(memory) = self.blocks.get_mut(bn as usize) {
             memory.extend_from_slice(data);
 
-            trace!("wrote {} bytes to block {}", data.len(), bn);
+            debug!("wrote {} bytes to block {}", data.len(), bn);
+            trace!("{:#?}", data);
             Ok(data.len() as BlockSizeType)
         } else {
             Err(format_err!("request for bogus block {}", bn))
@@ -70,7 +74,8 @@ impl BlockStorage for MemoryStore {
 
     fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
         if let Some(memory) = self.blocks.get(bn as usize) {
-            trace!("read {} bytes from block {}", memory.len(), bn);
+            debug!("read {} bytes from block {}", memory.len(), bn);
+            trace!("{:#?}", memory);
             Ok(memory.clone())
         } else {
             Err(format_err!("request for bogus block {}", bn))
@@ -89,14 +94,12 @@ mod test {
         let data = [0x0; BlockSize::FiveTwelve as usize];
         let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
 
-        assert_eq!(
+        assert!(
             ms.read_block(7).is_err(),
-            true,
             "read should fail with block number out of range"
         );
-        assert_eq!(
+        assert!(
             ms.write_block(7, &data[..]).is_err(),
-            true,
             "write should fail with block number out of range"
         );
     }
