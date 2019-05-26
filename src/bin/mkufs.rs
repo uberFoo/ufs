@@ -36,7 +36,7 @@ fn main() -> Result<(), Error> {
         opt.block_count,
     );
 
-    match FileStore::new(&opt.bundle_path, &mut map) {
+    match FileStore::new(&opt.bundle_path, map) {
         Ok(store) => {
             BlockManager::new(store);
             println!(

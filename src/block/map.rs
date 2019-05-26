@@ -13,8 +13,9 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     block::{
-        hash::BlockHash, storage::BlockStorage, Block, BlockCardinality, BlockNumber, BlockSize,
-        BlockSizeType,
+        hash::BlockHash,
+        storage::{BlockReader, BlockStorage, BlockWriter},
+        Block, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
     },
     metadata::Metadata,
     UfsUuid,
@@ -36,7 +37,7 @@ struct BlockMapWrapper {
     next_block: Option<BlockNumber>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 /// Block Map
 ///
 /// A mapping from block number to Blocks.  Each block is one of several block types, where each
@@ -68,7 +69,7 @@ impl BlockMap {
             count,
             metadata_blocks: vec![0],
             free_blocks: (1..count).collect(),
-            map: (0..count).map(|b| Block::new_free(b)).collect::<Vec<_>>(),
+            map: (0..count).map(|b| Block::new(b)).collect::<Vec<_>>(),
         }
     }
 
@@ -93,7 +94,7 @@ impl BlockMap {
     // think that this is terrible, as the map is the current state of the file system,
     // and any versioned files will still be versioned.
     // FIXME: This isn't really a map any longer.
-    pub(in crate::block) fn serialize<BS: BlockStorage>(
+    pub(in crate::block) fn serialize<BS: BlockWriter>(
         &mut self,
         store: &mut BS,
     ) -> Result<(), Error> {
@@ -177,7 +178,7 @@ impl BlockMap {
             .collect()
     }
 
-    pub(in crate::block) fn deserialize<BS: BlockStorage>(store: &BS) -> Result<Self, Error> {
+    pub(in crate::block) fn deserialize<BS: BlockReader>(store: &BS) -> Result<Self, Error> {
         let mut map = Vec::<u8>::new();
 
         // We know that we always start at block 0.
@@ -199,7 +200,7 @@ impl BlockMap {
     }
 }
 
-fn read_wrapper_block<BS: BlockStorage>(
+fn read_wrapper_block<BS: BlockReader>(
     store: &BS,
     number: BlockNumber,
 ) -> Result<BlockMapWrapper, Error> {
@@ -280,12 +281,14 @@ mod test {
         init();
         let id = UfsUuid::new("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
-        let mut ms = MemoryStore::new(&map);
 
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
 
+        // This is ugly, but ok for testing I think.
+        let mut ms = MemoryStore::new(map.clone());
         assert!(map.serialize(&mut ms).is_ok());
+
         let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(
@@ -307,11 +310,12 @@ mod test {
         init();
         let id = UfsUuid::new("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
-        let mut ms = MemoryStore::new(&map);
 
         for x in 1..100 {
             map.free_blocks.pop_front();
         }
+
+        let mut ms = MemoryStore::new(map.clone());
         assert!(map.serialize(&mut ms).is_err());
     }
 
@@ -320,7 +324,6 @@ mod test {
         init();
         let id = UfsUuid::new("test");
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
-        let mut ms = MemoryStore::new(&map);
 
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
@@ -331,7 +334,9 @@ mod test {
             map.get_mut(x).unwrap().tag_data();
         }
 
+        let mut ms = MemoryStore::new(map.clone());
         assert!(map.serialize(&mut ms).is_ok());
+
         let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         // Two, 2048-byte blocks are needed for 100 blocks.
@@ -365,7 +370,6 @@ mod test {
         init();
         let id = UfsUuid::new("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
-        let mut ms = MemoryStore::new(&map);
 
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
@@ -376,7 +380,9 @@ mod test {
             map.get_mut(x).unwrap().tag_data();
         }
 
+        let mut ms = MemoryStore::new(map.clone());
         assert!(map.serialize(&mut ms).is_ok());
+
         let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(

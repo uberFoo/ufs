@@ -160,7 +160,7 @@ pub(crate) struct Block {
 }
 
 impl Block {
-    pub(in crate::block) fn new_free(number: BlockNumber) -> Self {
+    pub(in crate::block) fn new(number: BlockNumber) -> Self {
         Block {
             byte_count: 0,
             number: number,

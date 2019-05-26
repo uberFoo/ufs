@@ -19,7 +19,7 @@ use hyper::{
 use log::{debug, error, info, trace, warn};
 use pretty_env_logger;
 
-use ufs::{BlockNumber, BlockStorage, FileStore};
+use ufs::{BlockNumber, BlockReader, BlockWriter, FileStore};
 
 // Just a simple type alias
 type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
@@ -68,7 +68,7 @@ fn block_manager(
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NOT_FOUND;
 
-    trace!("Received a request {:?}", req);
+    trace!("Received a request: {:?}", req);
 
     match (req.method(), req.uri().path(), req.uri().query()) {
         // Read a block
@@ -81,7 +81,7 @@ fn block_manager(
                 // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
                 // * Allow a range of blocks, e.g., 5-9
                 if let Ok(block) = query.parse::<BlockNumber>() {
-                    debug!("Request to read {}:{}", bundle, block);
+                    debug!("Request to read {}: {}", bundle, block);
                     if let Ok(data) = store.read_block(block) {
                         trace!("Read {} bytes", data.len());
 

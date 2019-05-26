@@ -7,8 +7,28 @@ use log::trace;
 use reqwest::{get, header::CONTENT_TYPE, Client, IntoUrl, Url};
 
 use crate::block::{
-    storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    map::BlockMap,
+    storage::{BlockReader, BlockStorage, BlockWriter},
+    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
 };
+
+struct NetworkReader {
+    url: Url,
+    client: Client,
+}
+
+impl BlockReader for NetworkReader {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+        trace!("Reading block number {} from {}.", bn, &self.url.as_str());
+
+        let mut url = self.url.clone();
+        url.set_query(Some(&bn.to_string()));
+
+        let mut resp = self.client.get(url.as_str()).send()?;
+        let data = resp.text()?;
+        Ok(data.into())
+    }
+}
 
 struct NetworkStore {
     url: Url,
@@ -19,7 +39,6 @@ impl NetworkStore {
     pub fn new<U: IntoUrl>(url: U) -> Result<Self, Error> {
         match url.into_url() {
             Ok(url) => {
-                // FIXME: Actually enable gzip compression in te server...
                 let client = Client::builder().gzip(true).build()?;
                 Ok(NetworkStore { url, client })
             }
@@ -28,19 +47,7 @@ impl NetworkStore {
     }
 }
 
-impl BlockStorage for NetworkStore {
-    // FIXME:
-    // This is clearly bogus. I'm wondering if this is something that is passed to the ctor, or if
-    // it's something that is queried from the Block Server to which we are connecting?
-    fn block_size(&self) -> BlockSize {
-        BlockSize::TwentyFortyEight
-    }
-
-    // FIXME: See above.
-    fn block_count(&self) -> BlockCardinality {
-        100
-    }
-
+impl BlockWriter for NetworkStore {
     fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
     where
         T: AsRef<[u8]>,
@@ -68,7 +75,9 @@ impl BlockStorage for NetworkStore {
             Err(e) => Err(format_err!("Could not parse result as BlockSize: {}", e)),
         }
     }
+}
 
+impl BlockReader for NetworkStore {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
