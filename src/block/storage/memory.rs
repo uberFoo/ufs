@@ -36,10 +36,10 @@ impl MemoryStore {
     /// Note that block 0 is reserved to store block-level metadata.
     pub(crate) fn new(map: BlockMap) -> Self {
         MemoryStore {
-            block_size: map.size(),
-            block_count: map.count(),
-            blocks: (0..map.count())
-                .map(|_| Vec::with_capacity(map.size() as usize))
+            block_size: map.block_size(),
+            block_count: map.block_count(),
+            blocks: (0..map.block_count())
+                .map(|_| Vec::with_capacity(map.block_size() as usize))
                 .collect(),
             map,
         }

@@ -52,12 +52,6 @@ pub struct BlockMap {
     map: Vec<Block>,
 }
 
-enum SND<T> {
-    None,
-    Some(T),
-    Done,
-}
-
 impl BlockMap {
     /// Create a new Block Map
     ///
@@ -73,11 +67,15 @@ impl BlockMap {
         }
     }
 
-    pub(in crate::block) fn size(&self) -> BlockSize {
+    pub(in crate::block) fn id(&self) -> &UfsUuid {
+        &self.id
+    }
+
+    pub(in crate::block) fn block_size(&self) -> BlockSize {
         self.size
     }
 
-    pub(in crate::block) fn count(&self) -> BlockCardinality {
+    pub(in crate::block) fn block_count(&self) -> BlockCardinality {
         self.count
     }
 

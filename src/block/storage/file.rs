@@ -119,19 +119,19 @@ impl FileStore {
         P: AsRef<Path>,
     {
         let root_path: PathBuf = path.as_ref().into();
-        FileStore::init(&root_path, map.size(), map.count())?;
+        FileStore::init(&root_path, map.block_size(), map.block_count())?;
 
         let mut writer = FileWriter {
-            block_size: map.size(),
-            block_count: map.count(),
+            block_size: map.block_size(),
+            block_count: map.block_count(),
             root_path: root_path.clone(),
         };
 
         map.serialize(&mut writer)?;
 
         Ok(FileStore {
-            block_size: map.size(),
-            block_count: map.count(),
+            block_size: map.block_size(),
+            block_count: map.block_count(),
             root_path,
             map: map,
         })
@@ -167,8 +167,8 @@ impl FileStore {
         let metadata = BlockMap::deserialize(&reader)?;
 
         Ok(FileStore {
-            block_size: metadata.size(),
-            block_count: metadata.count(),
+            block_size: metadata.block_size(),
+            block_count: metadata.block_count(),
             root_path,
             map: metadata,
         })
