@@ -15,10 +15,9 @@
 //! FIXME: BlockLists should serialize when dropped.
 
 mod hash;
-mod map;
-mod meta;
 
 pub(crate) mod manager;
+pub(crate) mod map;
 pub(crate) mod storage;
 
 use std::{fmt, path::Path, str::FromStr};

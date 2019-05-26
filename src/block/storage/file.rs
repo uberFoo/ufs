@@ -16,7 +16,7 @@ use log::{debug, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
-    storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    map::BlockMap, storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
 };
 
 use std::{
@@ -25,32 +25,6 @@ use std::{
 };
 
 const BLOCK_EXT: &str = "ufsb";
-
-/// Internal Metadata
-///
-/// Each block type of block storage is responsible for storing it's metadata.  For file-based
-/// storage, we're choosing to store it in a separate file, and using simple bincode-based
-/// serialization.
-#[derive(Deserialize, Serialize)]
-struct MetaData {
-    size: BlockSize,
-    count: BlockCardinality,
-}
-
-impl MetaData {
-    fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
-    }
-
-    fn deserialize<T>(bytes: T) -> bincode::Result<Self>
-    where
-        T: AsRef<[u8]>,
-    {
-        bincode::deserialize(bytes.as_ref())
-    }
-}
-
-const META_FILE: &str = "metadata";
 
 /// File-based Block Storage
 ///
@@ -65,20 +39,22 @@ impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub fn new<P, BS>(path: P, size: BS, count: BlockCardinality) -> Result<Self, Error>
+    pub fn new<P>(path: P, map: &mut BlockMap) -> Result<Self, Error>
     where
         P: AsRef<Path>,
-        BS: Into<BlockSize>,
     {
         let root_path: PathBuf = path.as_ref().into();
-        let size = size.into();
-        FileStore::init(&root_path, size, count)?;
+        FileStore::init(&root_path, map.size(), map.count())?;
 
-        Ok(FileStore {
-            block_size: size,
-            block_count: count,
+        let mut store = FileStore {
+            block_size: map.size(),
+            block_count: map.count(),
             root_path,
-        })
+        };
+
+        map.serialize(&mut store);
+
+        Ok(store)
     }
 
     /// Consistency Check
@@ -102,17 +78,24 @@ impl FileStore {
     ///
     /// Load an existing file store from disk.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        // We need to read our blocks to unpack out metadata. This results in a horse-cart
+        // situation, which is a bit tricky.  Luckily reading blocks does not require knowing
+        // either the block size, nor the block count. So we'll use temporary values when creating
+        // the FileStore, and then backfill once we've loaded the map.
         let root_path: PathBuf = path.as_ref().into();
-        let mut path: PathBuf = path.as_ref().into();
-        path.push(META_FILE);
 
-        let metadata = MetaData::deserialize(fs::read(path)?)?;
-
-        Ok(FileStore {
-            block_size: metadata.size,
-            block_count: metadata.count,
+        let mut store = FileStore {
+            block_size: BlockSize::FiveTwelve,
+            block_count: BlockCardinality::max_value(),
             root_path,
-        })
+        };
+
+        let metadata = BlockMap::deserialize(&store)?;
+
+        store.block_size = metadata.size();
+        store.block_count = metadata.count();
+
+        Ok(store)
     }
 
     fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
@@ -159,12 +142,6 @@ impl FileStore {
             fs::File::create(path)
                 .unwrap_or_else(|_| panic!("Unable to create file for block {}.", block));
         }
-
-        // Finally, save the metadata
-        let metadata = MetaData { size, count };
-        let mut metadata_file = path.clone();
-        metadata_file.push(META_FILE);
-        fs::write(metadata_file, metadata.serialize()).unwrap();
 
         Ok(())
     }
@@ -222,6 +199,7 @@ impl BlockStorage for FileStore {
             Err(format_err!("request for bogus block {}", bn))
         } else {
             let path = FileStore::path_for_block(&self.root_path, bn);
+            debug!("reading block from {:?}", path);
             let data = fs::read(path)?;
             debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
             trace!("{:#?}", data);
@@ -235,6 +213,8 @@ impl BlockStorage for FileStore {
 mod test {
     use hex_literal::{hex, hex_impl};
 
+    use crate::UfsUuid;
+
     use super::*;
 
     const TEST_ROOT: &str = "/tmp/ufs_test/";
@@ -244,7 +224,11 @@ mod test {
         let test_dir = [TEST_ROOT, "bad_block_number"].concat();
         let data = [0x0; BlockSize::FiveTwelve as usize];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            &mut BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3),
+        )
+        .unwrap();
 
         assert!(
             fs.read_block(7).is_err(),
@@ -261,7 +245,11 @@ mod test {
         let test_dir = [TEST_ROOT, "block_too_bukoo"].concat();
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::TenTwentyFour, 0x10).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            &mut BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
         assert!(fs.write_block(1, &data[..]).is_err());
     }
 
@@ -276,7 +264,11 @@ mod test {
         );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            &mut BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
 
         let block = fs.write_block(7, &data[..]).unwrap();
 
@@ -301,7 +293,11 @@ mod test {
         );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            &mut BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
 
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
@@ -322,7 +318,12 @@ mod test {
     fn construction_sanity() {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 4).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            &mut BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 4),
+        )
+        .unwrap();
+
         assert_eq!(
             fs.block_size() as usize,
             512,

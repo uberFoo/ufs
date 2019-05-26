@@ -8,7 +8,9 @@
 use failure::{format_err, Error};
 use log::{debug, trace};
 
-use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType};
+use crate::block::{
+    map::BlockMap, storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType,
+};
 
 /// An in-memory [BlockStorage]
 ///
@@ -29,12 +31,12 @@ impl MemoryStore {
     /// Return a new in-memory [BlockStorage] given a [BlockSize] and the number of blocks.
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub(crate) fn new(size: BlockSize, count: BlockCardinality) -> Self {
+    pub(crate) fn new(map: &BlockMap) -> Self {
         MemoryStore {
-            block_size: size,
-            block_count: count,
-            blocks: (0..count)
-                .map(|_| Vec::with_capacity(size as usize))
+            block_size: map.size(),
+            block_count: map.count(),
+            blocks: (0..map.count())
+                .map(|_| Vec::with_capacity(map.size() as usize))
                 .collect(),
         }
     }
@@ -87,12 +89,15 @@ impl BlockStorage for MemoryStore {
 mod test {
     use hex_literal::{hex, hex_impl};
 
+    use crate::UfsUuid;
+
     use super::*;
 
     #[test]
     fn bad_block_number() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(&map);
         let data = [0x0; BlockSize::FiveTwelve as usize];
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
 
         assert!(
             ms.read_block(7).is_err(),
@@ -106,13 +111,16 @@ mod test {
 
     #[test]
     fn block_too_bukoo() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(&map);
         let data = [0x0; BlockSize::FiveTwelve as usize + 1];
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         assert_eq!(ms.write_block(1, &data[..]).is_err(), true);
     }
 
     #[test]
     fn write_block() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(&map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -120,7 +128,6 @@ mod test {
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
 
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         assert_eq!(
             ms.write_block(1, &data[..]).unwrap(),
             data.len() as BlockSizeType
@@ -135,6 +142,8 @@ mod test {
 
     #[test]
     fn read_block() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(&map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -144,7 +153,6 @@ mod test {
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
 
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         ms.blocks[0] = vec![0x0; BlockSize::FiveTwelve as usize];
         ms.blocks[0].copy_from_slice(&expected_block[..]);
 
@@ -157,7 +165,8 @@ mod test {
 
     #[test]
     fn construction_sanity() {
-        let ms = MemoryStore::new(BlockSize::FiveTwelve, 4);
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 4);
+        let ms = MemoryStore::new(&map);
         assert_eq!(
             ms.block_size() as usize,
             512,

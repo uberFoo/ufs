@@ -36,23 +36,13 @@ struct BlockMapWrapper {
     next_block: Option<BlockNumber>,
 }
 
-// impl BlockMapWrapper {
-//     pub(in crate::block) fn deserialize<BS>(store: BS) -> Self
-//     where
-//         BS: BlockStorage,
-//     {
-//         // We know that we always start at block 0.
-//         let start = bincode::deserialize(store.read_block(0).unwrap()).unwrap();
-//     }
-// }
-
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 /// Block Map
 ///
 /// A mapping from block number to Blocks.  Each block is one of several block types, where each
 /// type may include metadata about the underlying block.  For instance, the hash value of the
 /// block, and the next block to come after it.
-struct BlockMap {
+pub struct BlockMap {
     id: UfsUuid,
     size: BlockSize,
     count: BlockCardinality,
@@ -71,7 +61,7 @@ impl BlockMap {
     /// Create a new Block Map
     ///
     /// The resultant block map will contain a metadata block at block 0.
-    pub(crate) fn new(id: UfsUuid, size: BlockSize, count: BlockCardinality) -> Self {
+    pub fn new(id: UfsUuid, size: BlockSize, count: BlockCardinality) -> Self {
         BlockMap {
             id,
             size,
@@ -80,6 +70,14 @@ impl BlockMap {
             free_blocks: (1..count).collect(),
             map: (0..count).map(|b| Block::new_free(b)).collect::<Vec<_>>(),
         }
+    }
+
+    pub(in crate::block) fn size(&self) -> BlockSize {
+        self.size
+    }
+
+    pub(in crate::block) fn count(&self) -> BlockCardinality {
+        self.count
     }
 
     pub(crate) fn get(&self, number: BlockNumber) -> Option<&Block> {
@@ -179,41 +177,44 @@ impl BlockMap {
             .collect()
     }
 
-    pub(in crate::block) fn deserialize<BS: BlockStorage>(store: &BS) -> Self {
+    pub(in crate::block) fn deserialize<BS: BlockStorage>(store: &BS) -> Result<Self, Error> {
         let mut map = Vec::<u8>::new();
 
         // We know that we always start at block 0.
-        let mut block = read_wrapper_block(store, 0);
+        let mut block = read_wrapper_block(store, 0)?;
         map.append(&mut block.data);
 
         while let Some(next) = block.next_block {
-            block = read_wrapper_block(store, next);
+            block = read_wrapper_block(store, next)?;
             map.append(&mut block.data);
         }
 
-        bincode::deserialize(&map).unwrap_or_else(|e| {
-            error!("Failed to deserialize block map.");
-            panic!(e)
-        })
+        match bincode::deserialize(&map) {
+            Ok(map) => Ok(map),
+            Err(e) => {
+                error!("Failed to deserialize block map.");
+                Err(e.into())
+            }
+        }
     }
 }
 
-fn read_wrapper_block<BS: BlockStorage>(store: &BS, number: BlockNumber) -> BlockMapWrapper {
-    if let Ok(bytes) = store.read_block(number) {
-        if let Ok(block) = bincode::deserialize::<BlockMapWrapper>(&bytes) {
-            if block.hash.validate(&block.data) {
-                return block;
-            } else {
-                error!("Error validating block {}", number);
-                panic!();
-            }
+fn read_wrapper_block<BS: BlockStorage>(
+    store: &BS,
+    number: BlockNumber,
+) -> Result<BlockMapWrapper, Error> {
+    debug!("Reading metadata from block {}", number);
+    let bytes = store.read_block(number)?;
+    if let Ok(block) = bincode::deserialize::<BlockMapWrapper>(&bytes) {
+        if block.hash.validate(&block.data) {
+            return Ok(block);
         } else {
-            error!("Error deserializing block {}", number);
-            panic!();
+            error!("Error validating block {}", number);
+            return Err(format_err!("Error validating block {}", number));
         }
     } else {
-        error!("Error reading block {}", number);
-        panic!()
+        error!("Error deserializing block {}", number);
+        return Err(format_err!("Error deserializing block {}", number));
     }
 }
 
@@ -278,15 +279,14 @@ mod test {
     fn one_block_simple() {
         init();
         let id = UfsUuid::new("test");
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 10);
-
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
+        let mut ms = MemoryStore::new(&map);
 
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
 
         assert!(map.serialize(&mut ms).is_ok());
-        let map_2 = BlockMap::deserialize(&ms);
+        let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(
             map_2.get(0).unwrap().is_metadata(),
@@ -306,9 +306,8 @@ mod test {
     fn not_enough_blocks() {
         init();
         let id = UfsUuid::new("test");
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 100);
-
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
+        let mut ms = MemoryStore::new(&map);
 
         for x in 1..100 {
             map.free_blocks.pop_front();
@@ -320,9 +319,9 @@ mod test {
     fn test_large_blocks() {
         init();
         let id = UfsUuid::new("test");
-        let mut ms = MemoryStore::new(BlockSize::TwentyFortyEight, 100);
-
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
+        let mut ms = MemoryStore::new(&map);
+
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
 
@@ -333,7 +332,7 @@ mod test {
         }
 
         assert!(map.serialize(&mut ms).is_ok());
-        let map_2 = BlockMap::deserialize(&ms);
+        let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         // Two, 2048-byte blocks are needed for 100 blocks.
         assert!(
@@ -365,9 +364,9 @@ mod test {
     fn test_allocate_more_blocks_complex() {
         init();
         let id = UfsUuid::new("test");
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 100);
-
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
+        let mut ms = MemoryStore::new(&map);
+
         // This tests that we pickup a metadata block.
         map.get_mut(0).unwrap().tag_metadata();
 
@@ -378,7 +377,7 @@ mod test {
         }
 
         assert!(map.serialize(&mut ms).is_ok());
-        let map_2 = BlockMap::deserialize(&ms);
+        let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(
             map_2.get(0).unwrap().is_metadata(),
