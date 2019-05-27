@@ -8,6 +8,7 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     block::{BlockCardinality, BlockNumber, BlockSize},
+    time::UfsTime,
     UfsUuid,
 };
 
@@ -23,13 +24,31 @@ pub(crate) enum DirectoryEntry {
 pub(crate) struct DirectoryMetadata {
     #[serde(skip)]
     dirty: bool,
+    /// Time directory was created (crtime)
+    ///
+    birth_time: UfsTime,
+    /// Time directory was last written to (mtime)
+    ///
+    write_time: UfsTime,
+    /// Time the directory was last changed (ctime)
+    /// This includes ownership and permission changes
+    ///
+    change_time: UfsTime,
+    /// Time the directory was last accessed (atime)
+    ///
+    access_time: UfsTime,
     entries: HashMap<String, DirectoryEntry>,
 }
 
 impl DirectoryMetadata {
     pub(crate) fn new_root() -> Self {
+        let time = UfsTime::now();
         DirectoryMetadata {
             dirty: true,
+            birth_time: time,
+            write_time: time,
+            change_time: time,
+            access_time: time,
             entries: HashMap::new(),
         }
     }
@@ -43,6 +62,10 @@ impl DirectoryMetadata {
 
     pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
         &self.entries
+    }
+
+    pub(crate) fn write_time(&self) -> UfsTime {
+        self.write_time
     }
 
     pub(crate) fn is_dirty(&self) -> bool {
@@ -69,12 +92,36 @@ impl DirectoryMetadata {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileMetadata {
+    /// Time file was created (crtime)
+    ///
+    birth_time: UfsTime,
+    /// Time file was last written to (mtime)
+    ///
+    write_time: UfsTime,
+    /// Time the file was last changed (ctime)
+    /// This includes ownership and permission changes
+    ///
+    change_time: UfsTime,
+    /// Time the file was last accessed (atime)
+    ///
+    access_time: UfsTime,
     pub versions: Vec<FileVersion>,
 }
 
 impl FileMetadata {
     pub(crate) fn new() -> Self {
-        FileMetadata { versions: vec![] }
+        let time = UfsTime::now();
+        FileMetadata {
+            birth_time: time,
+            write_time: time,
+            change_time: time,
+            access_time: time,
+            versions: vec![],
+        }
+    }
+
+    pub(crate) fn write_time(&self) -> UfsTime {
+        self.write_time
     }
 }
 

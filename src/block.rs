@@ -28,7 +28,7 @@ use serde_derive::{Deserialize, Serialize};
 pub(crate) use self::{manager::BlockManager, storage::file::FileStore};
 
 use self::{hash::BlockHash, map::BlockType};
-use crate::{metadata::Metadata, UfsUuid};
+use crate::UfsUuid;
 
 /// A logical block number.
 pub type BlockNumber = u64;
@@ -177,16 +177,24 @@ impl Block {
         self.block_type = BlockType::new_data();
     }
 
-    pub(crate) fn number(&self) -> BlockCardinality {
+    pub(in crate::block) fn number(&self) -> BlockCardinality {
         self.number
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub(in crate::block) fn size(&self) -> usize {
         self.byte_count as usize
     }
 
-    pub(crate) fn hash(&self) -> Option<BlockHash> {
+    pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {
+        self.byte_count = size
+    }
+
+    pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
         self.hash
+    }
+
+    pub(in crate::block) fn set_hash(&mut self, hash: BlockHash) {
+        self.hash = Some(hash);
     }
 
     pub(in crate::block) fn is_free(&self) -> bool {

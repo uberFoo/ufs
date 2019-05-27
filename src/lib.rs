@@ -117,6 +117,7 @@
 //!
 use std::{cmp, collections::HashMap, io, path::Path};
 
+use ::time::Timespec;
 use failure::Error;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
@@ -126,6 +127,7 @@ use uuid::Uuid;
 mod block;
 mod metadata;
 mod runtime;
+mod time;
 
 pub mod fuse;
 
@@ -136,7 +138,8 @@ pub use block::{
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
-use metadata::{DirectoryEntry, FileMetadata, FileSize, FileVersion};
+use crate::metadata::{DirectoryEntry, FileMetadata, FileSize, FileVersion};
+use crate::time::UfsTime;
 
 lazy_static! {
     /// The UUID to rule them all
@@ -207,7 +210,7 @@ impl UberFileSystem<FileStore> {
     /// contained within the specified directory.
     ///
     /// TODO: Verify that the path exists, and do something with it!
-    pub fn list_files<P>(&self, path: P) -> Vec<(String, u64)>
+    pub fn list_files<P>(&self, path: P) -> Vec<(String, u64, Timespec)>
     where
         P: AsRef<Path>,
     {
@@ -219,7 +222,7 @@ impl UberFileSystem<FileStore> {
             .map(|(name, e)| match e {
                 DirectoryEntry::Directory(d) => {
                     debug!("dir: {}", name);
-                    (name.clone(), 0)
+                    (name.clone(), 0, d.write_time().into())
                 }
                 DirectoryEntry::File(f) => {
                     let size = match f.versions.last() {
@@ -230,7 +233,7 @@ impl UberFileSystem<FileStore> {
                         }
                     };
                     debug!("file: {}, bytes: {}", name, size);
-                    (name.clone(), size)
+                    (name.clone(), size, f.write_time().into())
                 }
             })
             .collect()
@@ -254,21 +257,19 @@ impl UberFileSystem<FileStore> {
     // /// Open a file
     // ///
     // ///
-    // pub fn open_file<P>(&mut self, path: P) where P: AsRef<Path>
+    // pub fn open_file<P>(&mut self, path: P)
+    // where
+    //     P: AsRef<Path>,
     // {
     //     if let Some(ostr_name) = path.as_ref().file_name() {
     //         if let Some(name) = ostr_name.to_str() {
-    //             if let Some(file) = self.block_manager.root_dir.entries.get(name) {
-    //                     match file {
-    //                         DirectoryEntry::Directory(_) => {
-    //                             error!(
-    //                                 "Attempt to open a directory: {:?}",
-    //                                 path.as_ref()
-    //                             );
-    //                         }
-    //                         DirectoryEntry::File(file) => {
-
-    //                         }
+    //             if let Some(file) = self.block_manager.root_dir().entries().get(name) {
+    //                 match file {
+    //                     DirectoryEntry::Directory(_) => {
+    //                         error!("Attempt to open a directory: {:?}", path.as_ref());
+    //                     }
+    //                     DirectoryEntry::File(file) => {}
+    //                 }
     //             }
     //         }
     //     }
