@@ -223,6 +223,20 @@ impl FileStore {
     }
 }
 
+impl Drop for FileStore {
+    fn drop(&mut self) {
+        debug!("Writing Block Map");
+        let mut writer = FileWriter {
+            block_size: self.block_size,
+            block_count: self.block_count,
+            root_path: self.root_path.clone(),
+        };
+
+        debug!("Dropping FileStore");
+        self.map.serialize(&mut writer);
+    }
+}
+
 impl BlockStorage for FileStore {
     fn metadata(&self) -> &BlockMap {
         &self.map
@@ -241,10 +255,22 @@ impl BlockStorage for FileStore {
     }
 }
 
+// impl<'a, T> BlockWriter for &'a mut T
+// where
+//     T: BlockWriter,
+// {
+//     fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, Error>
+//     where
+//         D: AsRef<[u8]>,
+//     {
+//         self.write_block(bn, data.as_ref())
+//     }
+// }
+
 impl BlockWriter for FileStore {
-    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
+    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, Error>
     where
-        T: AsRef<[u8]>,
+        D: AsRef<[u8]>,
     {
         let data = data.as_ref();
 
@@ -260,7 +286,7 @@ impl BlockWriter for FileStore {
             fs::write(path, data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
-            trace!("{:#?}", data);
+            trace!("{:?}", data);
             Ok(data.len() as BlockSizeType)
         }
     }
@@ -275,7 +301,7 @@ impl BlockReader for FileStore {
             debug!("reading block from {:?}", path);
             let data = fs::read(path)?;
             debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
-            trace!("{:#?}", data);
+            trace!("{:?}", data);
 
             Ok(data)
         }

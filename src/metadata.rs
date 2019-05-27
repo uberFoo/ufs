@@ -1,62 +1,17 @@
 //! Metadata
 //!
-//! Version one is a hashmap that fits in a single block, and lives at Block 0.  Here's some JSON
-//! that illustrates how it's generally organized:
-//!
-//! ```JSON
-//! {
-//!     @fs-metadata: {
-//!         next-free-block: 88
-//!     },
-//!     @root_dir: {
-//!         @type: "directory",
-//!         @entries: [
-//!             {
-//!                 @type: "directory",
-//!                 @name: ""
-//!                 @entries: [
-//!                     {
-//!                         @type: "file",
-//!                         @name: "README.md",
-//!                         @start_block: 77,
-//!                         @block_count: 5
-//!                         @version: 0
-//!                         @hash: "06a2643f85279ae68043bb27654408282d996942e3f313c079f819a29299979c"
-//!                     },
-//!                     {
-//!                         @type: "directory",
-//!                         @name: "home"
-//!                         @entries: []
-//!                     }
-//!                 ]
-//!             }
-//!         ]
-//!     }
-//! }
-//! ```
+//! Version one is a hashmap that fits in a single block, and lives at Block 0.
+use std::collections::HashMap;
 
+use failure::{format_err, Error};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::block::{BlockCardinality, BlockNumber};
+use crate::{
+    block::{BlockCardinality, BlockNumber, BlockSize},
+    UfsUuid,
+};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Metadata {
-    pub next_free_block: Option<BlockNumber>,
-    pub root_dir: DirectoryMetadata,
-}
-
-impl Metadata {
-    pub(crate) fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(&self).unwrap()
-    }
-
-    pub(crate) fn deserialize<T>(bytes: T) -> bincode::Result<Self>
-    where
-        T: AsRef<[u8]>,
-    {
-        bincode::deserialize(bytes.as_ref())
-    }
-}
+pub(crate) type FileSize = u64;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum DirectoryEntry {
@@ -66,22 +21,104 @@ pub(crate) enum DirectoryEntry {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct DirectoryMetadata {
-    pub name: String,
-    pub entries: Vec<DirectoryEntry>,
+    #[serde(skip)]
+    dirty: bool,
+    entries: HashMap<String, DirectoryEntry>,
 }
 
 impl DirectoryMetadata {
     pub(crate) fn new_root() -> Self {
         DirectoryMetadata {
-            name: "root".to_string(),
-            entries: vec![],
+            dirty: true,
+            entries: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn new_file(&mut self, name: &str) {
+        let file = FileMetadata::new();
+        self.entries
+            .insert(name.to_owned(), DirectoryEntry::File(file));
+        self.dirty = true;
+    }
+
+    pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
+        &self.entries
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(crate) fn serialize(&self) -> Vec<u8> {
+        bincode::serialize(&self).unwrap()
+    }
+
+    pub(crate) fn deserialize<T>(bytes: T) -> Result<Self, Error>
+    where
+        T: AsRef<[u8]>,
+    {
+        match bincode::deserialize(bytes.as_ref()) {
+            Ok(d) => Ok(d),
+            Err(e) => Err(format_err!(
+                "Failed to deserialize directory metadata: {}",
+                e
+            )),
         }
     }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileMetadata {
-    pub name: String,
-    pub start_block: BlockNumber,
-    pub block_count: BlockCardinality,
+    pub versions: Vec<FileVersion>,
+}
+
+impl FileMetadata {
+    pub(crate) fn new() -> Self {
+        FileMetadata { versions: vec![] }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FileVersion {
+    size: FileSize,
+    start_block: Option<BlockNumber>,
+    block_count: BlockCardinality,
+}
+
+impl FileVersion {
+    pub(crate) fn new() -> Self {
+        FileVersion {
+            size: 0,
+            start_block: None,
+            block_count: 0,
+        }
+    }
+
+    pub(crate) fn size(&self) -> FileSize {
+        self.size
+    }
+
+    pub(crate) fn start_block(&self) -> Option<BlockNumber> {
+        self.start_block
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use uuid::Uuid;
+
+    use super::*;
+
+    #[test]
+    fn metadata_block() {
+        // let id = UfsUuid::new("metadata");
+        // let meta = Metadata::new(id, BlockSize::FiveTwelve, 10);
+
+        // assert_eq!(
+        //     Uuid::parse_str("e7f3f656-3bcb-50ff-8e46-e395e7fae538").unwrap(),
+        //     *meta.id().as_ref()
+        // );
+        // assert_eq!(BlockSize::FiveTwelve, meta.block_size());
+        // assert_eq!(10, meta.block_count());
+    }
 }

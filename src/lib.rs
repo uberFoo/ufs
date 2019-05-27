@@ -42,7 +42,7 @@
 //! The following is currently how block 0 is organized; it's serialized to a `Vec<u8>` using
 //! `Serde` and `Bincode`:
 //!
-//! ```
+//! ```ignore
 //! pub(crate) struct BlockMetadata {
 //!    pub size: BlockSize,
 //!    pub count: BlockCardinality,
@@ -115,26 +115,28 @@
 //! * `read_block(number)`
 //! * `write_block(number)`
 //!
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{cmp, collections::HashMap, io, path::Path};
 
 use failure::Error;
 use lazy_static::lazy_static;
-use log::trace;
+use log::{debug, error, trace};
+use serde_derive::{Deserialize, Serialize};
 use uuid::Uuid;
 
 mod block;
 mod metadata;
+mod runtime;
 
 pub mod fuse;
-pub mod io;
-
-pub(crate) use block::BlockType;
 
 pub use block::{
     manager::BlockManager,
-    storage::{file::FileStore, BlockStorage},
+    map::BlockMap,
+    storage::{file::FileStore, BlockReader, BlockStorage, BlockWriter},
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
+
+use metadata::{DirectoryEntry, FileMetadata, FileSize, FileVersion};
 
 lazy_static! {
     /// The UUID to rule them all
@@ -143,174 +145,254 @@ lazy_static! {
     static ref ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"uberfoo.com");
 }
 
-use crate::io::{BlockTreeReader, BlockTreeWriter};
-
 /// uberFS unique ID
 ///
-pub type UfsUuid = Uuid;
+/// The ID is a version 5 UUID wit it's base namespace as "uberfoo.com".  New ID's are derived from
+/// that root.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct UfsUuid {
+    inner: Uuid,
+}
 
-// /// Main File System Implementation
-// ///
-// pub struct UberFileSystem<B: BlockStorage> {
-//     /// Where we store blocks.
-//     ///
-//     block_manager: Rc<RefCell<BlockManager<B>>>,
-//     ///
-//     /// Handle to the root directory.
-//     ///
-//     root_dir: Rc<RefCell<Directory>>,
-//     // root_dir: MutableDirectory<'a, B>,
-//     dirty: bool,
-// }
+impl UfsUuid {
+    /// Create a new UfsUuid
+    ///
+    /// The UUID is generated based on the UFS UUID ROOT, and the supplied name.
+    pub fn new<N>(name: N) -> Self
+    where
+        N: AsRef<[u8]>,
+    {
+        UfsUuid {
+            inner: Uuid::new_v5(&ROOT_UUID, name.as_ref()),
+        }
+    }
+}
 
-// impl<'a> UberFileSystem<FileStore> {
-//     /// Create a new file-backed File System
-//     ///
-//     pub fn new_file_backed<P, B>(
-//         path: P,
-//         block_size: B,
-//         block_count: BlockCardinality,
-//     ) -> Result<Self, Error>
-//     where
-//         P: AsRef<Path>,
-//         B: Into<BlockSize>,
-//     {
-//         let file_store = FileStore::new(path.as_ref(), block_size.into(), block_count)?;
-//         let mut block_manager = BlockManager::new(file_store);
+impl AsRef<Uuid> for UfsUuid {
+    fn as_ref(&self) -> &Uuid {
+        &self.inner
+    }
+}
 
-//         // Setup the root directory.
-//         let root_dir = Directory::new();
-//         let root_dir_block_ptr =
-//             BlockType::Pointer(block_manager.write(root_dir.serialize().unwrap()).unwrap());
+/// Main File System Implementation
+///
+pub struct UberFileSystem<B: BlockStorage> {
+    /// Where we store blocks.
+    ///
+    block_manager: BlockManager<B>,
+    open_files: HashMap<String, FileVersion>,
+    dirty: bool,
+}
 
-//         println!("root_dir block {:?}", root_dir_block_ptr);
+impl UberFileSystem<FileStore> {
+    /// Load an existing file-backed File System
+    ///
+    pub fn load_file_backed<P>(path: P) -> Result<Self, Error>
+    where
+        P: AsRef<Path>,
+    {
+        let file_store = FileStore::load(path.as_ref())?;
+        let block_manager = BlockManager::load(file_store)?;
 
-//         block_manager
-//             .write_metadata("@root_dir_ptr", root_dir_block_ptr.serialize().unwrap())
-//             .unwrap();
+        Ok(UberFileSystem {
+            block_manager,
+            open_files: HashMap::new(),
+            dirty: false,
+        })
+    }
 
-//         // let block_manager = Rc::new(RefCell::new(block_manager));
+    /// List the contents of a Directory
+    ///
+    /// This function takes a Path and returns a Vec of (name, size) tuples -- one for each file
+    /// contained within the specified directory.
+    ///
+    /// TODO: Verify that the path exists, and do something with it!
+    pub fn list_files<P>(&self, path: P) -> Vec<(String, u64)>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("listing files for {:?}", path.as_ref());
+        self.block_manager
+            .root_dir()
+            .entries()
+            .iter()
+            .map(|(name, e)| match e {
+                DirectoryEntry::Directory(d) => {
+                    debug!("dir: {}", name);
+                    (name.clone(), 0)
+                }
+                DirectoryEntry::File(f) => {
+                    let size = match f.versions.last() {
+                        Some(v) => v.size(),
+                        None => {
+                            error!("Found a file ({}) with no version information.", name);
+                            0
+                        }
+                    };
+                    debug!("file: {}, bytes: {}", name, size);
+                    (name.clone(), size)
+                }
+            })
+            .collect()
+    }
 
-//         Ok(UberFileSystem {
-//             block_manager: Rc::new(RefCell::new(block_manager)),
-//             // root_dir: MutableDirectory::new(Rc::clone(&block_manager), &mut root_dir),
-//             root_dir: Rc::new(RefCell::new(root_dir)),
-//             dirty: false,
-//         })
-//     }
+    /// Create a file
+    ///
+    ///
+    pub fn create_file<P>(&mut self, path: P)
+    where
+        P: AsRef<Path>,
+    {
+        if let Some(ostr_name) = path.as_ref().file_name() {
+            if let Some(name) = ostr_name.to_str() {
+                self.block_manager.root_dir_mut().new_file(name);
+                self.open_files.insert(name.to_string(), FileVersion::new());
+            }
+        }
+    }
 
-//     /// Load an existing file-backed File System
-//     ///
-//     pub fn load_file_backed<P>(path: P) -> Result<Self, Error>
-//     where
-//         P: AsRef<Path>,
-//     {
-//         let (file_store, metadata) = FileStore::load_and_return_metadata(path.as_ref())?;
-//         let block_manager = BlockManager::load(file_store, metadata);
+    // /// Open a file
+    // ///
+    // ///
+    // pub fn open_file<P>(&mut self, path: P) where P: AsRef<Path>
+    // {
+    //     if let Some(ostr_name) = path.as_ref().file_name() {
+    //         if let Some(name) = ostr_name.to_str() {
+    //             if let Some(file) = self.block_manager.root_dir.entries.get(name) {
+    //                     match file {
+    //                         DirectoryEntry::Directory(_) => {
+    //                             error!(
+    //                                 "Attempt to open a directory: {:?}",
+    //                                 path.as_ref()
+    //                             );
+    //                         }
+    //                         DirectoryEntry::File(file) => {
 
-//         let root_dir = match block_manager.read_metadata("@root_dir_ptr") {
-//             Ok(block_ptr_bytes) => {
-//                 trace!("read block_ptr_bytes {:?}", block_ptr_bytes);
-//                 match BlockType::deserialize(block_ptr_bytes) {
-//                     Ok(BlockType::Pointer(block)) => {
-//                         trace!("deserialized block_ptr_bytes to {:#?}", block);
-//                         match block_manager.read(&block) {
-//                             Ok(tree_bytes) => {
-//                                 trace!("read block_ptr block bytes {:?}", tree_bytes);
-//                                 match Directory::deserialize(tree_bytes) {
-//                                     Ok(root_dir) => {
-//                                         trace!("deserialized root_dir {:#?}", root_dir);
-//                                         root_dir
-//                                     }
-//                                     Err(e) => {
-//                                         panic!("problem deserializing root directory {:?}", e);
-//                                     }
-//                                 }
-//                             }
+    //                         }
+    //             }
+    //         }
+    //     }
+    // }
 
-//                             Err(e) => panic!("problem reading root_dir blocks {:?}", e),
-//                         }
-//                     }
-//                     Err(e) => panic!("problem deserializing root direcory block_ptr {:?}", e),
-//                 }
-//             }
-//             Err(e) => panic!("problem reading metadata for `@root_dir_ptr` {:?}", e),
-//         };
+    /// Write bytes to a file
+    ///
+    ///
+    // pub fn write_bytes_to_file<P>(&mut self, path: P, bytes: &[u8]) -> io::Result<usize>
+    // where
+    //     P: AsRef<Path>,
+    // {
+    //     match path.as_ref().file_name() {
+    //         Some(file_name) => match file_name.to_str() {
+    //             Some(name) => {
+    //                 let mut written = 0;
+    //                 let mut file_version = FileVersion {
+    //                     size: bytes.len() as FileSize,
+    //                     start_block: None,
+    //                     block_count: 0,
+    //                 };
+    //                 if let Some(file) = self.block_manager.root_dir.entries.get(name) {
+    //                     match file {
+    //                         DirectoryEntry::Directory(_) => {
+    //                             error!(
+    //                                 "Attempt to write bytes to a directory: {:?}",
+    //                                 path.as_ref()
+    //                             );
+    //                         }
+    //                         DirectoryEntry::File(file) => {
+    //                             while written < bytes.len() {
+    //                                 match self.block_manager.write(&bytes[written..]) {
+    //                                     Ok(block) => {
+    //                                         if file_version.start_block() == None {
+    //                                             file_version.start_block = block.number();
+    //                                         }
+    //                                         file_version.block_count += 1;
+    //                                         written += block.size();
+    //                                     }
+    //                                     Err(e) => {
+    //                                         error!("problem writing data {}", e);
+    //                                     }
+    //                                 }
+    //                             }
+    //                             debug!(
+    //                                 "wrote {} bytes starting at block {} for {} blocks",
+    //                                 written,
+    //                                 file_version.start_block.unwrap(),
+    //                                 file_version.block_count
+    //                             );
 
-//         Ok(UberFileSystem {
-//             block_manager: Rc::new(RefCell::new(block_manager)),
-//             // root_dir: MutableDirectory::new(Rc::clone(&block_manager), &mut root_dir),
-//             root_dir: Rc::new(RefCell::new(root_dir)),
-//             dirty: false,
-//         })
-//     }
+    //                             // Ok(written)
+    //                         }
+    //                     }
+    //                 } else {
+    //                     error!("File lookup error: {:?}", path.as_ref());
+    //                     // Ok(0)
+    //                 }
+    //                 if written > 0 {
+    //                     if let Some(file) = self.block_manager.root_dir.entries.get_mut(name) {
+    //                         match file {
+    //                             DirectoryEntry::File(file) => {
+    //                                 file.versions.push(file_version);
+    //                                 self.dirty = true;
+    //                                 Ok(written)
+    //                             }
+    //                             _ => unreachable!(),
+    //                         }
+    //                     } else {
+    //                         error!("WTF");
+    //                         return Ok(written);
+    //                     }
+    //                 } else {
+    //                     return Ok(0);
+    //                 }
+    //             }
+    //             None => {
+    //                 error!("invalid utf-8 in path");
+    //                 Ok(0)
+    //             }
+    //         },
+    //         None => {
+    //             error!("malformed path {:?}", path.as_ref());
+    //             Ok(0)
+    //         }
+    //     }
+    // }
 
-//     /// List the contents of a Directory
-//     ///
-//     /// This function takes a Path and returns a Vec of (name, size) tuples -- one for each file
-//     /// contained within the specified directory.
-//     ///
-//     /// TODO: Verify that the path exists, and do something with it!
-//     pub fn list_files<P>(&self, path: P) -> Vec<(String, u64)>
-//     where
-//         P: AsRef<Path>,
-//     {
-//         self.root_dir
-//             .borrow()
-//             .iter()
-//             .map(|(k, v)| {
-//                 println!("{}: {:?}", k, v);
-//                 let size = if let Some(bt) = v { bt.size() } else { 0 };
-//                 (k.clone(), size)
-//             })
-//             .collect()
-//     }
+    pub fn write_file<P>(&mut self, path: P) -> FileWriter
+    where
+        P: AsRef<Path>,
+    {
+        FileWriter { fs: self }
+    }
 
-//     /// Create a file
-//     ///
-//     ///
-//     pub fn create_file<P>(&mut self, path: P)
-//     where
-//         P: AsRef<Path>,
-//     {
-//         if let Some(ostr_name) = path.as_ref().file_name() {
-//             if let Some(name) = ostr_name.to_str() {
-//                 let mut mrd = MutableDirectory::new(
-//                     Rc::clone(&self.root_dir),
-//                     Rc::clone(&self.block_manager),
-//                 );
-//                 mrd.create_entry(name);
-//             }
-//         }
-//     }
-
-//     /// Write bytes to a file
-//     ///
-//     ///
-//     pub fn file_writer<P>(&mut self, path: P) -> DirectoryEntryWriter<FileStore>
-//     where
-//         P: AsRef<Path>,
-//     {
-//         let mrd = MutableDirectory::new(Rc::clone(&self.root_dir), Rc::clone(&self.block_manager));
-//         let btw = BlockTreeWriter::new(Rc::clone(&self.block_manager));
-//         DirectoryEntryWriter::new(path, Rc::new(RefCell::new(mrd)), Rc::new(RefCell::new(btw)))
-//     }
-
-//     /// Read bytes from a file
-//     ///
-//     ///
-//     pub fn file_reader<P>(&mut self, path: P) -> DirectoryEntryReader<FileStore>
-//     where
-//         P: AsRef<Path>,
-//     {
-//         let mut mrd =
-//             MutableDirectory::new(Rc::clone(&self.root_dir), Rc::clone(&self.block_manager));
-//         let file = path.as_ref().file_name().unwrap().to_str().unwrap();
-//         let tree = mrd.read_entry(&file).unwrap();
-//         let btw = BlockTreeReader::new(Box::new(tree), Rc::clone(&self.block_manager));
-//         DirectoryEntryReader::new(path, Rc::new(RefCell::new(mrd)), Rc::new(RefCell::new(btw)))
-//     }
-// }
+    /// Read bytes from a file
+    ///
+    ///
+    pub fn read_file<P>(&mut self, path: P) -> Option<FileReader>
+    where
+        P: AsRef<Path>,
+    {
+        if let Some(ostr_name) = path.as_ref().file_name() {
+            if let Some(name) = ostr_name.to_str() {
+                if let Some(file) = self.block_manager.root_dir().entries().get(name) {
+                    match file {
+                        DirectoryEntry::Directory(_) => {
+                            error!("Can't read a directory {:?}", path.as_ref());
+                            None
+                        }
+                        DirectoryEntry::File(file) => Some(FileReader::new(file)),
+                    }
+                } else {
+                    error!("Asked to read a file I cannot find: {:?}", path.as_ref());
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
 
 // impl<B> Drop for UberFileSystem<B>
 // where
@@ -329,3 +411,31 @@ pub type UfsUuid = Uuid;
 //         }
 //     }
 // }
+
+pub struct FileWriter<'a> {
+    fs: &'a mut UberFileSystem<FileStore>,
+}
+
+impl<'a> io::Write for FileWriter<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(0)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct FileReader {}
+
+impl FileReader {
+    pub(crate) fn new(file: &FileMetadata) -> Self {
+        FileReader {}
+    }
+}
+
+impl io::Read for FileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Ok(0)
+    }
+}

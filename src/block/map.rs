@@ -14,10 +14,9 @@ use serde_derive::{Deserialize, Serialize};
 use crate::{
     block::{
         hash::BlockHash,
-        storage::{BlockReader, BlockStorage, BlockWriter},
+        storage::{BlockReader, BlockWriter},
         Block, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
     },
-    metadata::Metadata,
     UfsUuid,
 };
 
@@ -49,6 +48,7 @@ pub struct BlockMap {
     count: BlockCardinality,
     metadata_blocks: Vec<BlockNumber>,
     free_blocks: VecDeque<BlockNumber>,
+    root_block: Option<BlockNumber>,
     map: Vec<Block>,
 }
 
@@ -63,6 +63,7 @@ impl BlockMap {
             count,
             metadata_blocks: vec![0],
             free_blocks: (1..count).collect(),
+            root_block: None,
             map: (0..count).map(|b| Block::new(b)).collect::<Vec<_>>(),
         }
     }
@@ -77,6 +78,22 @@ impl BlockMap {
 
     pub(in crate::block) fn block_count(&self) -> BlockCardinality {
         self.count
+    }
+
+    pub(crate) fn free_blocks(&self) -> &VecDeque<BlockNumber> {
+        &self.free_blocks
+    }
+
+    pub(crate) fn free_blocks_mut(&mut self) -> &mut VecDeque<BlockNumber> {
+        &mut self.free_blocks
+    }
+
+    pub(crate) fn set_root_block(&mut self, block: BlockNumber) {
+        self.root_block = Some(block);
+    }
+
+    pub(crate) fn root_block(&self) -> Option<BlockNumber> {
+        self.root_block
     }
 
     pub(crate) fn get(&self, number: BlockNumber) -> Option<&Block> {
@@ -350,7 +367,7 @@ mod test {
         for x in 1..8 {
             assert!(
                 map_2.get(x).unwrap().is_data(),
-                "block {} shohuld be BlockType::Data",
+                "block {} should be BlockType::Data",
                 x
             );
         }
