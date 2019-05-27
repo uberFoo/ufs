@@ -19,7 +19,8 @@ impl BlockHash {
     /// Validate a hash against a buffer of bytes
     ///
     /// # Examples
-    /// ```
+    /// The following is ignored because only externally visible items can run doctests. 😖
+    /// ```ignore
     /// let hash = BlockHash::new(b"uberfoo");
     /// assert_eq!(true, hash.validate(b"uberfoo"));
     /// ```
