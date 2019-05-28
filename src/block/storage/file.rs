@@ -86,17 +86,23 @@ impl BlockReader for FileReader {
 }
 
 /// It'd be cool to impl From<BlockNumber> for PathBuf
-fn path_for_block(root: &PathBuf, mut block: BlockNumber) -> PathBuf {
+fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
     let mut path = root.clone();
-    while block > 0xf {
-        let nibble = block & 0xf;
-        // path.push(fmt::format(format_args!("{:x?}", nibble)));
-        path.push(format!("{:x?}", nibble));
-        block >>= 4;
+    let mut stack = vec![];
+    let mut blk = block;
+    while blk > 0xf {
+        let nibble = blk & 0xf;
+        stack.push(nibble);
+        blk >>= 4;
     }
     // Pulling this out of the loop avoids an issue with the `0` block.
-    path.push(fmt::format(format_args!("{:x?}", block)));
+    path.push(format!("{:x?}", blk));
+
+    while stack.len() > 0 {
+        path.push(format!("{:x?}", stack.pop().unwrap()));
+    }
     path.set_extension(BLOCK_EXT);
+    trace!("Path for block {:x?}: {:?}", block, path);
     path
 }
 
@@ -187,7 +193,6 @@ impl FileStore {
                 let count = count - 1;
                 for i in 0x0..0x10 {
                     let mut path = root.clone();
-                    // path.push(fmt::format(format_args!("{:x?}", i)));
                     path.push(format!("{:x?}", i));
                     make_dirs(&path, count)?;
                 }
