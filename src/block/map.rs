@@ -144,7 +144,7 @@ impl BlockMap {
                     Some(b) => b,
                     None => return Err(format_err!("No free blocks.")),
                 };
-                debug!("Allocating new metadata block {}", meta_block);
+                debug!("Allocating new blockmap wrapper block {}", meta_block);
                 // self.get_mut(meta_block).unwrap().tag_metadata();
                 self.map[meta_block as usize].tag_metadata();
                 self.metadata_blocks.push(meta_block);

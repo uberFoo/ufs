@@ -20,12 +20,11 @@ pub(crate) mod manager;
 pub(crate) mod map;
 pub(crate) mod storage;
 
-use std::{fmt, path::Path, str::FromStr};
+use std::{fmt, str::FromStr};
 
-use failure::Error;
 use serde_derive::{Deserialize, Serialize};
 
-pub(crate) use self::{manager::BlockManager, storage::file::FileStore};
+pub(crate) use self::storage::file::FileStore;
 
 use self::{hash::BlockHash, map::BlockType};
 use crate::UfsUuid;
@@ -177,12 +176,12 @@ impl Block {
         self.block_type = BlockType::new_data();
     }
 
-    pub(in crate::block) fn number(&self) -> BlockCardinality {
+    pub(crate) fn number(&self) -> BlockCardinality {
         self.number
     }
 
-    pub(in crate::block) fn size(&self) -> usize {
-        self.byte_count as usize
+    pub(crate) fn size(&self) -> BlockSizeType {
+        self.byte_count
     }
 
     pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {

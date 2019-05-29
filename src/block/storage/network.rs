@@ -4,12 +4,11 @@
 //!
 use failure::{format_err, Error};
 use log::trace;
-use reqwest::{get, header::CONTENT_TYPE, Client, IntoUrl, Url};
+use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
 use crate::block::{
-    map::BlockMap,
-    storage::{BlockReader, BlockStorage, BlockWriter},
-    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    storage::{BlockReader, BlockWriter},
+    BlockNumber, BlockSizeType,
 };
 
 struct NetworkReader {

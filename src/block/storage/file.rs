@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 
 use failure::{format_err, Error};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
@@ -102,7 +102,7 @@ fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
         path.push(format!("{:x?}", stack.pop().unwrap()));
     }
     path.set_extension(BLOCK_EXT);
-    trace!("Path for block {:x?}: {:?}", block, path);
+    trace!("path for block {:x?}: {:?}", block, path);
     path
 }
 
@@ -182,7 +182,7 @@ impl FileStore {
 
     fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
         debug!(
-            "Creating new file-based storage at {:?} with {} blocks having block size {:?}.",
+            "creating new file-based storage at {:?} with {} blocks having block size {:?}",
             path, count, size
         );
         /// Little function that calls itself to create the directories in which we store our
@@ -221,7 +221,7 @@ impl FileStore {
             let path = path_for_block(&path, block);
             trace!("creating block file {:}", block);
             fs::File::create(path)
-                .unwrap_or_else(|_| panic!("Unable to create file for block {}.", block));
+                .unwrap_or_else(|_| panic!("unable to create file for block {}.", block));
         }
 
         Ok(())
@@ -230,15 +230,18 @@ impl FileStore {
 
 impl Drop for FileStore {
     fn drop(&mut self) {
-        debug!("Writing Block Map");
+        debug!("writing BlockMap");
         let mut writer = FileWriter {
             block_size: self.block_size,
             block_count: self.block_count,
             root_path: self.root_path.clone(),
         };
 
-        debug!("Dropping FileStore");
-        self.map.serialize(&mut writer);
+        debug!("dropping FileStore");
+        match self.map.serialize(&mut writer) {
+            Ok(s) => debug!("dropped FileStore"),
+            Err(e) => error!("error dropping FileStore: {}", e),
+        };
     }
 }
 

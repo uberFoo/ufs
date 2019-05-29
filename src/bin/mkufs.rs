@@ -30,7 +30,7 @@ fn main() -> Result<(), Error> {
     let opt = Opt::from_args();
     debug!("running with options {:?}", opt);
 
-    let mut map = BlockMap::new(
+    let map = BlockMap::new(
         UfsUuid::new(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
         opt.block_size,
         opt.block_count,

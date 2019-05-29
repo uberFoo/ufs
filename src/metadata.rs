@@ -1,18 +1,28 @@
 //! Metadata
 //!
 //! Version one is a hashmap that fits in a single block, and lives at Block 0.
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use failure::{format_err, Error};
+use log::{debug, error};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    block::{BlockCardinality, BlockNumber, BlockSize},
+    block::{Block, BlockNumber},
     time::UfsTime,
-    UfsUuid,
 };
 
 pub(crate) type FileSize = u64;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct File {
+    pub path: PathBuf,
+    pub version: FileVersion,
+    pub file: FileMetadata,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum DirectoryEntry {
@@ -53,11 +63,61 @@ impl DirectoryMetadata {
         }
     }
 
-    pub(crate) fn new_file(&mut self, name: &str) {
+    pub(crate) fn new_file(&mut self, name: &str) -> File {
         let file = FileMetadata::new();
         self.entries
-            .insert(name.to_owned(), DirectoryEntry::File(file));
+            .insert(name.to_owned(), DirectoryEntry::File(file.clone()));
         self.dirty = true;
+        File {
+            path: ["/", name].iter().collect(),
+            version: file.get_current_version(),
+            file: file.clone(),
+        }
+    }
+
+    pub(crate) fn get_file<P>(&self, path: P) -> Option<File>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("attempting to fetch file {:?}", path.as_ref());
+        match path.as_ref().file_name() {
+            Some(file_name) => match file_name.to_str() {
+                Some(name) => match self.entries.get(name) {
+                    Some(entry) => match entry {
+                        DirectoryEntry::File(file) => Some(File {
+                            path: path.as_ref().to_path_buf(),
+                            version: file.get_current_version(),
+                            file: file.clone(),
+                        }),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => {
+                    error!("invalid utf-8 in path {:?}", path.as_ref());
+                    None
+                }
+            },
+            _ => {
+                error!("malformed path {:?}", path.as_ref());
+                None
+            }
+        }
+    }
+
+    pub(crate) fn update_file(&mut self, file: File) {
+        if let Some(file_name) = file.path.file_name() {
+            if let Some(name) = file_name.to_str() {
+                if let Some(ref mut entry) = self.entries.get_mut(name) {
+                    match entry {
+                        DirectoryEntry::File(ref mut my_file) => {
+                            my_file.commit_version(file.version)
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
@@ -81,7 +141,10 @@ impl DirectoryMetadata {
         T: AsRef<[u8]>,
     {
         match bincode::deserialize(bytes.as_ref()) {
-            Ok(d) => Ok(d),
+            Ok(d) => {
+                debug!("deserialized DirectoryMetadata\n{:#?}", d);
+                Ok(d)
+            }
             Err(e) => Err(format_err!(
                 "Failed to deserialize directory metadata: {}",
                 e
@@ -92,6 +155,40 @@ impl DirectoryMetadata {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileMetadata {
+    versions: Vec<FileVersion>,
+}
+
+impl FileMetadata {
+    pub(crate) fn new() -> Self {
+        FileMetadata {
+            versions: vec![FileVersion::new()],
+        }
+    }
+
+    pub(crate) fn version(&self) -> usize {
+        self.versions.len() - 1
+    }
+
+    pub(crate) fn get_current_version(&self) -> FileVersion {
+        self.versions.last().unwrap().clone()
+    }
+
+    pub(crate) fn commit_version(&mut self, version: FileVersion) {
+        if version.dirty {
+            debug!("updating file version\n{:#?}", version);
+            self.versions.push(version);
+        }
+    }
+
+    pub(crate) fn write_time(&self) -> UfsTime {
+        self.versions[0].write_time()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FileVersion {
+    #[serde(skip)]
+    dirty: bool,
     /// Time file was created (crtime)
     ///
     birth_time: UfsTime,
@@ -105,39 +202,25 @@ pub(crate) struct FileMetadata {
     /// Time the file was last accessed (atime)
     ///
     access_time: UfsTime,
-    pub versions: Vec<FileVersion>,
-}
-
-impl FileMetadata {
-    pub(crate) fn new() -> Self {
-        let time = UfsTime::now();
-        FileMetadata {
-            birth_time: time,
-            write_time: time,
-            change_time: time,
-            access_time: time,
-            versions: vec![],
-        }
-    }
-
-    pub(crate) fn write_time(&self) -> UfsTime {
-        self.write_time
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct FileVersion {
+    /// The size of the file in bytes.
+    ///
     size: FileSize,
-    start_block: Option<BlockNumber>,
-    block_count: BlockCardinality,
+    /// The blocks that comprise the file
+    ///
+    blocks: Vec<BlockNumber>,
 }
 
 impl FileVersion {
     pub(crate) fn new() -> Self {
+        let time = UfsTime::now();
         FileVersion {
+            dirty: false,
+            birth_time: time,
+            write_time: time,
+            change_time: time,
+            access_time: time,
             size: 0,
-            start_block: None,
-            block_count: 0,
+            blocks: vec![],
         }
     }
 
@@ -145,8 +228,24 @@ impl FileVersion {
         self.size
     }
 
-    pub(crate) fn start_block(&self) -> Option<BlockNumber> {
-        self.start_block
+    pub(crate) fn block_count(&self) -> usize {
+        self.blocks.len()
+    }
+
+    pub(crate) fn blocks(&self) -> &Vec<BlockNumber> {
+        &self.blocks
+    }
+
+    pub(crate) fn append_block(&mut self, block: &Block) {
+        self.dirty = true;
+        self.blocks.push(block.number());
+        debug!("adding block {} to blocklist", block.number());
+        self.size += block.size() as FileSize;
+        debug!("new size {}", self.size);
+    }
+
+    pub(crate) fn write_time(&self) -> UfsTime {
+        self.write_time
     }
 }
 

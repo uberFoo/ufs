@@ -5,8 +5,8 @@ use log::{debug, error, trace};
 
 use crate::{
     block::{
-        hash::BlockHash, map::BlockType, storage::BlockStorage, Block, BlockCardinality, BlockSize,
-        BlockSizeType,
+        hash::BlockHash, map::BlockType, storage::BlockStorage, Block, BlockCardinality,
+        BlockNumber, BlockSize, BlockSizeType,
     },
     metadata::DirectoryMetadata,
 };
@@ -47,8 +47,6 @@ where
                 match DirectoryMetadata::deserialize(block) {
                     Ok(root_dir) => {
                         debug!("loaded metadata");
-                        // debug!("\tnext free block {:?}", metadata.next_free_block());
-                        debug!("\troot dir {:#?}", root_dir);
 
                         Ok(BlockManager {
                             root_dir: root_dir,
@@ -76,6 +74,10 @@ where
 
     pub(crate) fn block_size(&self) -> BlockSize {
         self.store.block_size()
+    }
+
+    pub(crate) fn get_block(&self, number: BlockNumber) -> Option<&Block> {
+        self.store.metadata().get(number)
     }
 
     /// The number of available, un-allocated Blocks.
@@ -106,6 +108,8 @@ where
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
         if self.root_dir.is_dirty() {
+            let root_dir_bytes = self.root_dir.serialize();
+            debug!("root directory is {} bytes", root_dir_bytes.len());
             let block_number = match self.write(self.root_dir.serialize()) {
                 Ok(block) => {
                     debug!("Wrote metadata to block {}", block.number());
@@ -222,7 +226,7 @@ mod test {
             10,
         )));
 
-        print!("root dir {:?}", bm.root_dir);
+        print!("root dir {:#?}", bm.root_dir);
     }
 
     #[test]

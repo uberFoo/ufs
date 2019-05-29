@@ -1,11 +1,6 @@
 //! FUSE Interface for uberFS
 //!
-use std::{
-    collections::HashMap,
-    ffi::OsStr,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -259,9 +254,19 @@ impl Filesystem for UberFSFuse {
         }
     }
 
-    fn open(&mut self, _req: &Request, _ino: u64, _flags: u32, reply: ReplyOpen) {
-        trace!("open ino: {}, flags {:x}", _ino, _flags);
-        reply.opened(0, 0);
+    fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: ReplyOpen) {
+        trace!("open ino: {}, flags {:x}", ino, _flags);
+
+        if let Some(inode) = self.inodes.get_mut(ino as usize) {
+            let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
+
+            match self.file_system.open_file(path) {
+                Some(fh) => reply.opened(fh as u64, 0),
+                _ => reply.error(ENOENT),
+            }
+        } else {
+            reply.error(ENOENT);
+        }
     }
 
     // Create and apen a file
@@ -284,17 +289,20 @@ impl Filesystem for UberFSFuse {
         if parent == 1 {
             let name = String::from(name.to_str().unwrap());
 
-            self.file_system.create_file(&name);
+            let (fh, time) = match self.file_system.create_file(&name) {
+                Some((fh, t)) => (fh as u64, t),
+                None => (0, TIME),
+            };
             let number = self.inodes.len() as u64;
             let inode = Inode {
                 name: name.clone(),
                 number,
-                time: TIME,
+                time,
                 // blocks: InodeBlocks::None,
                 size: None,
             };
 
-            reply.created(&TTL, &inode.file_attr(), 0, 0, flags);
+            reply.created(&TTL, &inode.file_attr(), 0, fh, flags);
 
             self.inodes.push(inode);
             self.files.insert(name, number);
@@ -307,7 +315,7 @@ impl Filesystem for UberFSFuse {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         flags: u32,
         _lock_owner: u64,
         flush: bool,
@@ -320,97 +328,43 @@ impl Filesystem for UberFSFuse {
             flush
         );
 
-        if let Some(inode) = self.inodes.get_mut(ino as usize) {
-            // FIXME:
-            reply.ok();
-        } else {
-            trace!("attempted to release unknown inode {}", ino);
-            reply.error(ENOENT);
-        }
+        self.file_system.close_file(fh);
+        reply.ok();
     }
 
     /// FIXME:
     ///  * BlockManager read should probably take an offset and a size.
     ///  * Also may want to consider caching something here and using the file handle?
-    // fn read(
-    //     &mut self,
-    //     _req: &Request,
-    //     ino: u64,
-    //     _fh: u64,
-    //     offset: i64,
-    //     size: u32,
-    //     reply: ReplyData,
-    // ) {
-    //     trace!(
-    //         "read ino: {}, offset: {}, bytes remaining: {}",
-    //         ino,
-    //         offset,
-    //         size
-    //     );
+    fn read(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        reply: ReplyData,
+    ) {
+        trace!(
+            "read ino: {}, offset: {}, chunk size: {}",
+            ino,
+            offset,
+            size
+        );
 
-    //     if let Some(inode) = self.inodes.get_mut(ino as usize) {
-    //         trace!(
-    //             "found inode {} called {}, and it's {} bytes.",
-    //             inode.number,
-    //             inode.name,
-    //             if let Some(b) = inode.size { b } else { 0 }
-    //         );
-
-    //         // FIXME: Refactor the inner reading bits below.
-    //         match inode.blocks.reader() {
-    //             Some(ref mut reader) => {
-    //                 trace!("using existing reader");
-    //                 let mut buffer: Vec<u8> =
-    //                     vec![0; self.file_system.block_manager.block_size() as usize];
-    //                 match reader.read(&mut buffer) {
-    //                     Ok(len) => {
-    //                         trace!("returning {} bytes", len);
-    //                         reply.data(&buffer[..len]);
-    //                         return;
-    //                     }
-    //                     Err(e) => {
-    //                         // FIXME: Do I want/need to go to the trouble to impl Debug for Inode?
-    //                         error!("error reading inode {}: {}", ino, e);
-    //                     }
-    //                 };
-    //             }
-    //             None => {
-    //                 trace!("making fresh reader");
-    //                 let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
-    //                 match self.file_system.read_file(path) {
-    //                     Some(file) => {
-    //                         inode.blocks = InodeBlocks::Reader(Box::new(file));
-    //                         let reader = inode.blocks.reader().unwrap();
-    //                         let mut buffer: Vec<u8> =
-    //                             vec![0; self.file_system.block_manager.block_size() as usize];
-
-    //                         match reader.read(&mut buffer) {
-    //                             Ok(len) => {
-    //                                 trace!("returning {} bytes", len);
-    //                                 reply.data(&buffer[..len]);
-    //                                 return;
-    //                             }
-    //                             Err(e) => {
-    //                                 // FIXME: Do I want/need to go to the trouble to impl Debug for Inode?
-    //                                 error!("error reading inode {}: {}", ino, e);
-    //                             }
-    //                         };
-    //                     }
-    //                     None => error!("fuck"),
-    //                 }
-    //             }
-    //         };
-    //     }
-
-    //     error!("error in read");
-    //     reply.error(ENOENT);
-    // }
+        if let Ok(buffer) = self.file_system.read_file(fh, offset, size) {
+            debug!("read {} bytes", buffer.len());
+            trace!("{:?}", &buffer);
+            reply.data(&buffer)
+        } else {
+            reply.error(ENOENT)
+        }
+    }
 
     fn write(
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         data: &[u8],
         _flags: u32,
@@ -424,24 +378,23 @@ impl Filesystem for UberFSFuse {
         );
 
         if let Some(inode) = self.inodes.get_mut(ino as usize) {
-            let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
-        //     if let Ok(size) = self.file_system.write_bytes_to_file(path, data) {
-        //         debug!("wrote {} bytes", size);
-        //         trace!("{:?}", &data[..size]);
+            if let Ok(len) = self.file_system.write_file(fh, data) {
+                debug!("wrote {} bytes", len);
+                trace!("{:?}", &data[..len]);
 
-        //         // TODO: Need to sort out how this works, because adding the bytes we wrote
-        //         // to the existing size isn't the right thing.
-        //         let new_size: u64 = if let Some(n) = inode.size {
-        //             n + size as u64
-        //         } else {
-        //             size as u64
-        //         };
-        //         inode.size.replace(new_size);
+                // TODO: Need to sort out how this works, because adding the bytes we wrote
+                // to the existing size isn't the right thing.
+                let new_size: u64 = if let Some(n) = inode.size {
+                    n + len as u64
+                } else {
+                    len as u64
+                };
+                inode.size.replace(new_size);
 
-        //         reply.written(size as u32);
-        //     } else {
-        //         reply.error(ENOENT);
-        //     }
+                reply.written(len as u32);
+            } else {
+                reply.error(ENOENT);
+            }
         } else {
             reply.error(ENOENT);
         }

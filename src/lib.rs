@@ -118,9 +118,9 @@
 use std::{cmp, collections::HashMap, io, path::Path};
 
 use ::time::Timespec;
-use failure::Error;
+use failure::{format_err, Error};
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use serde_derive::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -138,8 +138,7 @@ pub use block::{
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
-use crate::metadata::{DirectoryEntry, FileMetadata, FileSize, FileVersion};
-use crate::time::UfsTime;
+use crate::metadata::{DirectoryEntry, File};
 
 lazy_static! {
     /// The UUID to rule them all
@@ -183,7 +182,8 @@ pub struct UberFileSystem<B: BlockStorage> {
     /// Where we store blocks.
     ///
     block_manager: BlockManager<B>,
-    open_files: HashMap<String, FileVersion>,
+    open_files: HashMap<u64, File>,
+    open_file_counter: u64,
     dirty: bool,
 }
 
@@ -199,7 +199,9 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             block_manager,
+            // open_files: HashMap::new(),
             open_files: HashMap::new(),
+            open_file_counter: 0,
             dirty: false,
         })
     }
@@ -225,13 +227,7 @@ impl UberFileSystem<FileStore> {
                     (name.clone(), 0, d.write_time().into())
                 }
                 DirectoryEntry::File(f) => {
-                    let size = match f.versions.last() {
-                        Some(v) => v.size(),
-                        None => {
-                            error!("Found a file ({}) with no version information.", name);
-                            0
-                        }
-                    };
+                    let size = f.get_current_version().size();
                     debug!("file: {}, bytes: {}", name, size);
                     (name.clone(), size, f.write_time().into())
                 }
@@ -241,202 +237,135 @@ impl UberFileSystem<FileStore> {
 
     /// Create a file
     ///
-    ///
-    pub fn create_file<P>(&mut self, path: P)
+    pub fn create_file<P>(&mut self, path: P) -> Option<(u64, Timespec)>
     where
         P: AsRef<Path>,
     {
         if let Some(ostr_name) = path.as_ref().file_name() {
             if let Some(name) = ostr_name.to_str() {
-                self.block_manager.root_dir_mut().new_file(name);
-                self.open_files.insert(name.to_string(), FileVersion::new());
+                let file = self.block_manager.root_dir_mut().new_file(name);
+                let time = file.version.write_time();
+
+                let fh = self.open_file_counter.overflowing_add(1).0;
+                self.open_files.insert(fh, file);
+
+                return Some((fh, time.into()));
+            }
+        }
+
+        None
+    }
+
+    /// Open a file
+    ///
+    pub fn open_file<P>(&mut self, path: P) -> Option<u64>
+    where
+        P: AsRef<Path>,
+    {
+        if let Some(file) = self.block_manager.root_dir().get_file(path) {
+            let fh = self.open_file_counter.overflowing_add(1).0;
+            self.open_files.insert(fh, file);
+            Some(fh)
+        } else {
+            None
+        }
+    }
+
+    /// Close a file
+    ///
+    pub fn close_file(&mut self, handle: u64) {
+        match self.open_files.remove(&handle) {
+            Some(file) => {
+                debug!("closing file ({}) {:?}", handle, file.path);
+                self.block_manager.root_dir_mut().update_file(file);
+            }
+            None => {
+                warn!("asked to close a file not in the map {}", handle);
             }
         }
     }
 
-    // /// Open a file
-    // ///
-    // ///
-    // pub fn open_file<P>(&mut self, path: P)
-    // where
-    //     P: AsRef<Path>,
-    // {
-    //     if let Some(ostr_name) = path.as_ref().file_name() {
-    //         if let Some(name) = ostr_name.to_str() {
-    //             if let Some(file) = self.block_manager.root_dir().entries().get(name) {
-    //                 match file {
-    //                     DirectoryEntry::Directory(_) => {
-    //                         error!("Attempt to open a directory: {:?}", path.as_ref());
-    //                     }
-    //                     DirectoryEntry::File(file) => {}
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    /// Write bytes to a file
+    /// Write bytes to a file.
     ///
-    ///
-    // pub fn write_bytes_to_file<P>(&mut self, path: P, bytes: &[u8]) -> io::Result<usize>
-    // where
-    //     P: AsRef<Path>,
-    // {
-    //     match path.as_ref().file_name() {
-    //         Some(file_name) => match file_name.to_str() {
-    //             Some(name) => {
-    //                 let mut written = 0;
-    //                 let mut file_version = FileVersion {
-    //                     size: bytes.len() as FileSize,
-    //                     start_block: None,
-    //                     block_count: 0,
-    //                 };
-    //                 if let Some(file) = self.block_manager.root_dir.entries.get(name) {
-    //                     match file {
-    //                         DirectoryEntry::Directory(_) => {
-    //                             error!(
-    //                                 "Attempt to write bytes to a directory: {:?}",
-    //                                 path.as_ref()
-    //                             );
-    //                         }
-    //                         DirectoryEntry::File(file) => {
-    //                             while written < bytes.len() {
-    //                                 match self.block_manager.write(&bytes[written..]) {
-    //                                     Ok(block) => {
-    //                                         if file_version.start_block() == None {
-    //                                             file_version.start_block = block.number();
-    //                                         }
-    //                                         file_version.block_count += 1;
-    //                                         written += block.size();
-    //                                     }
-    //                                     Err(e) => {
-    //                                         error!("problem writing data {}", e);
-    //                                     }
-    //                                 }
-    //                             }
-    //                             debug!(
-    //                                 "wrote {} bytes starting at block {} for {} blocks",
-    //                                 written,
-    //                                 file_version.start_block.unwrap(),
-    //                                 file_version.block_count
-    //                             );
+    pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, Error> {
+        match &mut self.open_files.get_mut(&handle) {
+            Some(file) => {
+                let mut written = 0;
+                while written < bytes.len() {
+                    match self.block_manager.write(&bytes[written..]) {
+                        Ok(block) => {
+                            written += block.size() as usize;
+                            file.version.append_block(&block);
+                        }
+                        Err(e) => {
+                            error!("problem writing data to file: {}", e);
+                        }
+                    }
+                }
+                debug!("wrote {} bytes", written,);
 
-    //                             // Ok(written)
-    //                         }
-    //                     }
-    //                 } else {
-    //                     error!("File lookup error: {:?}", path.as_ref());
-    //                     // Ok(0)
-    //                 }
-    //                 if written > 0 {
-    //                     if let Some(file) = self.block_manager.root_dir.entries.get_mut(name) {
-    //                         match file {
-    //                             DirectoryEntry::File(file) => {
-    //                                 file.versions.push(file_version);
-    //                                 self.dirty = true;
-    //                                 Ok(written)
-    //                             }
-    //                             _ => unreachable!(),
-    //                         }
-    //                     } else {
-    //                         error!("WTF");
-    //                         return Ok(written);
-    //                     }
-    //                 } else {
-    //                     return Ok(0);
-    //                 }
-    //             }
-    //             None => {
-    //                 error!("invalid utf-8 in path");
-    //                 Ok(0)
-    //             }
-    //         },
-    //         None => {
-    //             error!("malformed path {:?}", path.as_ref());
-    //             Ok(0)
-    //         }
-    //     }
-    // }
-
-    pub fn write_file<P>(&mut self, path: P) -> FileWriter
-    where
-        P: AsRef<Path>,
-    {
-        FileWriter { fs: self }
+                Ok(written)
+            }
+            None => {
+                warn!("asked to write file not in the map {}", handle);
+                Ok(0)
+            }
+        }
     }
 
     /// Read bytes from a file
     ///
     ///
-    pub fn read_file<P>(&mut self, path: P) -> Option<FileReader>
-    where
-        P: AsRef<Path>,
-    {
-        if let Some(ostr_name) = path.as_ref().file_name() {
-            if let Some(name) = ostr_name.to_str() {
-                if let Some(file) = self.block_manager.root_dir().entries().get(name) {
-                    match file {
-                        DirectoryEntry::Directory(_) => {
-                            error!("Can't read a directory {:?}", path.as_ref());
-                            None
+    pub fn read_file(&mut self, handle: u64, offset: i64, size: u32) -> Result<Vec<u8>, Error> {
+        debug!("reading offset {}, size {}", offset, size);
+
+        let file = &self.open_files.get(&handle).unwrap();
+        let block_size = self.block_manager.block_size();
+
+        let start_block = (offset / block_size as i64) as usize;
+        let mut start_offset = (offset % block_size as i64) as usize;
+        let end_block = ((offset + size as i64) / block_size as i64) as usize;
+        let end_offset = ((offset + size as i64) % block_size as i64) as usize;
+
+        debug!(
+            "start block {}, start offset {}, end block {}, end offset {}",
+            start_block, start_offset, end_block, end_offset
+        );
+
+        let mut blocks = file.version.blocks().clone();
+        debug!("reading from blocks {:?}", &blocks);
+        let block_iter = &mut blocks.iter_mut().skip(start_block);
+        debug!("current iterator {:?}", block_iter);
+
+        let mut read = 0;
+        let mut buffer = vec![0; size as usize];
+        while read < size as usize {
+            // debug!("buffer length: {}", buffer.len());
+            block_iter.next().map(|block_number| {
+                self.block_manager.get_block(*block_number).map(|block| {
+                    debug!("reading block {:?}", &block);
+                    self.block_manager.read(block).map(|mut bytes| {
+                        trace!("read bytes\n{:?}", &bytes);
+                        if read + bytes.len() > size as usize {
+                            buffer[start_offset..size as usize]
+                                .copy_from_slice(&mut bytes[start_offset..size as usize]);
+                            read += bytes.len();
+                        } else {
+                            buffer[start_offset..end_offset]
+                                .copy_from_slice(&mut bytes[start_offset..end_offset]);
+                            read += end_offset - start_offset;
                         }
-                        DirectoryEntry::File(file) => Some(FileReader::new(file)),
-                    }
-                } else {
-                    error!("Asked to read a file I cannot find: {:?}", path.as_ref());
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
+                        start_offset = 0;
+                        trace!("buffer is now {:?}", &buffer);
+                    })
+                })
+            });
         }
-    }
-}
 
-// impl<B> Drop for UberFileSystem<B>
-// where
-//     B: BlockStorage,
-// {
-//     fn drop(&mut self) {
-//         if self.dirty {
-//             let ptr = BlockType::Pointer(
-//                 self.block_manager
-//                     .write(self.root_dir.serialize().unwrap())
-//                     .unwrap(),
-//             );
-//             self.block_manager
-//                 .write_metadata("@root_dir_ptr", ptr.serialize().unwrap())
-//                 .unwrap();
-//         }
-//     }
-// }
-
-pub struct FileWriter<'a> {
-    fs: &'a mut UberFileSystem<FileStore>,
-}
-
-impl<'a> io::Write for FileWriter<'a> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(0)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-pub struct FileReader {}
-
-impl FileReader {
-    pub(crate) fn new(file: &FileMetadata) -> Self {
-        FileReader {}
-    }
-}
-
-impl io::Read for FileReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        Ok(0)
+        if buffer.len() == size as usize {
+            Ok(buffer)
+        } else {
+            Err(format_err!("Error reading file {:?}", file.path))
+        }
     }
 }
