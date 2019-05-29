@@ -201,7 +201,7 @@ where
 // FIXME: It seems like I should be able to make these tests generic over all of the available
 //        BlockStorage implementations?
 mod test {
-    use hex_literal::{hex, hex_impl};
+    use hex_literal::hex;
 
     use super::*;
     use crate::{
