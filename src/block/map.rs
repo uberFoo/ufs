@@ -7,7 +7,7 @@
 //!
 use std::collections::VecDeque;
 
-use failure::{format_err, Error};
+use failure::format_err;
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
@@ -112,7 +112,7 @@ impl BlockMap {
     pub(in crate::block) fn serialize<BS: BlockWriter>(
         &mut self,
         store: &mut BS,
-    ) -> Result<(), Error> {
+    ) -> Result<(), failure::Error> {
         let zero_wrapper = BlockMapWrapper {
             data: vec![0; 0],
             hash: BlockHash::new(b""),
@@ -193,7 +193,9 @@ impl BlockMap {
             .collect()
     }
 
-    pub(in crate::block) fn deserialize<BS: BlockReader>(store: &BS) -> Result<Self, Error> {
+    pub(in crate::block) fn deserialize<BS: BlockReader>(
+        store: &BS,
+    ) -> Result<Self, failure::Error> {
         let mut map = Vec::<u8>::new();
 
         // We know that we always start at block 0.
@@ -218,7 +220,7 @@ impl BlockMap {
 fn read_wrapper_block<BS: BlockReader>(
     store: &BS,
     number: BlockNumber,
-) -> Result<BlockMapWrapper, Error> {
+) -> Result<BlockMapWrapper, failure::Error> {
     debug!("Reading metadata from block {}", number);
     let bytes = store.read_block(number)?;
     if let Ok(block) = bincode::deserialize::<BlockMapWrapper>(&bytes) {

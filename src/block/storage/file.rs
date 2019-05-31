@@ -13,7 +13,7 @@
 //! * Optionally don't create files for every block.
 use std::cell::RefCell;
 
-use failure::{format_err, Error};
+use failure::{format_err};
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
@@ -41,7 +41,7 @@ struct FileWriter {
 impl BlockWriter for FileWriter {
     /// This exists because we need a means of bootstrapping the creation of metadata on a file-
     /// based block storage.
-    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
+    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, failure::Error>
     where
         T: AsRef<[u8]>,
     {
@@ -74,7 +74,7 @@ impl BlockReader for FileReader {
     /// This exists because we need a means of loading metadata from a file-based block storage. We
     /// aren't doing any sanity checking on the block number, or block size, since we don't yet have
     ///  that information.
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
         let data = fs::read(path)?;
@@ -120,7 +120,7 @@ impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub fn new<P>(path: P, mut map: BlockMap) -> Result<Self, Error>
+    pub fn new<P>(path: P, mut map: BlockMap) -> Result<Self, failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -146,7 +146,7 @@ impl FileStore {
     /// Consistency Check
     ///
     /// FIXME: Actually check consistency?
-    pub fn check<P>(path: P) -> Result<(), Error>
+    pub fn check<P>(path: P) -> Result<(), failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -163,7 +163,7 @@ impl FileStore {
     /// Construct Existing
     ///
     /// Load an existing file store from disk.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, failure::Error> {
         let root_path: PathBuf = path.as_ref().into();
 
         let reader = FileReader {
@@ -180,7 +180,7 @@ impl FileStore {
         })
     }
 
-    fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
+    fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), failure::Error> {
         debug!(
             "creating new file-based storage at {:?} with {} blocks having block size {:?}",
             path, count, size
@@ -276,7 +276,7 @@ impl BlockStorage for FileStore {
 // }
 
 impl BlockWriter for FileStore {
-    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, Error>
+    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, failure::Error>
     where
         D: AsRef<[u8]>,
     {
@@ -301,7 +301,7 @@ impl BlockWriter for FileStore {
 }
 
 impl BlockReader for FileStore {
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {
