@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use failure::{format_err, Error};
+use failure::format_err;
 use log::{debug, error, trace};
 
 use crate::{
@@ -39,7 +39,7 @@ where
     }
 
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load(store: BS) -> Result<Self, Error> {
+    pub(crate) fn load(store: BS) -> Result<Self, failure::Error> {
         match store.metadata().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
@@ -134,7 +134,7 @@ where
     ///
     /// This function will write up to `self.store.block_size()` bytes from the given slice to a
     /// free block.  A new [Block] is returned.
-    pub(crate) fn write<T: AsRef<[u8]>>(&mut self, data: T) -> Result<&Block, Error> {
+    pub(crate) fn write<T: AsRef<[u8]>>(&mut self, data: T) -> Result<&Block, failure::Error> {
         let data = data.as_ref();
         if let Some(number) = self.get_free_block() {
             let end = data.len().min(self.store.block_size() as usize);
@@ -161,7 +161,7 @@ where
     /// see it anyway) is to avoid copying memory.  At this point, we can't know how the memory
     /// is going to be used.  By returning a `Vec<u8>` the caller is forced to use the vector --
     /// even if they have their own buffer allocated to take the bytes.
-    pub(crate) fn read(&self, block: &Block) -> Result<Vec<u8>, Error> {
+    pub(crate) fn read(&self, block: &Block) -> Result<Vec<u8>, failure::Error> {
         if let Block {
             number: block_number,
             hash: Some(block_hash),

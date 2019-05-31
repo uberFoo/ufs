@@ -118,7 +118,7 @@
 use std::{cmp, collections::HashMap, io, path::Path};
 
 use ::time::Timespec;
-use failure::{format_err, Error};
+use failure::format_err;
 use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
 use serde_derive::{Deserialize, Serialize};
@@ -190,7 +190,7 @@ pub struct UberFileSystem<B: BlockStorage> {
 impl UberFileSystem<FileStore> {
     /// Load an existing file-backed File System
     ///
-    pub fn load_file_backed<P>(path: P) -> Result<Self, Error>
+    pub fn load_file_backed<P>(path: P) -> Result<Self, failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -287,7 +287,7 @@ impl UberFileSystem<FileStore> {
 
     /// Write bytes to a file.
     ///
-    pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, Error> {
+    pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, failure::Error> {
         match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
@@ -316,7 +316,12 @@ impl UberFileSystem<FileStore> {
     /// Read bytes from a file
     ///
     ///
-    pub fn read_file(&mut self, handle: u64, offset: i64, size: u32) -> Result<Vec<u8>, Error> {
+    pub fn read_file(
+        &mut self,
+        handle: u64,
+        offset: i64,
+        size: u32,
+    ) -> Result<Vec<u8>, failure::Error> {
         debug!("reading offset {}, size {}", offset, size);
 
         let file = &self.open_files.get(&handle).unwrap();

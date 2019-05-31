@@ -1,7 +1,6 @@
 use std::{fs, path::PathBuf};
 
 use ::fuse::mount;
-use failure::Error;
 use pretty_env_logger;
 use structopt::StructOpt;
 use ufs::{fuse::UberFSFuse, UberFileSystem};
@@ -20,7 +19,7 @@ struct Opt {
     mount_path: PathBuf,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), failure::Error> {
     pretty_env_logger::init();
     let opt = Opt::from_args();
     if fs::read_dir(&opt.bundle_path).is_ok() {

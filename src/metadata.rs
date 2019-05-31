@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use failure::{format_err, Error};
+use failure::format_err;
 use log::{debug, error};
 use serde_derive::{Deserialize, Serialize};
 
@@ -136,7 +136,7 @@ impl DirectoryMetadata {
         bincode::serialize(&self).unwrap()
     }
 
-    pub(crate) fn deserialize<T>(bytes: T) -> Result<Self, Error>
+    pub(crate) fn deserialize<T>(bytes: T) -> Result<Self, failure::Error>
     where
         T: AsRef<[u8]>,
     {

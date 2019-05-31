@@ -7,7 +7,6 @@
 use std::{collections::HashMap, env, path::Path};
 
 use dotenv::dotenv;
-use failure::Error;
 use futures::future;
 use hyper::{
     header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE},
@@ -165,7 +164,7 @@ fn block_manager(
     Box::new(future::ok(response))
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), failure::Error> {
     pretty_env_logger::init();
 
     dotenv().ok();

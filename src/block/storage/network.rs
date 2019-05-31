@@ -2,7 +2,7 @@
 //!
 //! This is how we fetch blocks from the network.
 //!
-use failure::{format_err, Error};
+use failure::format_err;
 use log::trace;
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
@@ -17,7 +17,7 @@ struct NetworkReader {
 }
 
 impl BlockReader for NetworkReader {
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
         let mut url = self.url.clone();
@@ -35,7 +35,7 @@ struct NetworkStore {
 }
 
 impl NetworkStore {
-    pub fn new<U: IntoUrl>(url: U) -> Result<Self, Error> {
+    pub fn new<U: IntoUrl>(url: U) -> Result<Self, failure::Error> {
         match url.into_url() {
             Ok(url) => {
                 let client = Client::builder().gzip(true).build()?;
@@ -47,7 +47,7 @@ impl NetworkStore {
 }
 
 impl BlockWriter for NetworkStore {
-    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
+    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, failure::Error>
     where
         T: AsRef<[u8]>,
     {
@@ -77,7 +77,7 @@ impl BlockWriter for NetworkStore {
 }
 
 impl BlockReader for NetworkStore {
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
         let mut url = self.url.clone();

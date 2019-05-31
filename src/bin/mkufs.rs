@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use failure::Error;
 use log::debug;
 use pretty_env_logger;
 use structopt::StructOpt;
@@ -24,7 +23,7 @@ struct Opt {
     block_count: BlockCardinality,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), failure::Error> {
     pretty_env_logger::init();
 
     let opt = Opt::from_args();
