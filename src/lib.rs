@@ -134,7 +134,7 @@ pub mod fuse;
 pub use block::{
     manager::BlockManager,
     map::BlockMap,
-    storage::{file::FileStore, BlockReader, BlockStorage, BlockWriter},
+    storage::{memory::MemoryStore, file::FileStore, BlockReader, BlockStorage, BlockWriter},
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
@@ -188,6 +188,23 @@ pub struct UberFileSystem<B: BlockStorage> {
 }
 
 impl UberFileSystem<FileStore> {
+    // /// Create a file system with a Memory-backed block storage
+    // ///
+    // /// This is useful for testing, and not much else -- unless an ephemeral file system is
+    // /// warranted.
+    // ///
+    // pub fn new_memory(size: BlockSize, count: BlockCardinality) -> Self {
+    //     let mem_store = MemoryStore::new(BlockMap::new(UfsUuid::new("test"), size, count));
+    //     let block_manager = BlockManager::new(mem_store);
+
+    //     UberFileSystem {
+    //         block_manager,
+    //         open_files: HashMap::new(),
+    //         open_file_counter: 0,
+    //         dirty: false
+    //     }
+    // }
+
     /// Load an existing file-backed File System
     ///
     pub fn load_file_backed<P>(path: P) -> Result<Self, failure::Error>
@@ -199,7 +216,6 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             block_manager,
-            // open_files: HashMap::new(),
             open_files: HashMap::new(),
             open_file_counter: 0,
             dirty: false,
@@ -216,7 +232,9 @@ impl UberFileSystem<FileStore> {
     where
         P: AsRef<Path>,
     {
-        debug!("listing files for {:?}", path.as_ref());
+        debug!("");
+        debug!("*******");
+        debug!("list_files for {:?}", path.as_ref());
         self.block_manager
             .root_dir()
             .entries()
@@ -274,6 +292,9 @@ impl UberFileSystem<FileStore> {
     /// Close a file
     ///
     pub fn close_file(&mut self, handle: u64) {
+        debug!("");
+        debug!("*******");
+        debug!("close_file");
         match self.open_files.remove(&handle) {
             Some(file) => {
                 debug!("closing file ({}) {:?}", handle, file.path);
@@ -288,6 +309,10 @@ impl UberFileSystem<FileStore> {
     /// Write bytes to a file.
     ///
     pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, failure::Error> {
+        debug!("");
+        debug!("*******");
+        debug!("write_file");
+
         match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
@@ -320,22 +345,17 @@ impl UberFileSystem<FileStore> {
         &mut self,
         handle: u64,
         offset: i64,
-        size: u32,
+        size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
-        debug!("reading offset {}, size {}", offset, size);
+        debug!("");
+        debug!("*******");
+        debug!("read_file: reading offset {}, size {}", offset, size);
 
         let file = &self.open_files.get(&handle).unwrap();
         let block_size = self.block_manager.block_size();
 
         let start_block = (offset / block_size as i64) as usize;
         let mut start_offset = (offset % block_size as i64) as usize;
-        let end_block = ((offset + size as i64) / block_size as i64) as usize;
-        let end_offset = ((offset + size as i64) % block_size as i64) as usize;
-
-        debug!(
-            "start block {}, start offset {}, end block {}, end offset {}",
-            start_block, start_offset, end_block, end_offset
-        );
 
         let mut blocks = file.version.blocks().clone();
         debug!("reading from blocks {:?}", &blocks);
@@ -343,34 +363,110 @@ impl UberFileSystem<FileStore> {
         debug!("current iterator {:?}", block_iter);
 
         let mut read = 0;
-        let mut buffer = vec![0; size as usize];
-        while read < size as usize {
-            // debug!("buffer length: {}", buffer.len());
-            block_iter.next().map(|block_number| {
-                self.block_manager.get_block(*block_number).map(|block| {
+        let mut buffer = vec![0; size];
+        while read < size {
+            if let Some(block_number) = block_iter.next() {
+                if let Some(block) = self.block_manager.get_block(*block_number) {
                     debug!("reading block {:?}", &block);
-                    self.block_manager.read(block).map(|mut bytes| {
+                    if let Ok(mut bytes) = self.block_manager.read(block) {
                         trace!("read bytes\n{:?}", &bytes);
-                        if read + bytes.len() > size as usize {
-                            buffer[start_offset..size as usize]
-                                .copy_from_slice(&mut bytes[start_offset..size as usize]);
-                            read += bytes.len();
-                        } else {
-                            buffer[start_offset..end_offset]
-                                .copy_from_slice(&mut bytes[start_offset..end_offset]);
-                            read += end_offset - start_offset;
-                        }
-                        start_offset = 0;
+                        let block_len = bytes.len();
+                        let width = std::cmp::min(size - read, block_len - start_offset);
+
+                        debug!(
+                            "copying to buffer[{}..{}] from bytes[{}..{}]",
+                            read,
+                            read + width,
+                            start_offset,
+                            start_offset + width
+                        );
+                        buffer[read..read + width]
+                            .copy_from_slice(&bytes[start_offset..start_offset + width]);
+
+                        read += width;
                         trace!("buffer is now {:?}", &buffer);
-                    })
-                })
-            });
+                    }
+                }
+                start_offset = 0;
+            }
         }
 
-        if buffer.len() == size as usize {
+        if buffer.len() == size {
             Ok(buffer)
         } else {
             Err(format_err!("Error reading file {:?}", file.path))
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    #[test]
+    fn read_and_write_file() {
+        init();
+
+        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let test = include_str!("lib.rs").as_bytes();
+
+        let (h, _) = ufs.create_file("/lib.rs").unwrap();
+        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        let bytes = ufs.read_file(h, 0, test.len()).unwrap();
+        assert_eq!(test, bytes.as_slice());
+    }
+
+    #[test]
+    fn small_chunks() {
+        init();
+
+        let chunk_size = 88;
+        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let test = include_str!("lib.rs").as_bytes();
+
+        let (h, _) = ufs.create_file("/lib.rs").unwrap();
+        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+
+        let mut offset = 0;
+        test.chunks(chunk_size).for_each(|test_bytes| {
+            let bytes = ufs.read_file(h, offset, test_bytes.len()).unwrap();
+            let len = bytes.len();
+            assert_eq!(
+                std::str::from_utf8(test_bytes).unwrap(),
+                String::from_utf8(bytes).unwrap(),
+                "failed at offset {}",
+                offset
+            );
+            offset += len as i64;
+        });
+    }
+
+    #[test]
+    fn large_chunks() {
+        init();
+
+        let chunk_size = 8888;
+        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let test = include_str!("lib.rs").as_bytes();
+
+        let (h, _) = ufs.create_file("/lib.rs").unwrap();
+        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+
+        let mut offset = 0;
+        test.chunks(chunk_size).for_each(|test_bytes| {
+            let bytes = ufs.read_file(h, offset, test_bytes.len()).unwrap();
+            let len = bytes.len();
+            assert_eq!(
+                std::str::from_utf8(test_bytes).unwrap(),
+                String::from_utf8(bytes).unwrap(),
+                "failed at offset {}",
+                offset
+            );
+            offset += len as i64;
+        });
     }
 }

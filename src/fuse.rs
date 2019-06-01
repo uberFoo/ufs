@@ -351,7 +351,7 @@ impl Filesystem for UberFSFuse {
             size
         );
 
-        if let Ok(buffer) = self.file_system.read_file(fh, offset, size) {
+        if let Ok(buffer) = self.file_system.read_file(fh, offset, size as usize) {
             debug!("read {} bytes", buffer.len());
             trace!("{:?}", &buffer);
             reply.data(&buffer)
