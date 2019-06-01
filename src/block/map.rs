@@ -46,7 +46,7 @@ pub struct BlockMap {
     id: UfsUuid,
     size: BlockSize,
     count: BlockCardinality,
-    metadata_blocks: Vec<BlockNumber>,
+    block_map_metadata_blocks: Vec<BlockNumber>,
     free_blocks: VecDeque<BlockNumber>,
     root_block: Option<BlockNumber>,
     map: Vec<Block>,
@@ -61,7 +61,7 @@ impl BlockMap {
             id,
             size,
             count,
-            metadata_blocks: vec![0],
+            block_map_metadata_blocks: vec![0],
             free_blocks: (1..count).collect(),
             root_block: None,
             map: (0..count).map(|b| Block::new(b)).collect::<Vec<_>>(),
@@ -123,7 +123,7 @@ impl BlockMap {
 
         // Determine the number of blocks we need.
         let mut bytes = bincode::serialize(&self).unwrap();
-        let block_count = bytes.len() as u64 / chunk_size
+        let mut block_count = bytes.len() as u64 / chunk_size
             + if bytes.len() as u64 % chunk_size > 0 {
                 1
             } else {
@@ -138,8 +138,8 @@ impl BlockMap {
         );
 
         // Collect a list of block numbers we'll use to write the block map.
-        if block_count > self.metadata_blocks.len() as u64 {
-            while block_count > self.metadata_blocks.len() as u64 {
+        while block_count > self.block_map_metadata_blocks.len() as u64 {
+            while block_count > self.block_map_metadata_blocks.len() as u64 {
                 let meta_block = match self.free_blocks.pop_front() {
                     Some(b) => b,
                     None => return Err(format_err!("No free blocks.")),
@@ -147,12 +147,19 @@ impl BlockMap {
                 debug!("Allocating new blockmap wrapper block {}", meta_block);
                 // self.get_mut(meta_block).unwrap().tag_metadata();
                 self.map[meta_block as usize].tag_metadata();
-                self.metadata_blocks.push(meta_block);
+                self.block_map_metadata_blocks.push(meta_block);
             }
 
             // Grab a fresh version of ourself to serialize since we converted free blocks to
             // metadata blocks
             bytes = bincode::serialize(&self).unwrap();
+
+            block_count = bytes.len() as u64 / chunk_size
+                + if bytes.len() as u64 % chunk_size > 0 {
+                    1
+                } else {
+                    0
+                };
         }
 
         // Iterate over the chunks of serialized block map, and writing them to the block store.
@@ -160,9 +167,9 @@ impl BlockMap {
             .chunks(chunk_size as usize)
             .enumerate()
             .map(|(count, chunk)| {
-                let block = self.metadata_blocks[count];
+                let block = self.block_map_metadata_blocks[count];
                 let next_block = if count < block_count as usize - 1 {
-                    Some(self.metadata_blocks[count + 1])
+                    Some(self.block_map_metadata_blocks[count + 1])
                 } else {
                     None
                 };
