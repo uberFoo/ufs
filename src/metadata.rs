@@ -82,7 +82,8 @@ impl DirectoryMetadata {
     where
         P: AsRef<Path>,
     {
-        debug!("attempting to fetch file {:?}", path.as_ref());
+        debug!("-------");
+        debug!("`get_file`: {:?}", path.as_ref());
         match path.as_ref().file_name() {
             Some(file_name) => match file_name.to_str() {
                 Some(name) => match self.entries.get(name) {
@@ -149,9 +150,8 @@ impl MetadataDeserialize for DirectoryMetadata {
     fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
         match bincode::deserialize(&bytes) {
             Ok(r) => {
-                debug!("");
-                debug!("*******");
-                debug!("deserialize: {:#?}", r);
+                debug!("-------");
+                debug!("`deserialize`: {:#?}", r);
                 Ok(r)
             }
             Err(e) => Err(format_err!(
@@ -179,12 +179,16 @@ impl FileMetadata {
     }
 
     pub(crate) fn get_current_version(&self) -> FileVersion {
-        self.versions.last().unwrap().clone()
+        let version = self.versions.last().unwrap().clone();
+        debug!("-------");
+        debug!("`get_current_version`: {:#?}", version);
+        version
     }
 
     pub(crate) fn commit_version(&mut self, version: FileVersion) {
         if version.dirty {
-            debug!("updating file version\n{:#?}", version);
+            debug!("-------");
+            debug!("`commit_version`: {:#?}", version);
             self.versions.push(version);
         }
     }
