@@ -6,13 +6,13 @@ use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request,
 };
-use libc::ENOENT;
+use libc::{ENOENT, O_RDONLY, O_RDWR, O_WRONLY};
 use log::{debug, error, trace};
 use time::Timespec;
 
 use crate::{
     block::{BlockCardinality, FileStore},
-    UberFileSystem,
+    OpenFileMode, UberFileSystem,
 };
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };
@@ -186,7 +186,7 @@ impl Filesystem for UberFSFuse {
             }
         }
 
-        debug!("can't find ({:?}) under parent ({})", name, parent);
+        trace!("can't find ({:?}) under parent ({})", name, parent);
         reply.error(ENOENT);
     }
 
@@ -245,13 +245,24 @@ impl Filesystem for UberFSFuse {
         }
     }
 
-    fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: ReplyOpen) {
-        trace!("open ino: {}, flags {:x}", ino, _flags);
+    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        debug!("open ino: {}, flags {:x}", ino, flags);
 
-        if let Some(inode) = self.inodes.get_mut(ino as usize) {
+        if let Some(mut inode) = self.inodes.get_mut(ino as usize) {
             let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
 
-            match self.file_system.open_file(path) {
+            let open_flags = flags as i32;
+            let mode = match open_flags {
+                O_RDONLY => OpenFileMode::Read,
+                O_WRONLY => {
+                    inode.size.replace(0);
+                    OpenFileMode::Write
+                }
+                O_RDWR => OpenFileMode::ReadWrite,
+                _ => unreachable!(),
+            };
+
+            match self.file_system.open_file(path, mode) {
                 Some(fh) => reply.opened(fh as u64, 0),
                 _ => reply.error(ENOENT),
             }
@@ -270,12 +281,9 @@ impl Filesystem for UberFSFuse {
         flags: u32,
         reply: ReplyCreate,
     ) {
-        trace!(
+        debug!(
             "create name: {:?}, parent: {}, mode: {:#05o}, flags: {:#x}",
-            name,
-            parent,
-            _mode,
-            flags
+            name, parent, _mode, flags
         );
         if parent == 1 {
             let name = String::from(name.to_str().unwrap());
@@ -311,11 +319,9 @@ impl Filesystem for UberFSFuse {
         flush: bool,
         reply: ReplyEmpty,
     ) {
-        trace!(
+        debug!(
             "release ino: {}, flags: {:#x}, flush: {}",
-            ino,
-            flags,
-            flush
+            ino, flags, flush
         );
 
         self.file_system.close_file(fh);
@@ -334,11 +340,9 @@ impl Filesystem for UberFSFuse {
         size: u32,
         reply: ReplyData,
     ) {
-        trace!(
+        debug!(
             "read ino: {}, offset: {}, chunk size: {}",
-            ino,
-            offset,
-            size
+            ino, offset, size
         );
 
         if let Ok(buffer) = self.file_system.read_file(fh, offset, size as usize) {
@@ -360,7 +364,7 @@ impl Filesystem for UberFSFuse {
         _flags: u32,
         reply: ReplyWrite,
     ) {
-        trace!(
+        debug!(
             "write ino: {}, offset: {}, data.len() {}",
             ino,
             offset,
@@ -372,8 +376,6 @@ impl Filesystem for UberFSFuse {
                 debug!("wrote {} bytes", len);
                 trace!("{:?}", &data[..len]);
 
-                // TODO: Need to sort out how this works, because adding the bytes we wrote
-                // to the existing size isn't the right thing.
                 let new_size: u64 = if let Some(n) = inode.size {
                     n + len as u64
                 } else {
@@ -415,7 +417,7 @@ impl Filesystem for UberFSFuse {
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         trace!("statfs ino {}", _ino);
         let block_manager = &self.file_system.block_manager;
-        debug!(
+        trace!(
             "blocks: {}, free blocks: {}, block size: {}",
             block_manager.block_count(),
             block_manager.free_block_count(),

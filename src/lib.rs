@@ -138,7 +138,7 @@ pub use block::{
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
-use crate::metadata::{DirectoryEntry, File};
+use crate::metadata::{DirectoryEntry, File, FileVersion};
 
 lazy_static! {
     /// The UUID to rule them all
@@ -174,6 +174,13 @@ impl AsRef<Uuid> for UfsUuid {
     fn as_ref(&self) -> &Uuid {
         &self.inner
     }
+}
+
+#[derive(Debug)]
+pub enum OpenFileMode {
+    Read,
+    Write,
+    ReadWrite,
 }
 
 /// Main File System Implementation
@@ -229,9 +236,8 @@ impl UberFileSystem<FileStore> {
     where
         P: AsRef<Path>,
     {
-        debug!("");
-        debug!("*******");
-        debug!("list_files for {:?}", path.as_ref());
+        debug!("-------");
+        debug!("`list_files`: {:?}", path.as_ref());
         self.block_manager
             .root_dir()
             .entries()
@@ -261,7 +267,8 @@ impl UberFileSystem<FileStore> {
                 let file = self.block_manager.root_dir_mut().new_file(name);
                 let time = file.version.write_time();
 
-                let fh = self.open_file_counter.overflowing_add(1).0;
+                let fh = self.open_file_counter;
+                self.open_file_counter += self.open_file_counter.overflowing_add(1).0;
                 self.open_files.insert(fh, file);
 
                 return Some((fh, time.into()));
@@ -273,13 +280,25 @@ impl UberFileSystem<FileStore> {
 
     /// Open a file
     ///
-    pub fn open_file<P>(&mut self, path: P) -> Option<u64>
+    pub fn open_file<P>(&mut self, path: P, mode: OpenFileMode) -> Option<u64>
     where
         P: AsRef<Path>,
     {
-        if let Some(file) = self.block_manager.root_dir().get_file(path) {
-            let fh = self.open_file_counter.overflowing_add(1).0;
+        debug!("-------");
+        if let Some(mut file) = self.block_manager.root_dir().get_file(&path) {
+            match mode {
+                OpenFileMode::Write | OpenFileMode::ReadWrite => file.version = FileVersion::new(),
+                _ => (),
+            }
+            let fh = self.open_file_counter;
+            self.open_file_counter += self.open_file_counter.overflowing_add(1).0;
             self.open_files.insert(fh, file);
+            debug!(
+                "`open_file`: {:?}, handle: {}, mode: {:?}",
+                path.as_ref(),
+                fh,
+                mode
+            );
             Some(fh)
         } else {
             None
@@ -289,12 +308,10 @@ impl UberFileSystem<FileStore> {
     /// Close a file
     ///
     pub fn close_file(&mut self, handle: u64) {
-        debug!("");
-        debug!("*******");
-        debug!("close_file");
+        debug!("-------");
         match self.open_files.remove(&handle) {
             Some(file) => {
-                debug!("closing file ({}) {:?}", handle, file.path);
+                debug!("`close_file`: {:?}, handle: {}", file.path, handle);
                 self.block_manager.root_dir_mut().update_file(file);
             }
             None => {
@@ -306,9 +323,8 @@ impl UberFileSystem<FileStore> {
     /// Write bytes to a file.
     ///
     pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, failure::Error> {
-        debug!("");
-        debug!("*******");
-        debug!("write_file");
+        debug!("-------");
+        debug!("`write_file`: handle: {}", handle);
 
         match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
@@ -344,9 +360,11 @@ impl UberFileSystem<FileStore> {
         offset: i64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
-        debug!("");
-        debug!("*******");
-        debug!("read_file: reading offset {}, size {}", offset, size);
+        debug!("-------");
+        debug!(
+            "`read_file`: handle: {}, reading offset {}, size {}",
+            handle, offset, size
+        );
 
         let file = &self.open_files.get(&handle).unwrap();
         let block_size = self.block_manager.block_size();
@@ -355,22 +373,22 @@ impl UberFileSystem<FileStore> {
         let mut start_offset = (offset % block_size as i64) as usize;
 
         let mut blocks = file.version.blocks().clone();
-        debug!("reading from blocks {:?}", &blocks);
+        trace!("reading from blocks {:?}", &blocks);
         let block_iter = &mut blocks.iter_mut().skip(start_block);
-        debug!("current iterator {:?}", block_iter);
+        trace!("current iterator {:?}", block_iter);
 
         let mut read = 0;
         let mut buffer = vec![0; size];
         while read < size {
             if let Some(block_number) = block_iter.next() {
                 if let Some(block) = self.block_manager.get_block(*block_number) {
-                    debug!("reading block {:?}", &block);
+                    trace!("reading block {:?}", &block);
                     if let Ok(bytes) = self.block_manager.read(block) {
                         trace!("read bytes\n{:?}", &bytes);
                         let block_len = bytes.len();
                         let width = std::cmp::min(size - read, block_len - start_offset);
 
-                        debug!(
+                        trace!(
                             "copying to buffer[{}..{}] from bytes[{}..{}]",
                             read,
                             read + width,
@@ -402,6 +420,20 @@ mod test {
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    #[test]
+    fn open_file() {
+        init();
+
+        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let test_file = "/test_open_file";
+        let (h0, _) = ufs.create_file(test_file).unwrap();
+        let h1 = ufs.open_file(test_file).unwrap();
+        assert!(
+            h0 != h1,
+            "two open calls to the same file should return different handles"
+        );
     }
 
     #[test]
