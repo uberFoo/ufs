@@ -11,7 +11,10 @@ use log::{debug, error};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    block::{Block, BlockNumber},
+    block::{
+        wrapper::{MetadataDeserialize, MetadataSerialize},
+        Block, BlockNumber,
+    },
     time::UfsTime,
 };
 
@@ -131,22 +134,28 @@ impl DirectoryMetadata {
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }
+}
 
-    pub(crate) fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(&self).unwrap()
+impl MetadataSerialize for DirectoryMetadata {
+    fn serialize(&self) -> Result<Vec<u8>, failure::Error> {
+        match bincode::serialize(&self) {
+            Ok(r) => Ok(r),
+            Err(e) => Err(format_err!("unable to serialize directory metadata {}", e)),
+        }
     }
+}
 
-    pub(crate) fn deserialize<T>(bytes: T) -> Result<Self, failure::Error>
-    where
-        T: AsRef<[u8]>,
-    {
-        match bincode::deserialize(bytes.as_ref()) {
-            Ok(d) => {
-                debug!("deserialized DirectoryMetadata\n{:#?}", d);
-                Ok(d)
+impl MetadataDeserialize for DirectoryMetadata {
+    fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
+        match bincode::deserialize(&bytes) {
+            Ok(r) => {
+                debug!("");
+                debug!("*******");
+                debug!("deserialize: {:#?}", r);
+                Ok(r)
             }
             Err(e) => Err(format_err!(
-                "Failed to deserialize directory metadata: {}",
+                "unable to deserialize directory metadata {}",
                 e
             )),
         }

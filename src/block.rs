@@ -19,6 +19,7 @@ mod hash;
 pub(crate) mod manager;
 pub(crate) mod map;
 pub(crate) mod storage;
+pub(crate) mod wrapper;
 
 use std::{fmt, str::FromStr};
 
@@ -48,7 +49,7 @@ pub type BlockSizeType = u16;
 /// FIXME: I'm not sure allowing an option is the best idea.  I think that there may be an optimal
 /// block size, given this file system's unique characteristics.  We can always map a block across
 /// multiple physical sectors.
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum BlockSize {
     /// 512 byte block size
     ///

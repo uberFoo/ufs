@@ -5,8 +5,11 @@ use log::{debug, error, trace};
 
 use crate::{
     block::{
-        hash::BlockHash, map::BlockType, storage::BlockStorage, Block, BlockCardinality,
-        BlockNumber, BlockSize, BlockSizeType,
+        hash::BlockHash,
+        map::BlockType,
+        storage::BlockStorage,
+        wrapper::{read_metadata, write_metadata},
+        Block, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
     },
     metadata::DirectoryMetadata,
 };
@@ -39,12 +42,11 @@ where
     }
 
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load(store: BS) -> Result<Self, failure::Error> {
+    pub(crate) fn load(mut store: BS) -> Result<Self, failure::Error> {
         match store.metadata().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
-                let block = store.read_block(root_block)?;
-                match DirectoryMetadata::deserialize(block) {
+                match read_metadata(&mut store, root_block) {
                     Ok(root_dir) => {
                         debug!("loaded metadata");
 
@@ -108,15 +110,10 @@ where
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
         if self.root_dir.is_dirty() {
-            let root_dir_bytes = self.root_dir.serialize();
-            debug!("root directory is {} bytes", root_dir_bytes.len());
-            let block_number = match self.write(self.root_dir.serialize()) {
-                Ok(block) => {
-                    debug!("Wrote metadata to block {}", block.number());
-                    Some(block.number())
-                }
+            let block_number = match write_metadata(&mut self.store, &self.root_dir) {
+                Ok(block) => Some(block),
                 Err(e) => {
-                    error!("Error writing metadata: {}", e);
+                    error!("error writing metadata: {}", e);
                     None
                 }
             };
