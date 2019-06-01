@@ -25,10 +25,6 @@ pub trait BlockStorage: BlockWriter + BlockReader {
         /// The number of Blocks in this file System
         ///
         fn block_count(&self) -> BlockCardinality;
-
-        /// Write metadata
-        ///
-        fn sync(&mut self) -> Result<(), failure::Error>;
 }
 
 pub trait BlockWriter {
