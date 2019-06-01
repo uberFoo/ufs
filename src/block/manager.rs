@@ -1,15 +1,17 @@
-use std::collections::{HashMap, VecDeque};
+//! Block Manager
+//!
+//! High level access to block storage.  The block manager checks block hash consistency, handles
+//! encryption, etc.  It also contains the `BlockMap` and handles directory and file metadata.
 
 use failure::format_err;
-use log::{debug, error, trace};
+use log::{debug, error};
 
 use crate::{
     block::{
         hash::BlockHash,
-        map::BlockType,
         storage::BlockStorage,
         wrapper::{read_metadata, write_metadata},
-        Block, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+        Block, BlockCardinality, BlockNumber, BlockSize,
     },
     metadata::DirectoryMetadata,
 };
@@ -202,11 +204,7 @@ mod test {
 
     use super::*;
     use crate::{
-        block::{
-            map::BlockMap,
-            storage::{file::FileStore, memory::MemoryStore},
-            BlockSize,
-        },
+        block::{map::BlockMap, storage::memory::MemoryStore, BlockSize},
         UfsUuid,
     };
 

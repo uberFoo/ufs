@@ -81,7 +81,6 @@ impl Inode {
 /// FUSE intergation
 ///
 pub struct UberFSFuse {
-    next_inode: BlockCardinality,
     file_system: UberFileSystem<FileStore>,
     // `inodes` is a mapping from "inode" number to an Inode
     inodes: Vec<Inode>,
@@ -94,7 +93,6 @@ impl UberFSFuse {
     ///
     pub fn new(file_system: UberFileSystem<FileStore>) -> Self {
         let mut fs = UberFSFuse {
-            next_inode: 0,
             file_system,
             inodes: Vec::new(),
             files: HashMap::new(),
@@ -106,14 +104,12 @@ impl UberFSFuse {
             name: "hack".to_string(),
             number: 0,
             time: TIME,
-            // blocks: InodeBlocks::None,
             size: None,
         });
         fs.inodes.push(Inode {
             name: "root".to_string(),
             number: 1,
             time: TIME,
-            // blocks: InodeBlocks::None,
             size: None,
         });
 
@@ -128,21 +124,16 @@ impl UberFSFuse {
         let mut number = self.inodes.len() as u64;
 
         for (name, size, time) in self.file_system.list_files("/") {
-            // This is here because things got in a weird state.  Maybe it stays because an empty
-            // string causes `ls` to not print anything.
-            // if name != String::from("") {
             let inode = Inode {
                 number,
                 name: name.clone(),
                 time,
-                // blocks: InodeBlocks::None,
                 size: Some(size),
             };
 
             self.inodes.push(inode);
             self.files.insert(name.clone(), number);
             number += 1;
-            // }
         }
 
         debug!("load_root_directory {:?}", self.files);
@@ -298,7 +289,6 @@ impl Filesystem for UberFSFuse {
                 name: name.clone(),
                 number,
                 time,
-                // blocks: InodeBlocks::None,
                 size: None,
             };
 

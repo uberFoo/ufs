@@ -11,11 +11,9 @@
 //! ## FIXME
 //! * It might be better to build a more shallow directory tree: `root_dir/a2/3d/f0.ufsb`.
 //! * Optionally don't create files for every block.
-use std::cell::RefCell;
 
-use failure::{format_err};
+use failure::format_err;
 use log::{debug, error, trace};
-use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
     map::BlockMap,
@@ -24,7 +22,7 @@ use crate::block::{
 };
 
 use std::{
-    fmt, fs, io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -180,7 +178,11 @@ impl FileStore {
         })
     }
 
-    fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), failure::Error> {
+    fn init(
+        path: &PathBuf,
+        size: BlockSize,
+        count: BlockCardinality,
+    ) -> Result<(), failure::Error> {
         debug!(
             "creating new file-based storage at {:?} with {} blocks having block size {:?}",
             path, count, size
@@ -239,7 +241,7 @@ impl Drop for FileStore {
 
         debug!("dropping FileStore");
         match self.map.serialize(&mut writer) {
-            Ok(s) => debug!("dropped FileStore"),
+            Ok(_) => debug!("dropped FileStore"),
             Err(e) => error!("error dropping FileStore: {}", e),
         };
     }

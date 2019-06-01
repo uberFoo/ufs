@@ -27,6 +27,10 @@ pub trait BlockStorage: BlockWriter + BlockReader {
         fn block_count(&self) -> BlockCardinality;
 }
 
+/// Writer of Blocks
+///
+/// This is broken out from `BlockStorage` so that we can support writing blocks prior to a full-
+/// blown BlockStorage is available.
 pub trait BlockWriter {
         /// Write a Block
         ///
@@ -62,6 +66,10 @@ where
         }
 }
 
+/// Reader of Blocks
+///
+/// This is broken out from `BlockStorage` so that we can support reading  blocks prior to a full-
+/// blown BlockStorage is available.
 pub trait BlockReader {
         /// Read a Block
         ///

@@ -289,7 +289,6 @@ impl BlockType {
 
 #[cfg(test)]
 mod test {
-    use assert_matches::assert_matches;
     use env_logger;
 
     use super::*;

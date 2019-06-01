@@ -115,7 +115,7 @@
 //! * `read_block(number)`
 //! * `write_block(number)`
 //!
-use std::{cmp, collections::HashMap, io, path::Path};
+use std::{collections::HashMap, path::Path};
 
 use ::time::Timespec;
 use failure::format_err;
@@ -134,7 +134,7 @@ pub mod fuse;
 pub use block::{
     manager::BlockManager,
     map::BlockMap,
-    storage::{memory::MemoryStore, file::FileStore, BlockReader, BlockStorage, BlockWriter},
+    storage::{file::FileStore, memory::MemoryStore, BlockReader, BlockStorage, BlockWriter},
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
@@ -184,7 +184,6 @@ pub struct UberFileSystem<B: BlockStorage> {
     block_manager: BlockManager<B>,
     open_files: HashMap<u64, File>,
     open_file_counter: u64,
-    dirty: bool,
 }
 
 impl UberFileSystem<FileStore> {
@@ -201,7 +200,6 @@ impl UberFileSystem<FileStore> {
     //         block_manager,
     //         open_files: HashMap::new(),
     //         open_file_counter: 0,
-    //         dirty: false
     //     }
     // }
 
@@ -218,7 +216,6 @@ impl UberFileSystem<FileStore> {
             block_manager,
             open_files: HashMap::new(),
             open_file_counter: 0,
-            dirty: false,
         })
     }
 
@@ -368,7 +365,7 @@ impl UberFileSystem<FileStore> {
             if let Some(block_number) = block_iter.next() {
                 if let Some(block) = self.block_manager.get_block(*block_number) {
                     debug!("reading block {:?}", &block);
-                    if let Ok(mut bytes) = self.block_manager.read(block) {
+                    if let Ok(bytes) = self.block_manager.read(block) {
                         trace!("read bytes\n{:?}", &bytes);
                         let block_len = bytes.len();
                         let width = std::cmp::min(size - read, block_len - start_offset);

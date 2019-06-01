@@ -11,9 +11,8 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
     hash::BlockHash,
-    map::BlockMap,
-    storage::{BlockReader, BlockStorage, BlockWriter},
-    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    storage::{BlockReader, BlockStorage},
+    BlockCardinality, BlockNumber, BlockSizeType,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -72,7 +71,7 @@ where
     debug!("");
     debug!("*******");
     debug!("write_metadata");
-    let mut bytes = metadata.serialize()?;
+    let bytes = metadata.serialize()?;
     let zero_wrapper = BlockWrapper {
         data: vec![0; 0],
         hash: BlockHash::new(b""),

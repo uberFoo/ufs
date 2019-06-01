@@ -257,23 +257,3 @@ impl FileVersion {
         self.write_time
     }
 }
-
-#[cfg(test)]
-mod test {
-    use uuid::Uuid;
-
-    use super::*;
-
-    #[test]
-    fn metadata_block() {
-        // let id = UfsUuid::new("metadata");
-        // let meta = Metadata::new(id, BlockSize::FiveTwelve, 10);
-
-        // assert_eq!(
-        //     Uuid::parse_str("e7f3f656-3bcb-50ff-8e46-e395e7fae538").unwrap(),
-        //     *meta.id().as_ref()
-        // );
-        // assert_eq!(BlockSize::FiveTwelve, meta.block_size());
-        // assert_eq!(10, meta.block_count());
-    }
-}
