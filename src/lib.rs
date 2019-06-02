@@ -115,9 +115,14 @@
 //! * `read_block(number)`
 //! * `write_block(number)`
 //!
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use ::time::Timespec;
+use crossbeam::crossbeam_channel;
 use failure::format_err;
 use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
@@ -138,7 +143,10 @@ pub use block::{
     BlockAddress, BlockCardinality, BlockNumber, BlockSize,
 };
 
-use crate::metadata::{DirectoryEntry, File, FileVersion};
+use crate::{
+    metadata::{DirectoryEntry, File, FileHandle, FileVersion},
+    runtime::{init_runtime, Process, UFSMessage},
+};
 
 lazy_static! {
     /// The UUID to rule them all
@@ -189,11 +197,30 @@ pub struct UberFileSystem<B: BlockStorage> {
     /// Where we store blocks.
     ///
     block_manager: BlockManager<B>,
-    open_files: HashMap<u64, File>,
-    open_file_counter: u64,
+    open_files: Arc<RwLock<HashMap<FileHandle, File>>>,
+    open_file_counter: FileHandle,
+    listeners: Vec<Process>,
 }
 
 impl UberFileSystem<FileStore> {
+    /// Initialization
+    ///
+    pub fn initialize(&mut self) {
+        self.listeners.append(&mut init_runtime().unwrap());
+        for listener in &mut self.listeners {
+            listener.start(self.open_files.clone());
+        }
+    }
+
+    /// Shutdown
+    ///
+    pub fn shutdown(&mut self) -> Result<(), failure::Error> {
+        for listener in &mut self.listeners {
+            // listener.handle().unwrap().join().unwrap()?;
+        }
+        Ok(())
+    }
+
     // /// Create a file system with a Memory-backed block storage
     // ///
     // /// This is useful for testing, and not much else -- unless an ephemeral file system is
@@ -221,9 +248,16 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             block_manager,
-            open_files: HashMap::new(),
+            open_files: Arc::new(RwLock::new(HashMap::new())),
             open_file_counter: 0,
+            listeners: vec![],
         })
+    }
+
+    fn notify_listeners(&self, msg: UFSMessage) {
+        for listener in &self.listeners {
+            listener.send_message(msg.clone());
+        }
     }
 
     /// List the contents of a Directory
@@ -232,7 +266,7 @@ impl UberFileSystem<FileStore> {
     /// contained within the specified directory.
     ///
     /// TODO: Verify that the path exists, and do something with it!
-    pub fn list_files<P>(&self, path: P) -> Vec<(String, u64, Timespec)>
+    pub fn list_files<P>(&self, path: P) -> Vec<(String, FileHandle, Timespec)>
     where
         P: AsRef<Path>,
     {
@@ -258,7 +292,7 @@ impl UberFileSystem<FileStore> {
 
     /// Create a file
     ///
-    pub fn create_file<P>(&mut self, path: P) -> Option<(u64, Timespec)>
+    pub fn create_file<P>(&mut self, path: P) -> Option<(FileHandle, Timespec)>
     where
         P: AsRef<Path>,
     {
@@ -268,8 +302,12 @@ impl UberFileSystem<FileStore> {
                 let time = file.version.write_time();
 
                 let fh = self.open_file_counter;
-                self.open_file_counter += self.open_file_counter.overflowing_add(1).0;
-                self.open_files.insert(fh, file);
+                self.open_file_counter = self.open_file_counter.wrapping_add(1);
+
+                let mut map = self.open_files.write().expect("RwLock poisoned");
+                map.insert(fh, file);
+
+                self.notify_listeners(UFSMessage::FileCreate(fh));
 
                 return Some((fh, time.into()));
             }
@@ -280,7 +318,7 @@ impl UberFileSystem<FileStore> {
 
     /// Open a file
     ///
-    pub fn open_file<P>(&mut self, path: P, mode: OpenFileMode) -> Option<u64>
+    pub fn open_file<P>(&mut self, path: P, mode: OpenFileMode) -> Option<FileHandle>
     where
         P: AsRef<Path>,
     {
@@ -291,14 +329,20 @@ impl UberFileSystem<FileStore> {
                 _ => (),
             }
             let fh = self.open_file_counter;
-            self.open_file_counter += self.open_file_counter.overflowing_add(1).0;
-            self.open_files.insert(fh, file);
+            self.open_file_counter = self.open_file_counter.wrapping_add(1);
+
+            let mut map = self.open_files.write().expect("RwLock poisoned");
+            map.insert(fh, file);
+
             debug!(
                 "`open_file`: {:?}, handle: {}, mode: {:?}",
                 path.as_ref(),
                 fh,
                 mode
             );
+
+            self.notify_listeners(UFSMessage::FileOpen(fh));
+
             Some(fh)
         } else {
             None
@@ -307,12 +351,15 @@ impl UberFileSystem<FileStore> {
 
     /// Close a file
     ///
-    pub fn close_file(&mut self, handle: u64) {
+    pub fn close_file(&mut self, handle: FileHandle) {
         debug!("-------");
-        match self.open_files.remove(&handle) {
+        let mut map = self.open_files.write().expect("RwLock poisoned");
+        match map.remove(&handle) {
             Some(file) => {
                 debug!("`close_file`: {:?}, handle: {}", file.path, handle);
                 self.block_manager.root_dir_mut().update_file(file);
+
+                self.notify_listeners(UFSMessage::FileClose(handle));
             }
             None => {
                 warn!("asked to close a file not in the map {}", handle);
@@ -322,11 +369,17 @@ impl UberFileSystem<FileStore> {
 
     /// Write bytes to a file.
     ///
-    pub fn write_file(&mut self, handle: u64, bytes: &[u8]) -> Result<usize, failure::Error> {
+    pub fn write_file(
+        &mut self,
+        handle: FileHandle,
+        bytes: &[u8],
+    ) -> Result<usize, failure::Error> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
 
-        match &mut self.open_files.get_mut(&handle) {
+        let mut map = self.open_files.write().expect("RwLock poisoned");
+
+        match &mut map.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
                 while written < bytes.len() {
@@ -334,6 +387,10 @@ impl UberFileSystem<FileStore> {
                         Ok(block) => {
                             written += block.size() as usize;
                             file.version.append_block(&block);
+                            // Can't use self.notify_listeners because of borrow issues.
+                            for listener in &self.listeners {
+                                listener.send_message(UFSMessage::FileWrite(block.number()));
+                            }
                         }
                         Err(e) => {
                             error!("problem writing data to file: {}", e);
@@ -356,7 +413,7 @@ impl UberFileSystem<FileStore> {
     ///
     pub fn read_file(
         &mut self,
-        handle: u64,
+        handle: FileHandle,
         offset: i64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
@@ -366,7 +423,8 @@ impl UberFileSystem<FileStore> {
             handle, offset, size
         );
 
-        let file = &self.open_files.get(&handle).unwrap();
+        let map = self.open_files.read().expect("RwLock poisoned");
+        let file = map.get(&handle).unwrap();
         let block_size = self.block_manager.block_size();
 
         let start_block = (offset / block_size as i64) as usize;
@@ -395,6 +453,11 @@ impl UberFileSystem<FileStore> {
                             start_offset,
                             start_offset + width
                         );
+                        self.notify_listeners(UFSMessage::FileRead((
+                            *block_number,
+                            start_offset,
+                            start_offset + width,
+                        )));
                         buffer[read..read + width]
                             .copy_from_slice(&bytes[start_offset..start_offset + width]);
 
@@ -429,7 +492,7 @@ mod test {
         let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
         let test_file = "/test_open_file";
         let (h0, _) = ufs.create_file(test_file).unwrap();
-        let h1 = ufs.open_file(test_file).unwrap();
+        let h1 = ufs.open_file(test_file, OpenFileMode::Read).unwrap();
         assert!(
             h0 != h1,
             "two open calls to the same file should return different handles"

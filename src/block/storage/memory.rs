@@ -5,7 +5,7 @@
 //! FIXME: Note that using serde, I could serialize this entire memory structure, and get a bundle
 //! implementation, albeit one that would be memory constrained.
 
-use failure::{format_err};
+use failure::format_err;
 use log::{debug, trace};
 
 use crate::block::{
@@ -65,7 +65,11 @@ impl BlockStorage for MemoryStore {
 }
 
 impl BlockWriter for MemoryStore {
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, failure::Error>
+    fn write_block<T>(
+        &mut self,
+        bn: BlockCardinality,
+        data: T,
+    ) -> Result<BlockSizeType, failure::Error>
     where
         T: AsRef<[u8]>,
     {

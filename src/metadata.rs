@@ -19,6 +19,7 @@ use crate::{
 };
 
 pub(crate) type FileSize = u64;
+pub(crate) type FileHandle = u64;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct File {
