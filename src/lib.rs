@@ -202,7 +202,47 @@ pub struct UberFileSystem<B: BlockStorage> {
     listeners: Vec<Process>,
 }
 
+impl UberFileSystem<MemoryStore> {
+    /// Create a file system with a Memory-backed block storage
+    ///
+    /// This is useful for testing, and not much else -- unless an ephemeral file system is
+    /// warranted.
+    ///
+    pub fn new_memory(size: BlockSize, count: BlockCardinality) -> Self {
+        let mem_store = MemoryStore::new(BlockMap::new(UfsUuid::new("test"), size, count));
+        let block_manager = BlockManager::new(mem_store);
+
+        UberFileSystem {
+            block_manager,
+            open_files: Arc::new(RwLock::new(HashMap::new())),
+            open_file_counter: 0,
+            listeners: vec![],
+        }
+    }
+
+}
+
 impl UberFileSystem<FileStore> {
+    /// Load an existing file-backed File System
+    ///
+    pub fn load_file_backed<P>(path: P) -> Result<Self, failure::Error>
+    where
+        P: AsRef<Path>,
+    {
+        let file_store = FileStore::load(path.as_ref())?;
+        let block_manager = BlockManager::load(file_store)?;
+
+        Ok(UberFileSystem {
+            block_manager,
+            open_files: Arc::new(RwLock::new(HashMap::new())),
+            open_file_counter: 0,
+            listeners: vec![],
+        })
+    }
+
+}
+
+impl<B: BlockStorage> UberFileSystem<B> {
     /// Initialization
     ///
     pub fn initialize(&mut self) {
@@ -221,38 +261,6 @@ impl UberFileSystem<FileStore> {
         Ok(())
     }
 
-    // /// Create a file system with a Memory-backed block storage
-    // ///
-    // /// This is useful for testing, and not much else -- unless an ephemeral file system is
-    // /// warranted.
-    // ///
-    // pub fn new_memory(size: BlockSize, count: BlockCardinality) -> Self {
-    //     let mem_store = MemoryStore::new(BlockMap::new(UfsUuid::new("test"), size, count));
-    //     let block_manager = BlockManager::new(mem_store);
-
-    //     UberFileSystem {
-    //         block_manager,
-    //         open_files: HashMap::new(),
-    //         open_file_counter: 0,
-    //     }
-    // }
-
-    /// Load an existing file-backed File System
-    ///
-    pub fn load_file_backed<P>(path: P) -> Result<Self, failure::Error>
-    where
-        P: AsRef<Path>,
-    {
-        let file_store = FileStore::load(path.as_ref())?;
-        let block_manager = BlockManager::load(file_store)?;
-
-        Ok(UberFileSystem {
-            block_manager,
-            open_files: Arc::new(RwLock::new(HashMap::new())),
-            open_file_counter: 0,
-            listeners: vec![],
-        })
-    }
 
     fn notify_listeners(&self, msg: UFSMessage) {
         for listener in &self.listeners {
@@ -489,7 +497,7 @@ mod test {
     fn open_file() {
         init();
 
-        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let mut ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
         let test_file = "/test_open_file";
         let (h0, _) = ufs.create_file(test_file).unwrap();
         let h1 = ufs.open_file(test_file, OpenFileMode::Read).unwrap();
@@ -503,7 +511,7 @@ mod test {
     fn read_and_write_file() {
         init();
 
-        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let mut ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let (h, _) = ufs.create_file("/lib.rs").unwrap();
@@ -517,7 +525,7 @@ mod test {
         init();
 
         let chunk_size = 88;
-        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let mut ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let (h, _) = ufs.create_file("/lib.rs").unwrap();
@@ -542,7 +550,7 @@ mod test {
         init();
 
         let chunk_size = 8888;
-        let mut ufs = UberFileSystem::load_file_backed("bundles/test").unwrap();
+        let mut ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let (h, _) = ufs.create_file("/lib.rs").unwrap();
