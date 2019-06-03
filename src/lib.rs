@@ -145,7 +145,7 @@ pub use block::{
 
 use crate::{
     metadata::{DirectoryEntry, File, FileHandle, FileVersion},
-    runtime::{init_runtime, Process, UFSMessage},
+    runtime::{init_runtime, Process, UfsMessage},
 };
 
 lazy_static! {
@@ -197,7 +197,7 @@ pub struct UberFileSystem<B: BlockStorage> {
     /// Where we store blocks.
     ///
     block_manager: BlockManager<B>,
-    open_files: Arc<RwLock<HashMap<FileHandle, File>>>,
+    open_files: HashMap<FileHandle, File>,
     open_file_counter: FileHandle,
     listeners: Vec<Process>,
 }
@@ -214,12 +214,11 @@ impl UberFileSystem<MemoryStore> {
 
         UberFileSystem {
             block_manager,
-            open_files: Arc::new(RwLock::new(HashMap::new())),
+            open_files: HashMap::new(),
             open_file_counter: 0,
             listeners: vec![],
         }
     }
-
 }
 
 impl UberFileSystem<FileStore> {
@@ -234,12 +233,11 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             block_manager,
-            open_files: Arc::new(RwLock::new(HashMap::new())),
+            open_files: HashMap::new(),
             open_file_counter: 0,
             listeners: vec![],
         })
     }
-
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
@@ -248,7 +246,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
     pub fn initialize(&mut self) {
         self.listeners.append(&mut init_runtime().unwrap());
         for listener in &mut self.listeners {
-            listener.start(self.open_files.clone());
+            listener.start();
         }
     }
 
@@ -261,8 +259,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         Ok(())
     }
 
-
-    fn notify_listeners(&self, msg: UFSMessage) {
+    fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
             listener.send_message(msg.clone());
         }
@@ -312,10 +309,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 let fh = self.open_file_counter;
                 self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-                let mut map = self.open_files.write().expect("RwLock poisoned");
-                map.insert(fh, file);
+                self.open_files.insert(fh, file);
 
-                self.notify_listeners(UFSMessage::FileCreate(fh));
+                self.notify_listeners(UfsMessage::FileCreate(path.as_ref().to_path_buf()));
 
                 return Some((fh, time.into()));
             }
@@ -339,8 +335,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             let fh = self.open_file_counter;
             self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-            let mut map = self.open_files.write().expect("RwLock poisoned");
-            map.insert(fh, file);
+            self.open_files.insert(fh, file);
 
             debug!(
                 "`open_file`: {:?}, handle: {}, mode: {:?}",
@@ -349,7 +344,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 mode
             );
 
-            self.notify_listeners(UFSMessage::FileOpen(fh));
+            self.notify_listeners(UfsMessage::FileOpen(path.as_ref().to_path_buf()));
 
             Some(fh)
         } else {
@@ -361,13 +356,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ///
     pub fn close_file(&mut self, handle: FileHandle) {
         debug!("-------");
-        let mut map = self.open_files.write().expect("RwLock poisoned");
-        match map.remove(&handle) {
+
+        match self.open_files.remove(&handle) {
             Some(file) => {
-                debug!("`close_file`: {:?}, handle: {}", file.path, handle);
+                let path = file.path.clone();
+
+                debug!("`close_file`: {:?}, handle: {}", path, handle);
                 self.block_manager.root_dir_mut().update_file(file);
 
-                self.notify_listeners(UFSMessage::FileClose(handle));
+                self.notify_listeners(UfsMessage::FileClose(path));
             }
             None => {
                 warn!("asked to close a file not in the map {}", handle);
@@ -385,9 +382,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
 
-        let mut map = self.open_files.write().expect("RwLock poisoned");
-
-        match &mut map.get_mut(&handle) {
+        match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
                 while written < bytes.len() {
@@ -395,10 +390,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         Ok(block) => {
                             written += block.size() as usize;
                             file.version.append_block(&block);
-                            // Can't use self.notify_listeners because of borrow issues.
-                            for listener in &self.listeners {
-                                listener.send_message(UFSMessage::FileWrite(block.number()));
-                            }
                         }
                         Err(e) => {
                             error!("problem writing data to file: {}", e);
@@ -406,6 +397,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     }
                 }
                 debug!("wrote {} bytes", written,);
+
+                self.notify_listeners(UfsMessage::FileWrite(bytes.to_vec()));
 
                 Ok(written)
             }
@@ -431,8 +424,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             handle, offset, size
         );
 
-        let map = self.open_files.read().expect("RwLock poisoned");
-        let file = map.get(&handle).unwrap();
+        let file = self.open_files.get(&handle).unwrap();
         let block_size = self.block_manager.block_size();
 
         let start_block = (offset / block_size as i64) as usize;
@@ -461,11 +453,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
                             start_offset,
                             start_offset + width
                         );
-                        self.notify_listeners(UFSMessage::FileRead((
-                            *block_number,
-                            start_offset,
-                            start_offset + width,
-                        )));
                         buffer[read..read + width]
                             .copy_from_slice(&bytes[start_offset..start_offset + width]);
 
@@ -478,6 +465,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
         }
 
         if buffer.len() == size {
+            self.notify_listeners(UfsMessage::FileRead(buffer.clone()));
+
             Ok(buffer)
         } else {
             Err(format_err!("Error reading file {:?}", file.path))

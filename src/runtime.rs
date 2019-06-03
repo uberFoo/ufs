@@ -22,32 +22,30 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) enum UFSMessage {
-    FileCreate(FileHandle),
-    FileRemove(FileHandle),
-    FileOpen(FileHandle),
-    FileClose(FileHandle),
-    FileRead((BlockNumber, usize, usize)),
-    FileWrite(BlockNumber),
+pub(crate) enum UfsMessage {
+    FileCreate(PathBuf),
+    FileRemove(PathBuf),
+    FileOpen(PathBuf),
+    FileClose(PathBuf),
+    FileRead(Vec<u8>),
+    FileWrite(Vec<u8>),
     DirCreate(PathBuf),
     DirRemove(PathBuf),
 }
 
-pub(crate) fn init_runtime(
-
-) -> Result<Vec<Process>, failure::Error> {
+pub(crate) fn init_runtime() -> Result<Vec<Process>, failure::Error> {
     Ok(vec![Process::new()])
 }
 
 pub(crate) struct Process {
     handle: Option<JoinHandle<Result<(), failure::Error>>>,
-    sender: crossbeam_channel::Sender<UFSMessage>,
-    receiver: crossbeam_channel::Receiver<UFSMessage>,
+    sender: crossbeam_channel::Sender<UfsMessage>,
+    receiver: crossbeam_channel::Receiver<UfsMessage>,
 }
 
 impl Process {
     pub(crate) fn new() -> Self {
-        let (sender, receiver) = crossbeam_channel::unbounded::<UFSMessage>();
+        let (sender, receiver) = crossbeam_channel::unbounded::<UfsMessage>();
         Process {
             handle: None,
             sender,
@@ -59,26 +57,35 @@ impl Process {
         self.handle.as_ref()
     }
 
-    pub(crate) fn start(&mut self, file_map: Arc<RwLock<HashMap<FileHandle, File>>>) {
+    pub(crate) fn start(&mut self) {
         debug!("-------");
         debug!("`start`");
         let receiver = self.receiver.clone();
 
         let handle = spawn(move || {
             for message in receiver {
-                info!("`runtime`: {:?}", message);
+                // info!("`runtime`: {:?}", message);
                 match message {
-                    UFSMessage::FileCreate(h)
-                    | UFSMessage::FileRemove(h)
-                    | UFSMessage::FileOpen(h)
-                    | UFSMessage::FileClose(h) => {
-                        let map = file_map.read().expect("poisoned RwLock");
-                        match map.get(&h) {
-                            Some(file) =>
-                        info!("file path {:?}", file.path),
-                        None => warn!("expected to find a file for handle {}", h)
-                        }
-                    }
+                    UfsMessage::FileCreate(path) => info!("`runtime`: FileCreate {:?}", path),
+                    UfsMessage::FileRemove(path) => info!("`runtime`: FileRemove {:?}", path),
+                    UfsMessage::FileOpen(path) => info!("`runtime`: FileOpen {:?}", path),
+                    UfsMessage::FileClose(path) => info!("`runtime`: FileClose {:?}", path),
+                    UfsMessage::FileRead(bytes) => info!(
+                        "`runtime`: FileRead\n{}",
+                        String::from_utf8_lossy(bytes.as_slice())
+                    ),
+                    UfsMessage::FileWrite(bytes) => info!(
+                        "`runtime`: FileWrite\n{}",
+                        String::from_utf8_lossy(bytes.as_slice())
+                    ),
+                    // {
+                    //     let map = file_map.read().expect("poisoned RwLock");
+                    //     match map.get(&h) {
+                    //         Some(file) =>
+                    //     info!("file path {:?}", file.path),
+                    //     None => warn!("expected to find a file for handle {}", h)
+                    //     }
+                    // }
                     _ => (),
                 }
             }
@@ -88,7 +95,7 @@ impl Process {
         self.handle = Some(handle);
     }
 
-    pub(crate) fn send_message(&self, msg: UFSMessage) {
+    pub(crate) fn send_message(&self, msg: UfsMessage) {
         self.sender.send(msg).unwrap()
     }
 }
