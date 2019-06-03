@@ -116,6 +116,7 @@ impl DirectoryMetadata {
                 if let Some(ref mut entry) = self.entries.get_mut(name) {
                     match entry {
                         DirectoryEntry::File(ref mut my_file) => {
+                            self.dirty = true;
                             my_file.commit_version(file.version)
                         }
                         _ => unreachable!(),
@@ -179,6 +180,10 @@ impl FileMetadata {
         self.versions.len() - 1
     }
 
+    pub(crate) fn versions(&self) -> &Vec<FileVersion> {
+        &self.versions
+    }
+
     pub(crate) fn get_current_version(&self) -> FileVersion {
         let version = self.versions.last().unwrap().clone();
         debug!("-------");
@@ -186,10 +191,11 @@ impl FileMetadata {
         version
     }
 
-    pub(crate) fn commit_version(&mut self, version: FileVersion) {
+    pub(crate) fn commit_version(&mut self, mut version: FileVersion) {
         if version.dirty {
             debug!("-------");
             debug!("`commit_version`: {:#?}", version);
+            version.dirty = false;
             self.versions.push(version);
         }
     }
