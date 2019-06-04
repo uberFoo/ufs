@@ -29,7 +29,7 @@ struct BlockWrapper {
 }
 
 pub(crate) trait MetadataSerialize {
-    fn serialize(&self) -> Result<Vec<u8>, failure::Error>;
+    fn serialize(&mut self) -> Result<Vec<u8>, failure::Error>;
 }
 
 pub(crate) trait MetadataDeserialize: Sized {
@@ -62,7 +62,7 @@ pub(crate) trait MetadataDeserialize: Sized {
 /// rules. Otherwise we could just pass in a storage implementation.
 pub(in crate::block) fn write_metadata<B, M>(
     store: &mut B,
-    metadata: &M,
+    metadata: &mut M,
 ) -> Result<BlockNumber, failure::Error>
 where
     B: BlockStorage,

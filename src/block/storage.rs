@@ -9,7 +9,7 @@ use crate::block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, Bloc
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
 /// responsibility for mapping block numbers to _some_ storage location.  Additionally they are
 /// able to read and write data to blocks.
-pub trait BlockStorage: BlockWriter + BlockReader {
+pub trait BlockStorage: BlockWriter + BlockReader + Send {
     /// Get an immutable reference to the block map.
     ///
     fn metadata(&self) -> &BlockMap;

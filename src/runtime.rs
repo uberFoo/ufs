@@ -12,13 +12,14 @@ use std::{
 use crossbeam::crossbeam_channel;
 
 use failure;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 
 // mod imports;
 
 use crate::{
-    block::BlockNumber,
+    block::{storage::BlockStorage, BlockNumber},
     metadata::{File, FileHandle},
+    UberFileSystem,
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,7 @@ pub(crate) enum UfsMessage {
     FileWrite(Vec<u8>),
     DirCreate(PathBuf),
     DirRemove(PathBuf),
+    Shutdown,
 }
 
 pub(crate) fn init_runtime() -> Result<Vec<Process>, failure::Error> {
@@ -38,7 +40,6 @@ pub(crate) fn init_runtime() -> Result<Vec<Process>, failure::Error> {
 }
 
 pub(crate) struct Process {
-    handle: Option<JoinHandle<Result<(), failure::Error>>>,
     sender: crossbeam_channel::Sender<UfsMessage>,
     receiver: crossbeam_channel::Receiver<UfsMessage>,
 }
@@ -46,53 +47,52 @@ pub(crate) struct Process {
 impl Process {
     pub(crate) fn new() -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded::<UfsMessage>();
-        Process {
-            handle: None,
-            sender,
-            receiver,
-        }
+        Process { sender, receiver }
     }
 
-    pub(crate) fn handle(&self) -> Option<&JoinHandle<Result<(), failure::Error>>> {
-        self.handle.as_ref()
-    }
-
-    pub(crate) fn start(&mut self) {
+    pub(crate) fn start<B: BlockStorage>(
+        &mut self,
+        ufs: Arc<Mutex<UberFileSystem<B>>>,
+    ) -> JoinHandle<Result<(), failure::Error>> {
         debug!("-------");
         debug!("`start`");
         let receiver = self.receiver.clone();
 
-        let handle = spawn(move || {
+        spawn(move || {
+            let mut handle = None;
             for message in receiver {
-                // info!("`runtime`: {:?}", message);
                 match message {
+                    UfsMessage::Shutdown => break,
                     UfsMessage::FileCreate(path) => info!("`runtime`: FileCreate {:?}", path),
                     UfsMessage::FileRemove(path) => info!("`runtime`: FileRemove {:?}", path),
-                    UfsMessage::FileOpen(path) => info!("`runtime`: FileOpen {:?}", path),
-                    UfsMessage::FileClose(path) => info!("`runtime`: FileClose {:?}", path),
-                    UfsMessage::FileRead(bytes) => info!(
-                        "`runtime`: FileRead\n{}",
-                        String::from_utf8_lossy(bytes.as_slice())
-                    ),
-                    UfsMessage::FileWrite(bytes) => info!(
-                        "`runtime`: FileWrite\n{}",
-                        String::from_utf8_lossy(bytes.as_slice())
-                    ),
-                    // {
-                    //     let map = file_map.read().expect("poisoned RwLock");
-                    //     match map.get(&h) {
-                    //         Some(file) =>
-                    //     info!("file path {:?}", file.path),
-                    //     None => warn!("expected to find a file for handle {}", h)
-                    //     }
-                    // }
+                    UfsMessage::FileOpen(path) => {
+                        info!("`runtime`: FileOpen {:?}", path);
+                        let mut guard = ufs.lock().expect("poisoned ufs lock");
+                        if let Some((h, _)) = guard.create_file("uberfoo") {
+                            handle = Some(h);
+                        }
+                    }
+                    UfsMessage::FileClose(path) => {
+                        info!("`runtime`: FileClose {:?}", path);
+                        let mut guard = ufs.lock().expect("poisoned ufs lock");
+                        if let Some(h) = handle {
+                            guard.close_file(h);
+                            handle = None;
+                        }
+                    }
+                    UfsMessage::FileRead(bytes) => {
+                        info!("`runtime`: FileRead");
+                        trace!("\n{}", String::from_utf8_lossy(bytes.as_slice()));
+                    }
+                    UfsMessage::FileWrite(bytes) => {
+                        info!("`runtime`: FileWrite");
+                        trace!("{}", String::from_utf8_lossy(bytes.as_slice()));
+                    }
                     _ => (),
                 }
             }
             Ok(())
-        });
-
-        self.handle = Some(handle);
+        })
     }
 
     pub(crate) fn send_message(&self, msg: UfsMessage) {

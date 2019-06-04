@@ -117,8 +117,10 @@
 //!
 use std::{
     collections::HashMap,
+    ops::{Deref, DerefMut},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
+    thread::JoinHandle,
 };
 
 use ::time::Timespec;
@@ -144,7 +146,7 @@ pub use block::{
 };
 
 use crate::{
-    metadata::{DirectoryEntry, File, FileHandle, FileVersion},
+    metadata::{DirectoryEntry, File, FileHandle, FileSize, FileVersion},
     runtime::{init_runtime, Process, UfsMessage},
 };
 
@@ -191,9 +193,64 @@ pub enum OpenFileMode {
     ReadWrite,
 }
 
+pub struct UfsMounter<B: BlockStorage + 'static> {
+    // FIXME: I think that the Mutex can be an RwLock...
+    inner: Arc<Mutex<UberFileSystem<B>>>,
+    threads: Vec<Option<JoinHandle<Result<(), failure::Error>>>>,
+}
+
+impl<B: BlockStorage> UfsMounter<B> {
+    pub fn new(ufs: UberFileSystem<B>) -> Self {
+        UfsMounter {
+            inner: Arc::new(Mutex::new(ufs)),
+            threads: vec![],
+        }
+    }
+
+    /// Initialization
+    ///
+    pub fn initialize(&mut self) {
+        let mut ufs = self.inner.lock().expect("poisoned ufs lock");
+        ufs.listeners.append(&mut init_runtime().unwrap());
+        for listener in &mut ufs.listeners {
+            self.threads.push(Some(listener.start(self.inner.clone())));
+        }
+    }
+
+    /// Shutdown
+    ///
+    pub fn shutdown(&mut self) -> Result<(), failure::Error> {
+        let mut ufs = self.inner.lock().expect("poisoned ufs lock");
+        ufs.notify_listeners(UfsMessage::Shutdown);
+
+        for mut thread in &mut self.threads {
+            if let Some(thread) = thread.take() {
+                thread.join().unwrap();
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<B: BlockStorage> Deref for UfsMounter<B> {
+    type Target = Arc<Mutex<UberFileSystem<B>>>;
+
+    fn deref(&self) -> &Self::Target {
+        // self.inner.lock().expect("ufs lock poisoned")
+        &self.inner
+    }
+}
+
+impl<B: BlockStorage> DerefMut for UfsMounter<B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // &mut self.inner.lock().expect("ufs lock poisoned")
+        &mut self.inner
+    }
+}
+
 /// Main File System Implementation
 ///
-pub struct UberFileSystem<B: BlockStorage> {
+pub struct UberFileSystem<B: BlockStorage + 'static> {
     /// Where we store blocks.
     ///
     block_manager: BlockManager<B>,
@@ -241,23 +298,6 @@ impl UberFileSystem<FileStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
-    /// Initialization
-    ///
-    pub fn initialize(&mut self) {
-        self.listeners.append(&mut init_runtime().unwrap());
-        for listener in &mut self.listeners {
-            listener.start();
-        }
-    }
-
-    /// Shutdown
-    ///
-    pub fn shutdown(&mut self) -> Result<(), failure::Error> {
-        for listener in &mut self.listeners {
-            // listener.handle().unwrap().join().unwrap()?;
-        }
-        Ok(())
-    }
 
     fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
@@ -271,12 +311,37 @@ impl<B: BlockStorage> UberFileSystem<B> {
     /// contained within the specified directory.
     ///
     /// TODO: Verify that the path exists, and do something with it!
-    pub fn list_files<P>(&self, path: P) -> Vec<(String, FileHandle, Timespec)>
+    pub fn list_files<P>(&self, path: P) -> Vec<(String, FileSize, Timespec)>
     where
         P: AsRef<Path>,
     {
         debug!("-------");
         debug!("`list_files`: {:?}", path.as_ref());
+        // let mut files = Vec::new();
+        // for (name, entry) in self.block_manager.root_dir().entries() {
+        //     match entry {
+        //         DirectoryEntry::Directory(d) => {
+        //             debug!("dir: {}", name);
+        //             files.push((name.clone(), 0, d.write_time().into()));
+        //         }
+        //         DirectoryEntry::File(f) => {
+        //             for (n, version) in f.versions().iter().enumerate() {
+        //                 let mut name = name.clone();
+        //                 name.push('@');
+        //                 name.push_str(&n.to_string());
+        //                 let size = version.size();
+        //                 let write_time = version.write_time();
+        //                 debug!("file: {}, size: {}", name, size);
+        //                 files.push((name.clone(), size, write_time.into()));
+        //             }
+        //             let size = f.get_current_version().size();
+        //             debug!("file: {}, size: {}", name, size);
+        //             files.push((name.clone(), size, f.write_time().into()));
+        //         }
+        //     }
+        // }
+
+        // files
         self.block_manager
             .root_dir()
             .entries()
@@ -288,7 +353,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 }
                 DirectoryEntry::File(f) => {
                     let size = f.get_current_version().size();
-                    debug!("file: {}, bytes: {}", name, size);
+                    debug!("file: {}, size: {}", name, size);
                     (name.clone(), size, f.write_time().into())
                 }
             })
@@ -311,6 +376,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
                 self.open_files.insert(fh, file);
 
+                debug!("`create_file`: {:?}, handle: {}", path.as_ref(), fh);
+
                 self.notify_listeners(UfsMessage::FileCreate(path.as_ref().to_path_buf()));
 
                 return Some((fh, time.into()));
@@ -328,6 +395,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
     {
         debug!("-------");
         if let Some(mut file) = self.block_manager.root_dir().get_file(&path) {
+            // If the file is opened for writing, allocate a new FileVersion for it's bits.
             match mode {
                 OpenFileMode::Write | OpenFileMode::ReadWrite => file.version = FileVersion::new(),
                 _ => (),

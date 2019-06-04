@@ -12,7 +12,7 @@ use time::Timespec;
 
 use crate::{
     block::{BlockCardinality, FileStore},
-    OpenFileMode, UberFileSystem,
+    OpenFileMode, UfsMounter,
 };
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };
@@ -81,7 +81,7 @@ impl Inode {
 /// FUSE intergation
 ///
 pub struct UberFSFuse {
-    file_system: UberFileSystem<FileStore>,
+    file_system: UfsMounter<FileStore>,
     // `inodes` is a mapping from "inode" number to an Inode
     inodes: Vec<Inode>,
     // `files` is a mapping from a file name to an Inode *index* in the `inodes` vector.
@@ -91,7 +91,7 @@ pub struct UberFSFuse {
 impl UberFSFuse {
     /// Create a new file system
     ///
-    pub fn new(file_system: UberFileSystem<FileStore>) -> Self {
+    pub fn new(file_system: UfsMounter<FileStore>) -> Self {
         let mut fs = UberFSFuse {
             file_system,
             inodes: Vec::new(),
@@ -123,7 +123,8 @@ impl UberFSFuse {
     pub fn load_root_directory(&mut self) {
         let mut number = self.inodes.len() as u64;
 
-        for (name, size, time) in self.file_system.list_files("/") {
+        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        for (name, size, time) in guard.list_files("/") {
             let inode = Inode {
                 number,
                 name: name.clone(),
@@ -275,8 +276,9 @@ impl Filesystem for UberFSFuse {
                 _ => unreachable!(),
             };
 
-            match self.file_system.open_file(path, mode) {
-                Some(fh) => reply.opened(fh as u64, 0),
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            match &mut guard.open_file(path, mode) {
+                Some(fh) => reply.opened(*fh as u64, 0),
                 _ => reply.error(ENOENT),
             }
         } else {
@@ -301,8 +303,10 @@ impl Filesystem for UberFSFuse {
         if parent == 1 {
             let name = String::from(name.to_str().unwrap());
 
-            let (fh, time) = match self.file_system.create_file(&name) {
-                Some((fh, t)) => (fh as u64, t),
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            let (fh, time) = match &mut guard.create_file(&name) {
+                Some((fh, t)) => (*fh as u64, *t),
+                // FIXME: I don't thing the None case is correct.
                 None => (0, TIME),
             };
             let number = self.inodes.len() as u64;
@@ -337,7 +341,8 @@ impl Filesystem for UberFSFuse {
             ino, flags, flush
         );
 
-        self.file_system.close_file(fh);
+        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        &mut guard.close_file(fh);
         reply.ok();
     }
 
@@ -358,7 +363,8 @@ impl Filesystem for UberFSFuse {
             ino, offset, size
         );
 
-        if let Ok(buffer) = self.file_system.read_file(fh, offset, size as usize) {
+        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        if let Ok(buffer) = &mut guard.read_file(fh, offset, size as usize) {
             debug!("read {} bytes", buffer.len());
             trace!("{:?}", &buffer);
             reply.data(&buffer)
@@ -385,18 +391,19 @@ impl Filesystem for UberFSFuse {
         );
 
         if let Some(inode) = self.inodes.get_mut(ino as usize) {
-            if let Ok(len) = self.file_system.write_file(fh, data) {
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            if let Ok(len) = &mut guard.write_file(fh, data) {
                 debug!("wrote {} bytes", len);
-                trace!("{:?}", &data[..len]);
+                trace!("{:?}", &data[..*len]);
 
                 let new_size: u64 = if let Some(n) = inode.size {
-                    n + len as u64
+                    n + *len as u64
                 } else {
-                    len as u64
+                    *len as u64
                 };
                 inode.size.replace(new_size);
 
-                reply.written(len as u32);
+                reply.written(*len as u32);
             } else {
                 reply.error(ENOENT);
             }
@@ -429,7 +436,8 @@ impl Filesystem for UberFSFuse {
     /// FIXME: What to do about maximum file name length?
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         trace!("statfs ino {}", _ino);
-        let block_manager = &self.file_system.block_manager;
+        let guard = self.file_system.lock().expect("poisoned ufs lock");
+        let block_manager = &guard.block_manager;
         trace!(
             "blocks: {}, free blocks: {}, block size: {}",
             block_manager.block_count(),

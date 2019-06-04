@@ -67,11 +67,14 @@ impl DirectoryMetadata {
         }
     }
 
+    /// Create a new file in this directory
+    ///
     pub(crate) fn new_file(&mut self, name: &str) -> File {
         let file = FileMetadata::new();
         self.entries
             .insert(name.to_owned(), DirectoryEntry::File(file.clone()));
         self.dirty = true;
+        debug!("`new_file`: {}", name);
         File {
             path: ["/", name].iter().collect(),
             version: file.get_current_version(),
@@ -79,6 +82,8 @@ impl DirectoryMetadata {
         }
     }
 
+    /// Retrieve a file by name from this directory
+    ///
     pub(crate) fn get_file<P>(&self, path: P) -> Option<File>
     where
         P: AsRef<Path>,
@@ -110,6 +115,10 @@ impl DirectoryMetadata {
         }
     }
 
+    /// Update a file under this directory
+    ///
+    /// The current version is committed, and written if necessary.
+    ///
     pub(crate) fn update_file(&mut self, file: File) {
         if let Some(file_name) = file.path.file_name() {
             if let Some(name) = file_name.to_str() {
@@ -140,9 +149,12 @@ impl DirectoryMetadata {
 }
 
 impl MetadataSerialize for DirectoryMetadata {
-    fn serialize(&self) -> Result<Vec<u8>, failure::Error> {
+    fn serialize(&mut self) -> Result<Vec<u8>, failure::Error> {
         match bincode::serialize(&self) {
-            Ok(r) => Ok(r),
+            Ok(r) => {
+                self.dirty = false;
+                Ok(r)
+            }
             Err(e) => Err(format_err!("unable to serialize directory metadata {}", e)),
         }
     }
@@ -234,7 +246,7 @@ impl FileVersion {
     pub(crate) fn new() -> Self {
         let time = UfsTime::now();
         FileVersion {
-            dirty: false,
+            dirty: true,
             birth_time: time,
             write_time: time,
             change_time: time,

@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use ::fuse::mount;
 use pretty_env_logger;
 use structopt::StructOpt;
-use ufs::{fuse::UberFSFuse, UberFileSystem};
+use ufs::{fuse::UberFSFuse, UberFileSystem, UfsMounter};
 
 /// Mount the file system using FUSE.
 ///
@@ -24,7 +24,8 @@ fn main() -> Result<(), failure::Error> {
     let opt = Opt::from_args();
     if fs::read_dir(&opt.bundle_path).is_ok() {
         let ufs = UberFileSystem::load_file_backed(&opt.bundle_path)?;
-        let mut ufs_fuse = UberFSFuse::new(ufs);
+        let mounter = UfsMounter::new(ufs);
+        let mut ufs_fuse = UberFSFuse::new(mounter);
         ufs_fuse.load_root_directory();
 
         mount(ufs_fuse, &opt.mount_path, &[])?;
