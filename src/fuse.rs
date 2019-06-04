@@ -122,20 +122,25 @@ impl UberFSFuse {
     /// needs to be separate from `new`.
     pub fn load_root_directory(&mut self) {
         let mut number = self.inodes.len() as u64;
+        let mut inodes = vec![];
 
-        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        let guard = self.file_system.lock().expect("poisoned ufs lock");
         for (name, size, time) in guard.list_files("/") {
-            let inode = Inode {
-                number,
-                name: name.clone(),
-                time,
-                size: Some(size),
-            };
+            self.files.entry(name.clone()).or_insert_with(|| {
+                let inode = Inode {
+                    number,
+                    name: name.clone(),
+                    time,
+                    size: Some(size),
+                };
+                inodes.push(inode);
+                number
+            });
 
-            self.inodes.push(inode);
-            self.files.insert(name.clone(), number);
             number += 1;
         }
+
+        self.inodes.append(&mut inodes);
 
         debug!("load_root_directory {:?}", self.files);
     }
@@ -236,6 +241,7 @@ impl Filesystem for UberFSFuse {
         mut reply: ReplyDirectory,
     ) {
         trace!("readdir ino: {}, offset: {}", ino, offset);
+        self.load_root_directory();
         if ino == 1 {
             let skip = if offset == 0 { offset } else { offset + 1 } as usize;
             for (i, (name, index)) in self.files.iter().enumerate().skip(skip) {
