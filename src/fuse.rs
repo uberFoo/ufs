@@ -121,12 +121,13 @@ impl UberFSFuse {
     /// Post construction method to initialize the root directory.  I'm not sure that this still
     /// needs to be separate from `new`.
     pub fn load_root_directory(&mut self) {
-        let mut number = self.inodes.len() as u64;
+        let mut number = (self.inodes.len() - 1) as u64;
         let mut inodes = vec![];
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
         for (name, size, time) in guard.list_files("/") {
             self.files.entry(name.clone()).or_insert_with(|| {
+                number += 1;
                 let inode = Inode {
                     number,
                     name: name.clone(),
@@ -137,12 +138,15 @@ impl UberFSFuse {
                 number
             });
 
-            number += 1;
         }
 
         self.inodes.append(&mut inodes);
 
-        debug!("load_root_directory {:?}", self.files);
+        trace!(
+            "`load_root_directory`:\nfiles: {:#?}\ninodes:{:#?}",
+            self.files,
+            self.inodes
+        );
     }
 }
 
@@ -242,6 +246,7 @@ impl Filesystem for UberFSFuse {
     ) {
         trace!("readdir ino: {}, offset: {}", ino, offset);
         self.load_root_directory();
+
         if ino == 1 {
             let skip = if offset == 0 { offset } else { offset + 1 } as usize;
             for (i, (name, index)) in self.files.iter().enumerate().skip(skip) {
@@ -302,8 +307,9 @@ impl Filesystem for UberFSFuse {
         flags: u32,
         reply: ReplyCreate,
     ) {
+        debug!("-------");
         debug!(
-            "create name: {:?}, parent: {}, mode: {:#05o}, flags: {:#x}",
+            "`create`: {:?}, parent: {}, mode: {:#05o}, flags: {:#x}",
             name, parent, _mode, flags
         );
         if parent == 1 {
@@ -324,6 +330,8 @@ impl Filesystem for UberFSFuse {
             };
 
             reply.created(&TTL, &inode.file_attr(), 0, fh, flags);
+
+            debug!("inode: {}", inode.number);
 
             self.inodes.push(inode);
             self.files.insert(name, number);
