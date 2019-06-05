@@ -236,14 +236,12 @@ impl<B: BlockStorage> Deref for UfsMounter<B> {
     type Target = Arc<Mutex<UberFileSystem<B>>>;
 
     fn deref(&self) -> &Self::Target {
-        // self.inner.lock().expect("ufs lock poisoned")
         &self.inner
     }
 }
 
 impl<B: BlockStorage> DerefMut for UfsMounter<B> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // &mut self.inner.lock().expect("ufs lock poisoned")
         &mut self.inner
     }
 }
@@ -298,7 +296,6 @@ impl UberFileSystem<FileStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
-
     fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
             listener.send_message(msg.clone());
@@ -466,7 +463,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 }
                 debug!("wrote {} bytes", written,);
 
-                self.notify_listeners(UfsMessage::FileWrite(bytes.to_vec()));
+                let path = file.path.clone();
+                self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
 
                 Ok(written)
             }

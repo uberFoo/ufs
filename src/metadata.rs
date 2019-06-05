@@ -7,7 +7,7 @@ use std::{
 };
 
 use failure::format_err;
-use log::{debug, error};
+use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -199,7 +199,8 @@ impl FileMetadata {
     pub(crate) fn get_current_version(&self) -> FileVersion {
         let version = self.versions.last().unwrap().clone();
         debug!("-------");
-        debug!("`get_current_version`: {:#?}", version);
+        debug!("`get_current_version`:");
+        trace!("{:#?}", version);
         version
     }
 

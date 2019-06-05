@@ -29,7 +29,7 @@ pub(crate) enum UfsMessage {
     FileOpen(PathBuf),
     FileClose(PathBuf),
     FileRead(Vec<u8>),
-    FileWrite(Vec<u8>),
+    FileWrite(PathBuf, Vec<u8>),
     DirCreate(PathBuf),
     DirRemove(PathBuf),
     Shutdown,
@@ -59,34 +59,87 @@ impl Process {
         let receiver = self.receiver.clone();
 
         spawn(move || {
-            let mut handle = None;
+            let mut handles = HashMap::<PathBuf, FileHandle>::new();
+            let mut word_hash = HashMap::<PathBuf, usize>::new();
             for message in receiver {
                 match message {
                     UfsMessage::Shutdown => break,
-                    UfsMessage::FileCreate(path) => info!("`runtime`: FileCreate {:?}", path),
+                    UfsMessage::FileCreate(path) => {
+                        info!("`runtime`: FileCreate {:?}", path);
+
+                        if !handles.contains_key(&path) {
+                            let mut file_path = PathBuf::new();
+                            file_path.push("/");
+                            file_path.push(path);
+
+                            let mut guard = ufs.lock().expect("poisoned ufs lock");
+
+                            let words_path = file_path.with_extension("words");
+                            if let Some((h, _)) = guard.create_file(words_path.clone()) {
+                                info!("created file {:?} with handle {}", words_path, h);
+                                handles.insert(words_path, h);
+                                let mut word_path = PathBuf::new();
+                                word_hash.insert(file_path, 0);
+                            }
+
+                            // if let Some((h, _)) = guard.create_file("foo") {
+                            //     handles.insert(path, h));
+                            // }
+                        }
+                    }
                     UfsMessage::FileRemove(path) => info!("`runtime`: FileRemove {:?}", path),
                     UfsMessage::FileOpen(path) => {
                         info!("`runtime`: FileOpen {:?}", path);
-                        let mut guard = ufs.lock().expect("poisoned ufs lock");
-                        if let Some((h, _)) = guard.create_file("uberfoo") {
-                            handle = Some(h);
-                        }
+
+                        // if !handles.contains_key(&path) {
+                        //     let mut guard = ufs.lock().expect("poisoned ufs lock");
+                        //     if let Some((h, _)) = guard.create_file("uberfoo") {
+                        //         handles.insert(path, (h, 0));
+                        //     }
+                        // }
                     }
                     UfsMessage::FileClose(path) => {
                         info!("`runtime`: FileClose {:?}", path);
-                        let mut guard = ufs.lock().expect("poisoned ufs lock");
-                        if let Some(h) = handle {
-                            guard.close_file(h);
-                            handle = None;
+
+                        let words_path = path.with_extension("words");
+
+                        if let Some(h) = handles.remove(&path) {
+                            info!("removing words from hash");
+                            word_hash.remove(&words_path);
+                        }
+
+                        if let Some(h) = handles.get_mut(&words_path) {
+                            let mut guard = ufs.lock().expect("poisoned ufs lock");
+
+                            if let Some(words) = word_hash.get_mut(&path) {
+                                let mut contents = words.to_string();
+                                contents.push('\t');
+                                contents.push_str(words_path.to_str().unwrap());
+                                contents.push('\n');
+
+                                info!("writing {} to {}", contents, *h);
+                                guard.write_file(*h, contents.as_bytes());
+                                guard.close_file(*h);
+                            }
+                            guard.close_file(*h);
                         }
                     }
                     UfsMessage::FileRead(bytes) => {
                         info!("`runtime`: FileRead");
                         trace!("\n{}", String::from_utf8_lossy(bytes.as_slice()));
                     }
-                    UfsMessage::FileWrite(bytes) => {
-                        info!("`runtime`: FileWrite");
+                    UfsMessage::FileWrite(path, bytes) => {
+                        info!("`runtime`: FileWrite {:?}", path);
                         trace!("{}", String::from_utf8_lossy(bytes.as_slice()));
+
+                        if let Some(words) = word_hash.get_mut(&path) {
+                            let count = String::from_utf8_lossy(bytes.as_slice())
+                                .split_whitespace()
+                                .fold(0, |n, _| n + 1);
+
+                            info!("counted {} words in file {:?}", count, path);
+                            *words = count;
+                        }
                     }
                     _ => (),
                 }
