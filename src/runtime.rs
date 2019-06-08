@@ -28,7 +28,7 @@ pub(crate) enum UfsMessage {
     FileRemove(PathBuf),
     FileOpen(PathBuf),
     FileClose(PathBuf),
-    FileRead(Vec<u8>),
+    FileRead(PathBuf, Vec<u8>),
     FileWrite(PathBuf, Vec<u8>),
     DirCreate(PathBuf),
     DirRemove(PathBuf),
@@ -124,7 +124,7 @@ impl Process {
                             guard.close_file(*h);
                         }
                     }
-                    UfsMessage::FileRead(bytes) => {
+                    UfsMessage::FileRead(path, bytes) => {
                         info!("`runtime`: FileRead");
                         trace!("\n{}", String::from_utf8_lossy(bytes.as_slice()));
                     }

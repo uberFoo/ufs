@@ -531,7 +531,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
         }
 
         if buffer.len() == size {
-            self.notify_listeners(UfsMessage::FileRead(buffer.clone()));
+            let path = file.path.clone();
+            self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
 
             Ok(buffer)
         } else {
