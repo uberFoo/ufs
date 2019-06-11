@@ -13,9 +13,8 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     block::{
-        hash::BlockHash,
-        storage::{BlockReader, BlockWriter},
-        Block, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+        Block, BlockCardinality, BlockHash, BlockNumber, BlockReader, BlockSize, BlockSizeType,
+        BlockWriter,
     },
     UfsUuid,
 };
@@ -293,7 +292,7 @@ mod test {
 
     use super::*;
 
-    use crate::block::storage::memory::MemoryStore;
+    use crate::block::MemoryStore;
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();

@@ -6,10 +6,7 @@ use failure::format_err;
 use log::trace;
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
-use crate::block::{
-    storage::{BlockReader, BlockWriter},
-    BlockNumber, BlockSizeType,
-};
+use crate::block::{BlockNumber, BlockReader, BlockSizeType, BlockWriter};
 
 struct NetworkReader {
     url: Url,
@@ -29,7 +26,7 @@ impl BlockReader for NetworkReader {
     }
 }
 
-struct NetworkStore {
+pub struct NetworkStore {
     url: Url,
     client: Client,
 }

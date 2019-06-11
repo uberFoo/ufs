@@ -16,9 +16,8 @@ use failure::format_err;
 use log::{debug, error, trace};
 
 use crate::block::{
-    map::BlockMap,
-    storage::{BlockReader, BlockStorage, BlockWriter},
-    BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
+    BlockStorage, BlockWriter,
 };
 
 use std::{

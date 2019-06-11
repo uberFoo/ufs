@@ -8,10 +8,8 @@ use log::{debug, error};
 
 use crate::{
     block::{
-        hash::BlockHash,
-        storage::BlockStorage,
         wrapper::{read_metadata, write_metadata},
-        Block, BlockCardinality, BlockNumber, BlockSize,
+        Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
     metadata::DirectoryMetadata,
 };
@@ -204,7 +202,7 @@ mod test {
 
     use super::*;
     use crate::{
-        block::{map::BlockMap, storage::memory::MemoryStore, BlockSize},
+        block::{map::BlockMap, BlockSize, MemoryStore},
         UfsUuid,
     };
 

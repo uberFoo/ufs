@@ -10,9 +10,7 @@ use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::block::{
-    hash::BlockHash,
-    storage::{BlockReader, BlockStorage},
-    BlockCardinality, BlockNumber, BlockSizeType,
+    BlockCardinality, BlockHash, BlockNumber, BlockReader, BlockSizeType, BlockStorage,
 };
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -9,9 +9,8 @@ use failure::format_err;
 use log::{debug, trace};
 
 use crate::block::{
-    map::BlockMap,
-    storage::{BlockReader, BlockStorage, BlockWriter},
-    BlockCardinality, BlockSize, BlockSizeType,
+    map::BlockMap, BlockCardinality, BlockReader, BlockSize, BlockSizeType, BlockStorage,
+    BlockWriter,
 };
 
 /// An in-memory [BlockStorage]
