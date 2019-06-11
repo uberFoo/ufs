@@ -26,12 +26,9 @@ use std::{fmt, str::FromStr};
 use serde_derive::{Deserialize, Serialize};
 
 pub(crate) use self::hash::BlockHash;
-pub use self::storage::file::FileStore;
 pub(crate) use self::storage::memory::MemoryStore;
 pub(crate) use self::storage::network::NetworkStore;
-pub use self::storage::BlockReader;
-pub use self::storage::BlockStorage;
-pub use self::storage::BlockWriter;
+pub use self::storage::{file::FileStore, BlockReader, BlockStorage, BlockWriter};
 
 use self::map::BlockType;
 use crate::UfsUuid;
