@@ -128,6 +128,7 @@ use crossbeam::crossbeam_channel;
 use failure::format_err;
 use lazy_static::lazy_static;
 use log::{debug, error, trace, warn};
+use reqwest::Url;
 use serde_derive::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -139,15 +140,14 @@ mod time;
 pub mod fuse;
 
 pub use block::{
-    manager::BlockManager,
-    map::BlockMap,
-    storage::{file::FileStore, memory::MemoryStore, BlockReader, BlockStorage, BlockWriter},
-    BlockAddress, BlockCardinality, BlockNumber, BlockSize,
+    manager::BlockManager, map::BlockMap, BlockAddress, BlockCardinality, BlockNumber, BlockReader,
+    BlockSize, BlockStorage, BlockWriter, FileStore,
 };
 
 use crate::{
+    block::{MemoryStore, NetworkStore},
     metadata::{DirectoryEntry, File, FileHandle, FileSize, FileVersion},
-    runtime::{init_runtime, Process, UfsMessage},
+    runtime::{init_runtime, FileSystemOperator, Process, UfsMessage},
 };
 
 lazy_static! {
@@ -201,19 +201,26 @@ pub struct UfsMounter<B: BlockStorage + 'static> {
 
 impl<B: BlockStorage> UfsMounter<B> {
     pub fn new(ufs: UberFileSystem<B>) -> Self {
-        UfsMounter {
+        let mut new_ufs = UfsMounter {
             inner: Arc::new(Mutex::new(ufs)),
             threads: vec![],
-        }
+        };
+
+        new_ufs.initialize();
+
+        new_ufs
     }
 
     /// Initialization
     ///
     pub fn initialize(&mut self) {
         let mut ufs = self.inner.lock().expect("poisoned ufs lock");
-        ufs.listeners.append(&mut init_runtime().unwrap());
-        for listener in &mut ufs.listeners {
-            self.threads.push(Some(listener.start(self.inner.clone())));
+
+        let file_ops = Box::new(FileSystemOperator::new(self.inner.clone()));
+
+        for process in init_runtime(file_ops).unwrap() {
+            ufs.listeners.push(process.get_sender());
+            self.threads.push(Some(Process::start(process)));
         }
     }
 
@@ -254,7 +261,7 @@ pub struct UberFileSystem<B: BlockStorage + 'static> {
     block_manager: BlockManager<B>,
     open_files: HashMap<FileHandle, File>,
     open_file_counter: FileHandle,
-    listeners: Vec<Process>,
+    listeners: Vec<crossbeam_channel::Sender<UfsMessage>>,
 }
 
 impl UberFileSystem<MemoryStore> {
@@ -295,10 +302,24 @@ impl UberFileSystem<FileStore> {
     }
 }
 
+// impl UberFileSystem<NetworkStore> {
+//     pub fn new_networked(url: Url) -> Result<Self, failure::Error> {
+//         let net_store = NetworkStore::new(url)?;
+//         let block_manager = BlockManager::load(net_store)?;
+
+//         Ok(UberFileSystem {
+//             block_manager,
+//             open_files: HashMap::new(),
+//             open_file_counter: 0,
+//             listeners: vec![],
+//         })
+//     }
+// }
+
 impl<B: BlockStorage> UberFileSystem<B> {
     fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
-            listener.send_message(msg.clone());
+            listener.send(msg.clone()).unwrap();
         }
     }
 
@@ -308,12 +329,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
     /// contained within the specified directory.
     ///
     /// TODO: Verify that the path exists, and do something with it!
-    pub fn list_files<P>(&self, path: P) -> Vec<(String, FileSize, Timespec)>
-    where
-        P: AsRef<Path>,
-    {
+    fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)> {
         debug!("-------");
-        debug!("`list_files`: {:?}", path.as_ref());
+        debug!("`list_files`: {:?}", path);
         // let mut files = Vec::new();
         // for (name, entry) in self.block_manager.root_dir().entries() {
         //     match entry {
@@ -359,11 +377,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Create a file
     ///
-    pub fn create_file<P>(&mut self, path: P) -> Option<(FileHandle, Timespec)>
-    where
-        P: AsRef<Path>,
-    {
-        if let Some(ostr_name) = path.as_ref().file_name() {
+    fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {
+        if let Some(ostr_name) = path.file_name() {
             if let Some(name) = ostr_name.to_str() {
                 let file = self.block_manager.root_dir_mut().new_file(name);
                 let time = file.version.write_time();
@@ -373,9 +388,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
                 self.open_files.insert(fh, file);
 
-                debug!("`create_file`: {:?}, handle: {}", path.as_ref(), fh);
+                debug!("`create_file`: {:?}, handle: {}", path, fh);
 
-                self.notify_listeners(UfsMessage::FileCreate(path.as_ref().to_path_buf()));
+                self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
 
                 return Some((fh, time.into()));
             }
@@ -386,10 +401,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Open a file
     ///
-    pub fn open_file<P>(&mut self, path: P, mode: OpenFileMode) -> Option<FileHandle>
-    where
-        P: AsRef<Path>,
-    {
+    fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle> {
         debug!("-------");
         if let Some(mut file) = self.block_manager.root_dir().get_file(&path) {
             // If the file is opened for writing, allocate a new FileVersion for it's bits.
@@ -402,14 +414,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
             self.open_files.insert(fh, file);
 
-            debug!(
-                "`open_file`: {:?}, handle: {}, mode: {:?}",
-                path.as_ref(),
-                fh,
-                mode
-            );
+            debug!("`open_file`: {:?}, handle: {}, mode: {:?}", path, fh, mode);
 
-            self.notify_listeners(UfsMessage::FileOpen(path.as_ref().to_path_buf()));
+            self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
 
             Some(fh)
         } else {
@@ -419,7 +426,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Close a file
     ///
-    pub fn close_file(&mut self, handle: FileHandle) {
+    fn close_file(&mut self, handle: FileHandle) {
         debug!("-------");
 
         match self.open_files.remove(&handle) {
@@ -439,11 +446,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Write bytes to a file.
     ///
-    pub fn write_file(
-        &mut self,
-        handle: FileHandle,
-        bytes: &[u8],
-    ) -> Result<usize, failure::Error> {
+    fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
 
@@ -478,7 +481,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
     /// Read bytes from a file
     ///
     ///
-    pub fn read_file(
+    fn read_file(
         &mut self,
         handle: FileHandle,
         offset: i64,

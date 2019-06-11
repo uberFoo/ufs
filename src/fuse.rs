@@ -1,6 +1,10 @@
 //! FUSE Interface for uberFS
 //!
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -125,7 +129,7 @@ impl UberFSFuse {
         let mut inodes = vec![];
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        for (name, size, time) in guard.list_files("/") {
+        for (name, size, time) in guard.list_files(Path::new("/")) {
             self.files.entry(name.clone()).or_insert_with(|| {
                 number += 1;
                 let inode = Inode {
@@ -137,7 +141,6 @@ impl UberFSFuse {
                 inodes.push(inode);
                 number
             });
-
         }
 
         self.inodes.append(&mut inodes);
@@ -169,7 +172,6 @@ impl Filesystem for UberFSFuse {
     /// Start-up
     ///
     fn init(&mut self, _req: &Request) -> Result<(), c_int> {
-        self.file_system.initialize();
         Ok(())
     }
 
@@ -288,7 +290,7 @@ impl Filesystem for UberFSFuse {
             };
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            match &mut guard.open_file(path, mode) {
+            match &mut guard.open_file(Path::new(&path), mode) {
                 Some(fh) => reply.opened(*fh as u64, 0),
                 _ => reply.error(ENOENT),
             }
@@ -316,7 +318,7 @@ impl Filesystem for UberFSFuse {
             let name = String::from(name.to_str().unwrap());
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            let (fh, time) = match &mut guard.create_file(&name) {
+            let (fh, time) = match &mut guard.create_file(Path::new(&name)) {
                 Some((fh, t)) => (*fh as u64, *t),
                 // FIXME: I don't thing the None case is correct.
                 None => (0, TIME),
