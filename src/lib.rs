@@ -144,10 +144,13 @@ pub use block::{
     BlockSize, BlockStorage, BlockWriter, FileStore,
 };
 
+pub use metadata::FileHandle;
+pub use runtime::{FileSystemOps, UfsMessage, UfsMessageHandler};
+
 use crate::{
     block::{MemoryStore, NetworkStore},
-    metadata::{DirectoryEntry, File, FileHandle, FileSize, FileVersion},
-    runtime::{init_runtime, FileSystemOperator, Process, UfsMessage},
+    metadata::{DirectoryEntry, File, FileSize, FileVersion},
+    runtime::{init_runtime, FileSystemOperator, Process},
 };
 
 lazy_static! {

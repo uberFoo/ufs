@@ -4,7 +4,7 @@
 //!
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
     thread::{spawn, JoinHandle},
 };
@@ -19,9 +19,9 @@ pub(crate) mod fsops;
 pub(crate) mod message;
 
 pub(crate) use self::fsops::FileSystemOperator;
-pub(crate) use self::message::UfsMessage;
 
-use self::{fsops::FileSystemOps, message::UfsMessageHandler};
+pub use self::fsops::FileSystemOps;
+pub use self::message::{UfsMessage, UfsMessageHandler};
 
 use crate::metadata::{File, FileHandle};
 
@@ -54,7 +54,7 @@ impl Process {
         spawn(move || {
             loop {
                 let message = p.receiver.recv().unwrap();
-                p.handler.dispatch_message((message.clone()));
+                p.dispatch_message((message.clone()));
                 if let UfsMessage::Shutdown = message {
                     break;
                 }
@@ -66,6 +66,22 @@ impl Process {
 
     pub(crate) fn get_sender(&self) -> crossbeam_channel::Sender<UfsMessage> {
         self.sender.clone()
+    }
+
+    fn dispatch_message(&mut self, message: UfsMessage) {
+        match message {
+            UfsMessage::FileCreate(p) => self.handler.file_create(p.to_str().unwrap()),
+            UfsMessage::FileRemove(p) => self.handler.file_remove(p.to_str().unwrap()),
+            UfsMessage::FileOpen(p) => self.handler.file_open(p.to_str().unwrap()),
+            UfsMessage::FileClose(p) => self.handler.file_close(p.to_str().unwrap()),
+            UfsMessage::FileRead(p, d) => self.handler.file_read(p.to_str().unwrap(), d.as_slice()),
+            UfsMessage::FileWrite(p, d) => {
+                self.handler.file_write(p.to_str().unwrap(), d.as_slice())
+            }
+            UfsMessage::DirCreate(p) => self.handler.dir_create(p.to_str().unwrap()),
+            UfsMessage::DirRemove(p) => self.handler.dir_remove(p.to_str().unwrap()),
+            UfsMessage::Shutdown => self.handler.shutdown(),
+        }
     }
 }
 
@@ -86,8 +102,8 @@ impl WordCounter {
 }
 
 impl UfsMessageHandler for WordCounter {
-    fn file_create(&mut self, path: &PathBuf) {
-        let path = path.to_str().unwrap().to_string();
+    fn file_create(&mut self, path: &str) {
+        let path = path.to_string();
 
         if !self.handles.contains_key(&path) {
             let mut file_path = PathBuf::new();
@@ -105,10 +121,10 @@ impl UfsMessageHandler for WordCounter {
         }
     }
 
-    fn file_close(&mut self, path: &PathBuf) {
-        let words_path = path.with_extension("words");
+    fn file_close(&mut self, path: &str) {
+        let words_path = PathBuf::from(path).with_extension("words");
 
-        if let Some(h) = self.handles.remove(&path.to_str().unwrap().to_string()) {
+        if let Some(h) = self.handles.remove(&path.to_string()) {
             info!("removing words from hash");
             self.word_hash
                 .remove(&words_path.to_str().unwrap().to_string());
@@ -118,7 +134,7 @@ impl UfsMessageHandler for WordCounter {
             .handles
             .get_mut(&words_path.to_str().unwrap().to_string())
         {
-            if let Some(words) = self.word_hash.get_mut(&path.to_str().unwrap().to_string()) {
+            if let Some(words) = self.word_hash.get_mut(&path.to_string()) {
                 let mut contents = words.to_string();
                 contents.push('\t');
                 contents.push_str(words_path.to_str().unwrap());
@@ -132,8 +148,8 @@ impl UfsMessageHandler for WordCounter {
         }
     }
 
-    fn file_write(&mut self, path: &PathBuf, data: &[u8]) {
-        if let Some(words) = self.word_hash.get_mut(&path.to_str().unwrap().to_string()) {
+    fn file_write(&mut self, path: &str, data: &[u8]) {
+        if let Some(words) = self.word_hash.get_mut(&path.to_string()) {
             let count = String::from_utf8_lossy(data)
                 .split_whitespace()
                 .fold(0, |n, _| n + 1);

@@ -11,7 +11,7 @@ use crate::{
     OpenFileMode, UberFileSystem,
 };
 
-pub(crate) trait FileSystemOps: Send {
+pub trait FileSystemOps: Send {
     fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)>;
     fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)>;
     fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle>;
