@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 use chrono::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use time::Timespec;

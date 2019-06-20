@@ -10,6 +10,7 @@ use failure::format_err;
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::{
     block::{
         wrapper::{MetadataDeserialize, MetadataSerialize},
@@ -19,8 +20,11 @@ use crate::{
 };
 
 pub(crate) type FileSize = u64;
+
+/// The size of a FileHandle
 pub type FileHandle = u64;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct File {
     pub path: PathBuf,
@@ -28,12 +32,14 @@ pub(crate) struct File {
     pub file: FileMetadata,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum DirectoryEntry {
     Directory(DirectoryMetadata),
     File(FileMetadata),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct DirectoryMetadata {
     #[serde(skip)]
@@ -54,6 +60,7 @@ pub(crate) struct DirectoryMetadata {
     entries: HashMap<String, DirectoryEntry>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
     pub(crate) fn new_root() -> Self {
         let time = UfsTime::now();
@@ -148,6 +155,7 @@ impl DirectoryMetadata {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MetadataSerialize for DirectoryMetadata {
     fn serialize(&mut self) -> Result<Vec<u8>, failure::Error> {
         match bincode::serialize(&self) {
@@ -160,6 +168,7 @@ impl MetadataSerialize for DirectoryMetadata {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MetadataDeserialize for DirectoryMetadata {
     fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
         match bincode::deserialize(&bytes) {
@@ -176,11 +185,13 @@ impl MetadataDeserialize for DirectoryMetadata {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileMetadata {
     versions: Vec<FileVersion>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileMetadata {
     pub(crate) fn new() -> Self {
         FileMetadata {
@@ -218,6 +229,7 @@ impl FileMetadata {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileVersion {
     #[serde(skip)]
@@ -243,6 +255,7 @@ pub(crate) struct FileVersion {
     blocks: Vec<BlockNumber>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileVersion {
     pub(crate) fn new() -> Self {
         let time = UfsTime::now();

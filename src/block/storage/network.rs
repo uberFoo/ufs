@@ -6,7 +6,7 @@ use failure::format_err;
 use log::trace;
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
-use crate::block::{BlockNumber, BlockReader, BlockSizeType, BlockWriter};
+use crate::block::{BlockNumber, BlockReader, BlockSizeType, BlockStorage, BlockWriter};
 
 struct NetworkReader {
     url: Url,
@@ -42,6 +42,10 @@ impl NetworkStore {
         }
     }
 }
+
+// impl BlockStorage for NetworkStore {
+
+// }
 
 impl BlockWriter for NetworkStore {
     fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, failure::Error>

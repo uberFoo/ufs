@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! FUSE Interface for uberFS
 //!
 use std::{
@@ -453,7 +454,7 @@ impl Filesystem for UberFSFuse {
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         trace!("statfs ino {}", _ino);
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        let block_manager = &guard.block_manager;
+        let block_manager = &guard.block_manager();
         trace!(
             "blocks: {}, free blocks: {}, block size: {}",
             block_manager.block_count(),

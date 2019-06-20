@@ -13,7 +13,7 @@ pub enum UfsMessage {
     Shutdown,
 }
 
-pub trait UfsMessageHandler: Send {
+pub trait UfsMessageHandler {
     fn file_create(&mut self, _path: &str) {}
     fn file_remove(&mut self, _path: &str) {}
     fn file_open(&mut self, _path: &str) {}

@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use ::fuse::mount;
 use pretty_env_logger;
 use structopt::StructOpt;
-use ufs::{fuse::UberFSFuse, UberFileSystem, UfsMounter};
+use ufs::{UberFSFuse, UberFileSystem, UfsMounter};
 
 /// Mount the file system using FUSE.
 ///
