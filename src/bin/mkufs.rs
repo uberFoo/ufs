@@ -1,16 +1,18 @@
 use std::path::PathBuf;
 
-use failure::Error;
 use log::debug;
 use pretty_env_logger;
 use structopt::StructOpt;
 
-use ufs::{BlockCardinality, BlockManager, BlockSize, FileStore};
+use ufs::{BlockCardinality, BlockManager, BlockMap, BlockSize, FileStore, UfsUuid};
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "mkufs", about = "create an on-disk ufs file system")]
+#[structopt(
+    name = "mkufs",
+    about = "Create an on-disk ufs file system.  The file system UUID is the same as the on-disk bundle location."
+)]
 struct Opt {
-    /// File system bundle
+    /// File system bundle directory
     #[structopt(parse(from_os_str))]
     bundle_path: PathBuf,
     /// Block size
@@ -21,13 +23,19 @@ struct Opt {
     block_count: BlockCardinality,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), failure::Error> {
     pretty_env_logger::init();
 
     let opt = Opt::from_args();
     debug!("running with options {:?}", opt);
 
-    match FileStore::new(&opt.bundle_path, opt.block_size, opt.block_count) {
+    let map = BlockMap::new(
+        UfsUuid::new(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
+        opt.block_size,
+        opt.block_count,
+    );
+
+    match FileStore::new(&opt.bundle_path, map) {
         Ok(store) => {
             BlockManager::new(store);
             println!(

@@ -9,17 +9,21 @@
             "request": "launch",
             "name": "Debug unit tests in library 'ufs'",
             "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--lib",
-                    "--package=ufs"
-                ],
+                "args": ["test", "--no-run", "--lib", "--package=ufs"],
                 "filter": {
                     "kind": "lib"
                 }
             },
             "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug FUSE",
+            "program": "${workspaceFolder}/target/debug/examples/fuse-ufs",
+            "args": ["bundles/test", "mnt"],
+            "env": [{ "name": "RUST_LOG", "value": "debug,ufs::runtime=info" }],
             "cwd": "${workspaceFolder}"
         }
     ]

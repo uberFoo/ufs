@@ -5,10 +5,13 @@
 //! FIXME: Note that using serde, I could serialize this entire memory structure, and get a bundle
 //! implementation, albeit one that would be memory constrained.
 
-use failure::{format_err, Error};
-use log::trace;
+use failure::format_err;
+use log::{debug, trace};
 
-use crate::block::{storage::BlockStorage, BlockCardinality, BlockSize, BlockSizeType};
+use crate::block::{
+    map::BlockMap, BlockCardinality, BlockReader, BlockSize, BlockSizeType, BlockStorage,
+    BlockWriter,
+};
 
 /// An in-memory [BlockStorage]
 ///
@@ -21,6 +24,7 @@ pub struct MemoryStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
     blocks: Vec<Vec<u8>>,
+    map: BlockMap,
 }
 
 impl MemoryStore {
@@ -29,18 +33,27 @@ impl MemoryStore {
     /// Return a new in-memory [BlockStorage] given a [BlockSize] and the number of blocks.
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub(crate) fn new(size: BlockSize, count: BlockCardinality) -> Self {
+    pub(crate) fn new(map: BlockMap) -> Self {
         MemoryStore {
-            block_size: size,
-            block_count: count,
-            blocks: (0..count)
-                .map(|_| Vec::with_capacity(size as usize))
+            block_size: map.block_size(),
+            block_count: map.block_count(),
+            blocks: (0..map.block_count())
+                .map(|_| Vec::with_capacity(map.block_size() as usize))
                 .collect(),
+            map,
         }
     }
 }
 
 impl BlockStorage for MemoryStore {
+    fn metadata(&self) -> &BlockMap {
+        &self.map
+    }
+
+    fn metadata_mut(&mut self) -> &mut BlockMap {
+        &mut self.map
+    }
+
     fn block_count(&self) -> BlockCardinality {
         self.block_count
     }
@@ -48,29 +61,42 @@ impl BlockStorage for MemoryStore {
     fn block_size(&self) -> BlockSize {
         self.block_size
     }
+}
 
-    fn write_block<T>(&mut self, bn: BlockCardinality, data: T) -> Result<BlockSizeType, Error>
+impl BlockWriter for MemoryStore {
+    fn write_block<T>(
+        &mut self,
+        bn: BlockCardinality,
+        data: T,
+    ) -> Result<BlockSizeType, failure::Error>
     where
         T: AsRef<[u8]>,
     {
         let data = data.as_ref();
         if data.len() > self.block_size as usize {
-            return Err(format_err!("data is larger than block size"));
+            return Err(format_err!(
+                "data ({}) is larger than block size",
+                data.len()
+            ));
         }
 
         if let Some(memory) = self.blocks.get_mut(bn as usize) {
             memory.extend_from_slice(data);
 
-            trace!("wrote {} bytes to block {}", data.len(), bn);
+            debug!("wrote {} bytes to block {}", data.len(), bn);
+            trace!("{:#?}", data);
             Ok(data.len() as BlockSizeType)
         } else {
             Err(format_err!("request for bogus block {}", bn))
         }
     }
+}
 
-    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, Error> {
+impl BlockReader for MemoryStore {
+    fn read_block(&self, bn: BlockCardinality) -> Result<Vec<u8>, failure::Error> {
         if let Some(memory) = self.blocks.get(bn as usize) {
-            trace!("read {} bytes from block {}", memory.len(), bn);
+            debug!("read {} bytes from block {}", memory.len(), bn);
+            trace!("{:#?}", memory);
             Ok(memory.clone())
         } else {
             Err(format_err!("request for bogus block {}", bn))
@@ -80,36 +106,40 @@ impl BlockStorage for MemoryStore {
 
 #[cfg(test)]
 mod test {
-    use hex_literal::{hex, hex_impl};
+    use hex_literal::hex;
+
+    use crate::UfsUuid;
 
     use super::*;
 
     #[test]
     fn bad_block_number() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(map);
         let data = [0x0; BlockSize::FiveTwelve as usize];
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
 
-        assert_eq!(
+        assert!(
             ms.read_block(7).is_err(),
-            true,
             "read should fail with block number out of range"
         );
-        assert_eq!(
+        assert!(
             ms.write_block(7, &data[..]).is_err(),
-            true,
             "write should fail with block number out of range"
         );
     }
 
     #[test]
     fn block_too_bukoo() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(map);
         let data = [0x0; BlockSize::FiveTwelve as usize + 1];
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         assert_eq!(ms.write_block(1, &data[..]).is_err(), true);
     }
 
     #[test]
     fn write_block() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -117,7 +147,6 @@ mod test {
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
 
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         assert_eq!(
             ms.write_block(1, &data[..]).unwrap(),
             data.len() as BlockSizeType
@@ -132,6 +161,8 @@ mod test {
 
     #[test]
     fn read_block() {
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3);
+        let mut ms = MemoryStore::new(map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
             d8c606d9657d0e323283a5217d1f53f2f284f57b85c8a61ac8924711f895c5ed90ef17745ed2d728abd22a5f
@@ -141,7 +172,6 @@ mod test {
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
 
-        let mut ms = MemoryStore::new(BlockSize::FiveTwelve, 3);
         ms.blocks[0] = vec![0x0; BlockSize::FiveTwelve as usize];
         ms.blocks[0].copy_from_slice(&expected_block[..]);
 
@@ -154,7 +184,8 @@ mod test {
 
     #[test]
     fn construction_sanity() {
-        let ms = MemoryStore::new(BlockSize::FiveTwelve, 4);
+        let map = BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 4);
+        let ms = MemoryStore::new(map);
         assert_eq!(
             ms.block_size() as usize,
             512,

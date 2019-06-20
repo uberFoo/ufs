@@ -1,4 +1,4 @@
-/target
+**/target
 target.nosync
 **/*.rs.bk
 Cargo.lock

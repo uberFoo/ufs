@@ -1,21 +1,20 @@
 use std::path::PathBuf;
 
-use structopt::StructOpt;
-use pretty_env_logger;
-use failure::Error;
 use log::debug;
+use pretty_env_logger;
+use structopt::StructOpt;
 
-use ufs::{FileStore};
+use ufs::FileStore;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "ckufs", about = "check an on-disk ufs file system")]
 struct Opt {
     /// File system bundle
-        #[structopt(parse(from_os_str))]
+    #[structopt(parse(from_os_str))]
     bundle_path: PathBuf,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), failure::Error> {
     pretty_env_logger::init();
 
     let opt = Opt::from_args();

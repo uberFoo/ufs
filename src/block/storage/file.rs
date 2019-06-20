@@ -11,46 +11,97 @@
 //! ## FIXME
 //! * It might be better to build a more shallow directory tree: `root_dir/a2/3d/f0.ufsb`.
 //! * Optionally don't create files for every block.
-use failure::{format_err, Error};
-use log::{debug, trace};
-use serde_derive::{Deserialize, Serialize};
+
+use failure::format_err;
+use log::{debug, error, trace};
 
 use crate::block::{
-    storage::BlockStorage, BlockCardinality, BlockNumber, BlockSize, BlockSizeType,
+    map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
+    BlockStorage, BlockWriter,
 };
 
 use std::{
-    fmt, fs, io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 const BLOCK_EXT: &str = "ufsb";
 
-/// Internal Metadata
+/// Internal-only block writing implementation.
 ///
-/// Each block type of block storage is responsible for storing it's metadata.  For file-based
-/// storage, we're choosing to store it in a separate file, and using simple bincode-based
-/// serialization.
-#[derive(Deserialize, Serialize)]
-struct MetaData {
-    size: BlockSize,
-    count: BlockCardinality,
+struct FileWriter {
+    block_size: BlockSize,
+    block_count: BlockCardinality,
+    root_path: PathBuf,
 }
 
-impl MetaData {
-    fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
-    }
-
-    fn deserialize<T>(bytes: T) -> bincode::Result<Self>
+impl BlockWriter for FileWriter {
+    /// This exists because we need a means of bootstrapping the creation of metadata on a file-
+    /// based block storage.
+    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, failure::Error>
     where
         T: AsRef<[u8]>,
     {
-        bincode::deserialize(bytes.as_ref())
+        let data = data.as_ref();
+
+        if bn > self.block_count {
+            Err(format_err!("request for bogus block {}", bn))
+        } else {
+            if data.len() > self.block_size as usize {
+                return Err(format_err!("data is larger than block size"));
+            }
+
+            let path = path_for_block(&self.root_path, bn);
+            fs::write(path, data)?;
+
+            debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
+            trace!("{:#?}", data);
+            Ok(data.len() as BlockSizeType)
+        }
     }
 }
 
-const META_FILE: &str = "metadata";
+/// Internal-only block reading implementation.
+///
+struct FileReader {
+    root_path: PathBuf,
+}
+
+impl BlockReader for FileReader {
+    /// This exists because we need a means of loading metadata from a file-based block storage. We
+    /// aren't doing any sanity checking on the block number, or block size, since we don't yet have
+    ///  that information.
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
+        let path = path_for_block(&self.root_path, bn);
+        debug!("reading block from {:?}", path);
+        let data = fs::read(path)?;
+        debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
+        trace!("{:#?}", data);
+
+        Ok(data)
+    }
+}
+
+/// It'd be cool to impl From<BlockNumber> for PathBuf
+fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
+    let mut path = root.clone();
+    let mut stack = vec![];
+    let mut blk = block;
+    while blk > 0xf {
+        let nibble = blk & 0xf;
+        stack.push(nibble);
+        blk >>= 4;
+    }
+    // Pulling this out of the loop avoids an issue with the `0` block.
+    path.push(format!("{:x?}", blk));
+
+    while stack.len() > 0 {
+        path.push(format!("{:x?}", stack.pop().unwrap()));
+    }
+    path.set_extension(BLOCK_EXT);
+    trace!("path for block {:x?}: {:?}", block, path);
+    path
+}
 
 /// File-based Block Storage
 ///
@@ -59,31 +110,40 @@ pub struct FileStore {
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
+    map: BlockMap,
 }
 
 impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub fn new<P, BS>(path: P, size: BS, count: BlockCardinality) -> Result<Self, Error>
+    pub fn new<P>(path: P, mut map: BlockMap) -> Result<Self, failure::Error>
     where
         P: AsRef<Path>,
-        BS: Into<BlockSize>,
     {
         let root_path: PathBuf = path.as_ref().into();
-        let size = size.into();
-        FileStore::init(&root_path, size, count)?;
+        FileStore::init(&root_path, map.block_size(), map.block_count())?;
+
+        let mut writer = FileWriter {
+            block_size: map.block_size(),
+            block_count: map.block_count(),
+            root_path: root_path.clone(),
+        };
+
+        map.serialize(&mut writer)?;
 
         Ok(FileStore {
-            block_size: size,
-            block_count: count,
+            block_size: map.block_size(),
+            block_count: map.block_count(),
             root_path,
+            map: map,
         })
     }
 
     /// Consistency Check
     ///
-    pub fn check<P>(path: P) -> Result<(), Error>
+    /// FIXME: Actually check consistency?
+    pub fn check<P>(path: P) -> Result<(), failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -100,23 +160,30 @@ impl FileStore {
     /// Construct Existing
     ///
     /// Load an existing file store from disk.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, failure::Error> {
         let root_path: PathBuf = path.as_ref().into();
-        let mut path: PathBuf = path.as_ref().into();
-        path.push(META_FILE);
 
-        let metadata = MetaData::deserialize(fs::read(path)?)?;
+        let reader = FileReader {
+            root_path: root_path.clone(),
+        };
+
+        let metadata = BlockMap::deserialize(&reader)?;
 
         Ok(FileStore {
-            block_size: metadata.size,
-            block_count: metadata.count,
+            block_size: metadata.block_size(),
+            block_count: metadata.block_count(),
             root_path,
+            map: metadata,
         })
     }
 
-    fn init(path: &PathBuf, size: BlockSize, count: BlockCardinality) -> Result<(), Error> {
+    fn init(
+        path: &PathBuf,
+        size: BlockSize,
+        count: BlockCardinality,
+    ) -> Result<(), failure::Error> {
         debug!(
-            "Creating new file-based storage at {:?} with {} blocks having block size {:?}.",
+            "creating new file-based storage at {:?} with {} blocks having block size {:?}",
             path, count, size
         );
         /// Little function that calls itself to create the directories in which we store our
@@ -127,7 +194,6 @@ impl FileStore {
                 let count = count - 1;
                 for i in 0x0..0x10 {
                     let mut path = root.clone();
-                    // path.push(fmt::format(format_args!("{:x?}", i)));
                     path.push(format!("{:x?}", i));
                     make_dirs(&path, count)?;
                 }
@@ -153,38 +219,42 @@ impl FileStore {
 
         // Now allocate the blocks.
         for block in 0..count {
-            let path = FileStore::path_for_block(&path, block);
+            let path = path_for_block(&path, block);
             trace!("creating block file {:}", block);
             fs::File::create(path)
-                .unwrap_or_else(|_| panic!("Unable to create file for block {}.", block));
+                .unwrap_or_else(|_| panic!("unable to create file for block {}.", block));
         }
-
-        // Finally, save the metadata
-        let metadata = MetaData { size, count };
-        let mut metadata_file = path.clone();
-        metadata_file.push(META_FILE);
-        fs::write(metadata_file, metadata.serialize()).unwrap();
 
         Ok(())
     }
+}
 
-    /// It'd be cool to impl From<BlockNumber> for PathBuf
-    fn path_for_block(root: &PathBuf, mut block: BlockNumber) -> PathBuf {
-        let mut path = root.clone();
-        while block > 0xf {
-            let nibble = block & 0xf;
-            // path.push(fmt::format(format_args!("{:x?}", nibble)));
-            path.push(format!("{:x?}", nibble));
-            block >>= 4;
-        }
-        // Pulling this out of the loop avoids an issue with the `0` block.
-        path.push(fmt::format(format_args!("{:x?}", block)));
-        path.set_extension(BLOCK_EXT);
-        path
+impl Drop for FileStore {
+    fn drop(&mut self) {
+        debug!("writing BlockMap");
+        let mut writer = FileWriter {
+            block_size: self.block_size,
+            block_count: self.block_count,
+            root_path: self.root_path.clone(),
+        };
+
+        debug!("dropping FileStore");
+        match self.map.serialize(&mut writer) {
+            Ok(_) => debug!("dropped FileStore"),
+            Err(e) => error!("error dropping FileStore: {}", e),
+        };
     }
 }
 
 impl BlockStorage for FileStore {
+    fn metadata(&self) -> &BlockMap {
+        &self.map
+    }
+
+    fn metadata_mut(&mut self) -> &mut BlockMap {
+        &mut self.map
+    }
+
     fn block_count(&self) -> BlockCardinality {
         self.block_count
     }
@@ -192,10 +262,24 @@ impl BlockStorage for FileStore {
     fn block_size(&self) -> BlockSize {
         self.block_size
     }
+}
 
-    fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, Error>
+// impl<'a, T> BlockWriter for &'a mut T
+// where
+//     T: BlockWriter,
+// {
+//     fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, Error>
+//     where
+//         D: AsRef<[u8]>,
+//     {
+//         self.write_block(bn, data.as_ref())
+//     }
+// }
+
+impl BlockWriter for FileStore {
+    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, failure::Error>
     where
-        T: AsRef<[u8]>,
+        D: AsRef<[u8]>,
     {
         let data = data.as_ref();
 
@@ -207,21 +291,26 @@ impl BlockStorage for FileStore {
                 return Err(format_err!("data is larger than block size"));
             }
 
-            let path = FileStore::path_for_block(&self.root_path, bn);
+            let path = path_for_block(&self.root_path, bn);
             fs::write(path, data)?;
 
-            trace!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
+            debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
+            trace!("{:?}", data);
             Ok(data.len() as BlockSizeType)
         }
     }
+}
 
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, Error> {
+impl BlockReader for FileStore {
+    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {
-            let path = FileStore::path_for_block(&self.root_path, bn);
+            let path = path_for_block(&self.root_path, bn);
+            debug!("reading block from {:?}", path);
             let data = fs::read(path)?;
-            trace!("read {} bytes from block 0x{:x?}", data.len(), bn);
+            debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
+            trace!("{:?}", data);
 
             Ok(data)
         }
@@ -230,7 +319,9 @@ impl BlockStorage for FileStore {
 
 #[cfg(test)]
 mod test {
-    use hex_literal::{hex, hex_impl};
+    use hex_literal::hex;
+
+    use crate::UfsUuid;
 
     use super::*;
 
@@ -241,16 +332,18 @@ mod test {
         let test_dir = [TEST_ROOT, "bad_block_number"].concat();
         let data = [0x0; BlockSize::FiveTwelve as usize];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 3).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3),
+        )
+        .unwrap();
 
-        assert_eq!(
+        assert!(
             fs.read_block(7).is_err(),
-            true,
             "read should fail with block number out of range"
         );
-        assert_eq!(
+        assert!(
             fs.write_block(7, &data[..]).is_err(),
-            true,
             "write should fail with block number out of range"
         );
     }
@@ -260,8 +353,12 @@ mod test {
         let test_dir = [TEST_ROOT, "block_too_bukoo"].concat();
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::TenTwentyFour, 0x10).unwrap();
-        assert_eq!(fs.write_block(1, &data[..]).is_err(), true);
+        let mut fs = FileStore::new(
+            &test_dir,
+            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
+        assert!(fs.write_block(1, &data[..]).is_err());
     }
 
     #[test]
@@ -275,7 +372,11 @@ mod test {
         );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
 
         let block = fs.write_block(7, &data[..]).unwrap();
 
@@ -300,7 +401,11 @@ mod test {
         );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 0x10).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+        )
+        .unwrap();
 
         let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
         expected_block[..data.len()].copy_from_slice(&data[..]);
@@ -321,7 +426,12 @@ mod test {
     fn construction_sanity() {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let fs = FileStore::new(&test_dir, BlockSize::FiveTwelve, 4).unwrap();
+        let mut fs = FileStore::new(
+            &test_dir,
+            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 4),
+        )
+        .unwrap();
+
         assert_eq!(
             fs.block_size() as usize,
             512,

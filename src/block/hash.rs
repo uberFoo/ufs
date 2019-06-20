@@ -9,8 +9,26 @@ pub(crate) struct BlockHash {
 }
 
 impl BlockHash {
-    pub(crate) fn new(data: &[u8]) -> Self {
-        BlockHash::from(digest::digest(&digest::SHA256, &data[..]).as_ref())
+    pub(in crate::block) fn new<T>(data: T) -> Self
+    where
+        T: AsRef<[u8]>,
+    {
+        BlockHash::from(digest::digest(&digest::SHA256, data.as_ref()).as_ref())
+    }
+
+    /// Validate a hash against a buffer of bytes
+    ///
+    /// # Examples
+    /// The following is ignored because only externally visible items can run doctests. 😖
+    /// ```ignore
+    /// let hash = BlockHash::new(b"uberfoo");
+    /// assert_eq!(true, hash.validate(b"uberfoo"));
+    /// ```
+    pub(in crate::block) fn validate<T>(&self, data: T) -> bool
+    where
+        T: AsRef<[u8]>,
+    {
+        self == &BlockHash::new(data.as_ref())
     }
 }
 
@@ -35,5 +53,16 @@ impl fmt::Debug for BlockHash {
         }
         // write!(f, "{:?}", self.0);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn name() {
+        let hash = BlockHash::new(b"uberfoo");
+        assert_eq!(true, hash.validate(b"uberfoo"));
     }
 }
