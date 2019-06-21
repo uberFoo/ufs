@@ -19,7 +19,9 @@ use crate::{
 /// This sits atop a BlockStorage and provides higher-level operations over blocks.  For example,
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
 /// hashes are calculated when writing, and validated when reading, a block.  Data written across
-/// multiple blocks are stored as a [BlockList], etc.
+/// multiple blocks are stored using the [`BlockMap`], etc.
+///
+/// [`BlockMap`]: crate::block::map::BlockMap
 #[derive(Debug, PartialEq)]
 pub struct BlockManager<BS>
 where

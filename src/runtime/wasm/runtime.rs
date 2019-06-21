@@ -23,6 +23,7 @@ extern "C" {
     pub fn handle_file_write(path: &str, data: &[u8]);
 }
 
+#[allow(dead_code)]
 pub fn print(msg: &str) {
     let msg = Box::into_raw(Box::new(msg));
     unsafe { __rust_print(msg as u32) };
@@ -30,6 +31,7 @@ pub fn print(msg: &str) {
 
 /// This method is invoked by the user program to create a file in the file system. It converts the
 /// string into a pointer and length, which are passed across the WASM boundary.
+#[allow(dead_code)]
 pub fn create_file(path: &str) -> Option<FileHandle> {
     let ptr = Box::into_raw(Box::new(path));
     let maybe_handle = unsafe { __rust_create_file(ptr as u32) };
@@ -41,12 +43,14 @@ pub fn create_file(path: &str) -> Option<FileHandle> {
     }
 }
 
+#[allow(dead_code)]
 pub fn close_file(handle: FileHandle) {
     print(&format!("calling `__rust_close_file({})`", handle));
     unsafe { __rust_close_file(handle) };
 }
 
 // FIXME: not returning Result<usize, failure::Error>, or similar.
+#[allow(dead_code)]
 pub fn write_file(handle: FileHandle, data: &[u8]) {
     let ptr = Box::into_raw(Box::new(data));
     unsafe { __rust_write_file(handle, ptr as u32) };

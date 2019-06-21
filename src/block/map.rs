@@ -42,12 +42,26 @@ struct BlockMapWrapper {
 /// type may include metadata about the underlying block.  For instance, the hash value of the
 /// block, and the next block to come after it.
 pub struct BlockMap {
+    /// The UUID of this file system
+    ///
     id: UfsUuid,
+    /// The size of each block, in bytes
+    ///
     size: BlockSize,
+    /// The number of blocks in the file system
+    ///
     count: BlockCardinality,
+    /// A list of blocks that contain metadata
+    ///
     block_map_metadata_blocks: Vec<BlockNumber>,
+    /// The list of free blocks
+    ///
     free_blocks: VecDeque<BlockNumber>,
+    /// The first block in the block map -- it contains the first metadata block
+    ///
     root_block: Option<BlockNumber>,
+    /// The map itself
+    ///
     map: Vec<Block>,
 }
 
@@ -67,22 +81,27 @@ impl BlockMap {
         }
     }
 
+    /// Return the file system id
     pub(in crate::block) fn id(&self) -> &UfsUuid {
         &self.id
     }
 
+    /// Return the file system block size, as a `BlockSize` struct
     pub(in crate::block) fn block_size(&self) -> BlockSize {
         self.size
     }
 
+    /// Return the total number of blocks in the file system
     pub(in crate::block) fn block_count(&self) -> BlockCardinality {
         self.count
     }
 
+    /// Return a reference to the list of free blocks in the file system
     pub(crate) fn free_blocks(&self) -> &VecDeque<BlockNumber> {
         &self.free_blocks
     }
 
+    /// Return a mutable reference to the list of free blocks in the file system
     pub(crate) fn free_blocks_mut(&mut self) -> &mut VecDeque<BlockNumber> {
         &mut self.free_blocks
     }

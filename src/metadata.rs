@@ -1,6 +1,13 @@
-//! Metadata
+//! File System Metadata
 //!
-//! Version one is a hashmap that fits in a single block, and lives at Block 0.
+//! Metadata is stored in blocks, which are managed by the [`BlockMap`]. The file system begins life
+//! with a root directory, stored at block 0. As the file system mutates, changes are stored in
+//! memory.  When unmounted the [`BlockManager`] writes the metadata to the `BlockMap` via a
+//! [`BlockWrapper`], and the metadata is written to blocks in the `BlockMap`.
+//!
+//! Metadata is versioned. Each time a file is written, a new copy in created.
+//!
+//! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -24,14 +31,26 @@ pub(crate) type FileSize = u64;
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
+/// UFS internal definition of a File
+///
+/// Here we associate a path with a particular file, and it's version.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct File {
+    /// Path to file
+    ///
     pub path: PathBuf,
+    /// Version of the file
+    ///
     pub version: FileVersion,
+    /// The file wrapper, itself
+    ///
     pub file: FileMetadata,
 }
 
+/// Entries in [`DirectoryMetadata`] structures
+///
+/// A directory may contain files, or other directories. Here we capture that dualism.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum DirectoryEntry {
@@ -39,9 +58,18 @@ pub(crate) enum DirectoryEntry {
     File(FileMetadata),
 }
 
+/// Metadata for Directories
+///
+/// This struct stores all the various necessary time stamps, as well as a map of files (and
+/// other directories) that it contains. These are stored as [`DirectoryEntry`] structures.
+///
+/// FIXME: The directory data is not versioned. What happens to deleted files?  What do we do when
+/// a directory goes away?
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct DirectoryMetadata {
+    /// A flag indicating that the directory's data has been modified and needs to be written.
+    ///
     #[serde(skip)]
     dirty: bool,
     /// Time directory was created (crtime)
@@ -57,6 +85,7 @@ pub(crate) struct DirectoryMetadata {
     /// Time the directory was last accessed (atime)
     ///
     access_time: UfsTime,
+    /// HashMap of directory contents, from name to `DirectoryEntry`
     entries: HashMap<String, DirectoryEntry>,
 }
 
@@ -75,7 +104,6 @@ impl DirectoryMetadata {
     }
 
     /// Create a new file in this directory
-    ///
     pub(crate) fn new_file(&mut self, name: &str) -> File {
         let file = FileMetadata::new();
         self.entries
@@ -90,7 +118,6 @@ impl DirectoryMetadata {
     }
 
     /// Retrieve a file by name from this directory
-    ///
     pub(crate) fn get_file<P>(&self, path: P) -> Option<File>
     where
         P: AsRef<Path>,
@@ -125,7 +152,6 @@ impl DirectoryMetadata {
     /// Update a file under this directory
     ///
     /// The current version is committed, and written if necessary.
-    ///
     pub(crate) fn update_file(&mut self, file: File) {
         if let Some(file_name) = file.path.file_name() {
             if let Some(name) = file_name.to_str() {
@@ -142,14 +168,17 @@ impl DirectoryMetadata {
         }
     }
 
+    /// Return a HashMap from entry name to DirectoryEntry structures
     pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
         &self.entries
     }
 
+    /// Return the `write_time` timestamp
     pub(crate) fn write_time(&self) -> UfsTime {
         self.write_time
     }
 
+    /// Return true if the directory needs to be serialized
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }
@@ -185,6 +214,11 @@ impl MetadataDeserialize for DirectoryMetadata {
     }
 }
 
+/// File storage
+///
+/// Files are just lists of blocks (data) with some metadata associated. In UFS, files are
+/// versioned, and so to must the metadata of each file. Thus, the top-level file structure is a
+/// list of [`FileVersion`]s.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileMetadata {
@@ -193,20 +227,27 @@ pub(crate) struct FileMetadata {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FileMetadata {
+    /// Create a new `FileMetadata`
+    ///
+    /// When a new file is created, a default, empty, [`FileVersion`] is created. This is mostly so
+    /// that we capture a time stamp of when the file was created.
     pub(crate) fn new() -> Self {
         FileMetadata {
             versions: vec![FileVersion::new()],
         }
     }
 
+    /// Return the latest version number of the file.
     pub(crate) fn version(&self) -> usize {
         self.versions.len() - 1
     }
 
+    /// Return a list of all of the versions of the file.
     pub(crate) fn versions(&self) -> &Vec<FileVersion> {
         &self.versions
     }
 
+    /// Return the latest `FileVersion` of the file.
     pub(crate) fn get_current_version(&self) -> FileVersion {
         let version = self.versions.last().unwrap().clone();
         debug!("-------");
@@ -215,6 +256,7 @@ impl FileMetadata {
         version
     }
 
+    /// Commit a new version of the file.
     pub(crate) fn commit_version(&mut self, mut version: FileVersion) {
         if version.dirty {
             debug!("-------");
@@ -224,14 +266,21 @@ impl FileMetadata {
         }
     }
 
+    /// Return the `write_time` timestamp.
     pub(crate) fn write_time(&self) -> UfsTime {
         self.versions[0].write_time()
     }
 }
 
+/// The meat of a file
+///
+/// This is where metadata and block numbers are actually stored. These are cheap: they just have a
+/// few time stamps, and a list of `BlockNumber`s that comprise the file.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct FileVersion {
+    /// A flag indicating that the directory's data has been modified and needs to be written.
+    ///
     #[serde(skip)]
     dirty: bool,
     /// Time file was created (crtime)
@@ -257,6 +306,9 @@ pub(crate) struct FileVersion {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FileVersion {
+    /// Create a new `FileVersion`
+    ///
+    /// An empty file is just timestamps. The size of the file is 0, and it contains no blocks.
     pub(crate) fn new() -> Self {
         let time = UfsTime::now();
         FileVersion {
@@ -270,18 +322,25 @@ impl FileVersion {
         }
     }
 
+    /// Return the size of the file, in bytes
     pub(crate) fn size(&self) -> FileSize {
         self.size
     }
 
+    /// Return the size of the file, in whole blocks
     pub(crate) fn block_count(&self) -> usize {
         self.blocks.len()
     }
 
+    /// Return a reference to the list of blocks that comprise the file
     pub(crate) fn blocks(&self) -> &Vec<BlockNumber> {
         &self.blocks
     }
 
+    /// Append a block
+    ///
+    /// When a file is written to, it's done over time -- not all at once. Thus as blocks are
+    /// filled, they are added, one at a time, to the list of blocks.
     pub(crate) fn append_block(&mut self, block: &Block) {
         self.dirty = true;
         self.blocks.push(block.number());
@@ -290,6 +349,7 @@ impl FileVersion {
         debug!("new size {}", self.size);
     }
 
+    /// Return the `write_time` timestamp
     pub(crate) fn write_time(&self) -> UfsTime {
         self.write_time
     }

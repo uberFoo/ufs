@@ -19,13 +19,26 @@ use crate::metadata::{DirectoryEntry, File, FileHandle, FileSize, FileVersion};
 use crate::runtime::{init_runtime, FileSystemOperator, Process, UfsMessage};
 use crate::UfsUuid;
 
+/// File mode for `open` call.
+///
 #[derive(Debug)]
 pub enum OpenFileMode {
+    /// Open file for reading
+    ///
     Read,
+    /// Open file for writing
+    ///
     Write,
+    /// Open file for reading and writing
+    ///
     ReadWrite,
 }
 
+/// File System integration with WASM interpreter
+///
+/// This struct encapsulates both `UberFileSystem` and instances of [`wasmi`]. The former is wrapped
+/// in a `Mutex`, wrapped in an `Arc`, which invokes callbacks on the former. The wasmi instances
+/// may also make calls into the file system.
 pub struct UfsMounter<B: BlockStorage + 'static> {
     // FIXME: I think that the Mutex can be an RwLock...
     inner: Arc<Mutex<UberFileSystem<B>>>,
@@ -33,6 +46,8 @@ pub struct UfsMounter<B: BlockStorage + 'static> {
 }
 
 impl<B: BlockStorage> UfsMounter<B> {
+    /// Constructor
+    ///
     pub fn new(ufs: UberFileSystem<B>) -> Self {
         let mut new_ufs = UfsMounter {
             inner: Arc::new(Mutex::new(ufs)),
