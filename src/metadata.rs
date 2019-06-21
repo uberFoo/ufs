@@ -53,8 +53,12 @@ pub(crate) struct File {
 /// A directory may contain files, or other directories. Here we capture that dualism.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) enum DirectoryEntry {
+pub enum DirectoryEntry {
+    /// A directory
+    ///
     Directory(DirectoryMetadata),
+    /// A file
+    ///
     File(FileMetadata),
 }
 
@@ -67,7 +71,7 @@ pub(crate) enum DirectoryEntry {
 /// a directory goes away?
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct DirectoryMetadata {
+pub struct DirectoryMetadata {
     /// A flag indicating that the directory's data has been modified and needs to be written.
     ///
     #[serde(skip)]
@@ -153,15 +157,17 @@ impl DirectoryMetadata {
     ///
     /// The current version is committed, and written if necessary.
     pub(crate) fn update_file(&mut self, file: File) {
-        if let Some(file_name) = file.path.file_name() {
-            if let Some(name) = file_name.to_str() {
-                if let Some(ref mut entry) = self.entries.get_mut(name) {
-                    match entry {
-                        DirectoryEntry::File(ref mut my_file) => {
-                            self.dirty = true;
-                            my_file.commit_version(file.version)
+        if file.version.dirty {
+            if let Some(file_name) = file.path.file_name() {
+                if let Some(name) = file_name.to_str() {
+                    if let Some(ref mut entry) = self.entries.get_mut(name) {
+                        match entry {
+                            DirectoryEntry::File(ref mut my_file) => {
+                                self.dirty = true;
+                                my_file.commit_version(file.version)
+                            }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
                     }
                 }
             }
@@ -221,7 +227,7 @@ impl MetadataDeserialize for DirectoryMetadata {
 /// list of [`FileVersion`]s.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct FileMetadata {
+pub struct FileMetadata {
     versions: Vec<FileVersion>,
 }
 
@@ -266,9 +272,14 @@ impl FileMetadata {
         }
     }
 
-    /// Return the `write_time` timestamp.
+    /// Return the `write_time` timestamp of the latest version.
     pub(crate) fn write_time(&self) -> UfsTime {
-        self.versions[0].write_time()
+        self.versions.last().unwrap().write_time()
+    }
+
+    /// Return the size of the latest version.
+    pub(crate) fn size(&self) -> FileSize {
+        self.versions.last().unwrap().size()
     }
 }
 
@@ -278,7 +289,7 @@ impl FileMetadata {
 /// few time stamps, and a list of `BlockNumber`s that comprise the file.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct FileVersion {
+pub struct FileVersion {
     /// A flag indicating that the directory's data has been modified and needs to be written.
     ///
     #[serde(skip)]
