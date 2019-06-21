@@ -17,6 +17,7 @@ use time::Timespec;
 
 use crate::{
     block::{BlockCardinality, FileStore},
+    metadata::DirectoryEntry,
     OpenFileMode, UfsMounter,
 };
 
@@ -32,20 +33,11 @@ struct Inode {
     name: String,
     time: Timespec,
     size: Option<u64>,
+    kind: FileType,
 }
 
 impl Inode {
-    fn kind(&self) -> FileType {
-        // Ugly, but ok for first attempt.
-        match self.number {
-            1 => FileType::Directory,
-            _ => FileType::RegularFile,
-        }
-    }
-
     fn file_attr(&self) -> FileAttr {
-        let kind = self.kind();
-
         match self.size {
             Some(s) => FileAttr {
                 ino: self.number,
@@ -55,7 +47,7 @@ impl Inode {
                 mtime: self.time,
                 ctime: self.time,
                 crtime: self.time,
-                kind,
+                kind: self.kind,
                 perm: 0o644,
                 nlink: 1,
                 uid: 501,
@@ -71,7 +63,7 @@ impl Inode {
                 mtime: self.time,
                 ctime: self.time,
                 crtime: self.time,
-                kind,
+                kind: self.kind,
                 perm: 0o755,
                 nlink: 2,
                 uid: 501,
@@ -83,7 +75,7 @@ impl Inode {
     }
 }
 
-/// FUSE intergation
+/// FUSE integration
 ///
 pub struct UberFSFuse {
     file_system: UfsMounter<FileStore>,
@@ -110,12 +102,14 @@ impl UberFSFuse {
             number: 0,
             time: TIME,
             size: None,
+            kind: FileType::Directory,
         });
         fs.inodes.push(Inode {
             name: "root".to_string(),
             number: 1,
             time: TIME,
             size: None,
+            kind: FileType::Directory,
         });
 
         fs
@@ -130,7 +124,11 @@ impl UberFSFuse {
         let mut inodes = vec![];
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        for (name, size, time) in guard.list_files(Path::new("/")) {
+        for (name, entry) in guard.list_files(Path::new("/")) {
+            let (kind, size, time) = match entry {
+                DirectoryEntry::Directory(d) => (FileType::Directory, 0, d.write_time().into()),
+                DirectoryEntry::File(f) => (FileType::RegularFile, f.size(), f.write_time().into()),
+            };
             self.files.entry(name.clone()).or_insert_with(|| {
                 number += 1;
                 let inode = Inode {
@@ -138,6 +136,7 @@ impl UberFSFuse {
                     name: name.clone(),
                     time,
                     size: Some(size),
+                    kind,
                 };
                 inodes.push(inode);
                 number
@@ -198,6 +197,7 @@ impl Filesystem for UberFSFuse {
     }
 
     // Return directory entries by name
+    // parent is the parent directory inode
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         trace!("lookup parent: {}, name: {:?}", parent, name);
 
@@ -258,10 +258,10 @@ impl Filesystem for UberFSFuse {
                         "adding to reply: inode {}, offset {}, kind {:?}, name {}",
                         inode.number,
                         i + 1,
-                        inode.kind(),
+                        inode.kind,
                         name
                     );
-                    reply.add(inode.number, (i + 1) as i64, inode.kind(), name);
+                    reply.add(inode.number, (i + 1) as i64, inode.kind, name);
                 } else {
                     reply.error(ENOENT);
                     return;
@@ -300,7 +300,23 @@ impl Filesystem for UberFSFuse {
         }
     }
 
+    // Make a new directory
+    // parent is the inode of the parent directory
+    // fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, _mode: u32, reply: ReplyEntry) {
+    //     debug!("--------");
+    //     debug!(
+    //         "`mkdir`: {:?}, parent: {}, mode: {:#05o}",
+    //         name, parent, _mode
+    //     );
+    //     if parent == 1 {
+    //         reply.entry(&TTL, &inode.file_attr(), 0);
+    //     } else {
+    //         reply.error(ENOENT);
+    //     }
+    // }
+
     // Create and apen a file
+    // parent is the inode of the parent directory
     fn create(
         &mut self,
         _req: &Request,
@@ -310,7 +326,7 @@ impl Filesystem for UberFSFuse {
         flags: u32,
         reply: ReplyCreate,
     ) {
-        debug!("-------");
+        debug!("--------");
         debug!(
             "`create`: {:?}, parent: {}, mode: {:#05o}, flags: {:#x}",
             name, parent, _mode, flags
@@ -330,6 +346,7 @@ impl Filesystem for UberFSFuse {
                 number,
                 time,
                 size: None,
+                kind: FileType::RegularFile,
             };
 
             reply.created(&TTL, &inode.file_attr(), 0, fh, flags);

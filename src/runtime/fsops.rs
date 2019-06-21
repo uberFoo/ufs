@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -7,12 +8,12 @@ use ::time::Timespec;
 
 use crate::{
     block::BlockStorage,
-    metadata::{FileHandle, FileSize},
+    metadata::{DirectoryEntry, FileHandle, FileSize},
     OpenFileMode, UberFileSystem,
 };
 
 pub trait FileSystemOps: Send {
-    fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)>;
+    fn list_files(&self, path: &Path) -> HashMap<String, DirectoryEntry>;
     fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)>;
     fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle>;
     fn close_file(&mut self, handle: FileHandle);
@@ -36,9 +37,9 @@ impl<B: BlockStorage> FileSystemOperator<B> {
 }
 
 impl<B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
-    fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)> {
+    fn list_files(&self, path: &Path) -> HashMap<String, DirectoryEntry> {
         let guard = self.inner.lock().expect("poisoned ufs lock");
-        guard.list_files(path)
+        guard.list_files(path).clone()
     }
 
     fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {

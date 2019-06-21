@@ -182,9 +182,10 @@ impl<B: BlockStorage> UberFileSystem<B> {
     /// contained within the specified directory.
     ///
     /// TODO: Verify that the path exists, and do something with it!
-    pub(crate) fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)> {
+    pub(crate) fn list_files(&self, path: &Path) -> &HashMap<String, DirectoryEntry> {
         debug!("-------");
         debug!("`list_files`: {:?}", path);
+        self.block_manager.root_dir().entries()
         // let mut files = Vec::new();
         // for (name, entry) in self.block_manager.root_dir().entries() {
         //     match entry {
@@ -208,24 +209,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         //         }
         //     }
         // }
-
-        // files
-        self.block_manager
-            .root_dir()
-            .entries()
-            .iter()
-            .map(|(name, e)| match e {
-                DirectoryEntry::Directory(d) => {
-                    debug!("dir: {}", name);
-                    (name.clone(), 0, d.write_time().into())
-                }
-                DirectoryEntry::File(f) => {
-                    let size = f.get_current_version().size();
-                    debug!("file: {}, size: {}", name, size);
-                    (name.clone(), size, f.write_time().into())
-                }
-            })
-            .collect()
     }
 
     /// Create a file
