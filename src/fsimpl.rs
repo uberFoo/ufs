@@ -211,6 +211,16 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // }
     }
 
+    /// Create a directory
+    ///
+    pub(crate) fn create_directory(&mut self, path &Path) -> Option<(FileHandle, Timespec)> {
+        if let Some(ostr_name) = path.file_name() {
+            if let Some(name) = ostr_name.to_str() {
+                let
+            }
+        }
+    }
+
     /// Create a file
     ///
     pub(crate) fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {

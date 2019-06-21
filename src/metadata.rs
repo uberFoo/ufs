@@ -107,6 +107,11 @@ impl DirectoryMetadata {
         }
     }
 
+    /// Create a new directory in this directory
+    pub(crate) fn new_directory(&mut self, name &str) -> DirectoryMetadata {
+
+    }
+
     /// Create a new file in this directory
     pub(crate) fn new_file(&mut self, name: &str) -> File {
         let file = FileMetadata::new();

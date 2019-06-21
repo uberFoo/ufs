@@ -315,7 +315,7 @@ impl Filesystem for UberFSFuse {
     //     }
     // }
 
-    // Create and apen a file
+    // Create and open a file
     // parent is the inode of the parent directory
     fn create(
         &mut self,
