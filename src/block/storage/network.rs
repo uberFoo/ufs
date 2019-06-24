@@ -6,7 +6,7 @@ use failure::format_err;
 use log::trace;
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
-use crate::block::{BlockNumber, BlockReader, BlockSizeType, BlockStorage, BlockWriter};
+use crate::block::{map::BlockMap, BlockNumber, BlockReader, BlockSizeType, BlockStorage, BlockWriter};
 
 struct NetworkReader {
     url: Url,
@@ -26,9 +26,14 @@ impl BlockReader for NetworkReader {
     }
 }
 
+/// Network-based Block Storage
+///
 pub struct NetworkStore {
     url: Url,
     client: Client,
+    block_size: BlockSize,
+    block_count: BlockCardinality,
+    map: BlockMap,
 }
 
 impl NetworkStore {
@@ -36,6 +41,12 @@ impl NetworkStore {
         match url.into_url() {
             Ok(url) => {
                 let client = Client::builder().gzip(true).build()?;
+
+                let reader = NetworkReader {
+                    url:
+                }
+                let metadata = BlockMap::deserialize()
+
                 Ok(NetworkStore { url, client })
             }
             Err(e) => Err(format_err!("Bad URL: {}", e)),
@@ -43,9 +54,23 @@ impl NetworkStore {
     }
 }
 
-// impl BlockStorage for NetworkStore {
+impl BlockStorage for NetworkStore {
+    fn metadata(&self) -> &BlockMap {
+        &self.map
+    }
 
-// }
+    fn metadata_mut(&mut self) -> &mut BlockMap {
+        &mut self.map
+    }
+
+    fn block_count(&self) -> BlockCardinality {
+        self.block_count
+    }
+
+    fn block_size(&self) -> BlockSize {
+        self.block_size
+    }
+}
 
 impl BlockWriter for NetworkStore {
     fn write_block<T>(&mut self, bn: BlockNumber, data: T) -> Result<BlockSizeType, failure::Error>

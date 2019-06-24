@@ -13,7 +13,7 @@ use log::{debug, error, trace, warn};
 
 use crate::block::{
     manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
-    MemoryStore,
+    MemoryStore, NetworkStore
 };
 use crate::metadata::{
     Directory, DirectoryEntry, DirectoryMetadata, File, FileHandle, FileSize, FileVersion,
@@ -156,19 +156,20 @@ impl UberFileSystem<FileStore> {
     }
 }
 
-// impl UberFileSystem<NetworkStore> {
-//     pub fn new_networked(url: Url) -> Result<Self, failure::Error> {
-//         let net_store = NetworkStore::new(url)?;
-//         let block_manager = BlockManager::load(net_store)?;
+impl UberFileSystem<NetworkStore> {
+    pub fn new_networked(url: Url) -> Result<Self, failure::Error> {
+        let net_store = NetworkStore::new(url)?;
+        let block_manager = BlockManager::load(net_store)?;
 
-//         Ok(UberFileSystem {
-//             block_manager,
-//             open_files: HashMap::new(),
-//             open_file_counter: 0,
-//             listeners: vec![],
-//         })
-//     }
-// }
+        Ok(UberFileSystem {
+            block_manager,
+            open_files: HashMap::new(),
+            open_dirs: HashMap::new(),
+            open_file_counter: 0,
+            listeners: vec![],
+        })
+    }
+}
 
 impl<B: BlockStorage> UberFileSystem<B> {
     fn notify_listeners(&self, msg: UfsMessage) {
