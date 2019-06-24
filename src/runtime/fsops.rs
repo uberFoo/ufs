@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub trait FileSystemOps: Send {
-    fn list_files(&self, path: &Path) -> HashMap<String, DirectoryEntry>;
+    fn list_files(&self, handle: FileHandle) -> HashMap<String, DirectoryEntry>;
     fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)>;
     fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle>;
     fn close_file(&mut self, handle: FileHandle);
@@ -37,9 +37,9 @@ impl<B: BlockStorage> FileSystemOperator<B> {
 }
 
 impl<B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
-    fn list_files(&self, path: &Path) -> HashMap<String, DirectoryEntry> {
+    fn list_files(&self, handle: FileHandle) -> HashMap<String, DirectoryEntry> {
         let guard = self.inner.lock().expect("poisoned ufs lock");
-        guard.list_files(path).clone()
+        guard.list_files(handle).unwrap().clone()
     }
 
     fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {

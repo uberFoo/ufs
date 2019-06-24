@@ -38,7 +38,7 @@ where
     /// Layer metadata atop a block storage
     pub fn new(store: BS) -> Self {
         BlockManager {
-            root_dir: DirectoryMetadata::new_root(),
+            root_dir: DirectoryMetadata::new(),
             store,
         }
     }

@@ -10,11 +10,11 @@
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::{Component, Components, Path, PathBuf},
 };
 
 use failure::format_err;
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use serde_derive::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -40,12 +40,23 @@ pub(crate) struct File {
     /// Path to file
     ///
     pub path: PathBuf,
-    /// Version of the file
-    ///
-    pub version: FileVersion,
     /// The file wrapper, itself
     ///
     pub file: FileMetadata,
+}
+
+/// UFS internal definition of a directory
+///
+/// This struct associates a path with a directory.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Directory {
+    /// Path to the directory
+    ///
+    pub path: PathBuf,
+    /// The directory wrapper
+    ///
+    pub directory: DirectoryMetadata,
 }
 
 /// Entries in [`DirectoryMetadata`] structures
@@ -95,7 +106,7 @@ pub struct DirectoryMetadata {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
-    pub(crate) fn new_root() -> Self {
+    pub(crate) fn new() -> Self {
         let time = UfsTime::now();
         DirectoryMetadata {
             dirty: true,
@@ -108,40 +119,250 @@ impl DirectoryMetadata {
     }
 
     /// Create a new directory in this directory
-    pub(crate) fn new_directory(&mut self, name &str) -> DirectoryMetadata {
+    /// FIXME: This should return a Result maybe?
+    pub(crate) fn new_directory<P>(&mut self, path: P) -> Option<Directory>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("--------");
+        debug!("`new_directory`: {:?}", path.as_ref());
+        if let Some(dir_name) = path.as_ref().file_name() {
+            if let Some(root) = path.as_ref().parent() {
+                let mut iter = root.components();
+                match iter.next() {
+                    Some(Component::RootDir) => {
+                        if let Some(dir_root) = self.new_dir_r(root, &mut iter) {
+                            let dir = DirectoryMetadata::new();
 
+                            dir_root.entries.insert(
+                                dir_name.to_str().unwrap().to_owned(),
+                                DirectoryEntry::Directory(dir.clone()),
+                            );
+                            dir_root.dirty = true;
+                            debug!("\treturning: {:#?}", dir);
+                            return Some(Directory {
+                                path: path.as_ref().to_owned(),
+                                directory: dir,
+                            });
+                        }
+                    }
+                    _ => {
+                        error!("\tcalled with absolute path");
+                        return None;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn new_dir_r<'a>(
+        &mut self,
+        path: &Path,
+        mut components: &mut Components<'a>,
+    ) -> Option<&mut DirectoryMetadata> {
+        debug!("--------");
+        debug!(
+            "`new_dir_r`: {:#?}, path: {:?}, components {:?}",
+            self, path, components
+        );
+        match components.next() {
+            Some(Component::Normal(name)) => match name.to_str() {
+                Some(name) => match self.entries.get_mut(name) {
+                    Some(DirectoryEntry::Directory(sub_dir)) => {
+                        DirectoryMetadata::new_dir_r(sub_dir, path, &mut components)
+                    }
+                    _ => {
+                        warn!("`get_dir_r`: couldn't find {:?}", path);
+                        None
+                    }
+                },
+                _ => {
+                    error!("`get_dir_r`: invalid utf-8 in path {:?}", path);
+                    None
+                }
+            },
+            None => Some(self),
+            _ => {
+                error!("`get_dir_r`: wonky path: {:?}", path);
+                None
+            }
+        }
     }
 
     /// Create a new file in this directory
     pub(crate) fn new_file(&mut self, name: &str) -> File {
+        debug!("--------");
+        debug!("`new_file`: {}", name);
         let file = FileMetadata::new();
         self.entries
             .insert(name.to_owned(), DirectoryEntry::File(file.clone()));
         self.dirty = true;
-        debug!("`new_file`: {}", name);
         File {
             path: ["/", name].iter().collect(),
-            version: file.get_current_version(),
             file: file.clone(),
         }
     }
 
-    /// Retrieve a file by name from this directory
-    pub(crate) fn get_file<P>(&self, path: P) -> Option<File>
+    /// Recrieve a directory by name, from this directory
+    pub(crate) fn get_directory<P>(&self, path: P) -> Option<Directory>
     where
         P: AsRef<Path>,
     {
-        debug!("-------");
-        debug!("`get_file`: {:?}", path.as_ref());
+        debug!("--------");
+        debug!("`get_directory`: {:?}", path.as_ref());
+        let mut iter = path.as_ref().components();
+        match iter.next() {
+            Some(Component::RootDir) => {
+                let dir = self.get_dir_r(path.as_ref(), &mut iter);
+                debug!("\treturning: {:#?}", dir);
+                dir
+            }
+            _ => {
+                error!("`get_dir` called with absolute path");
+                None
+            }
+        }
+    }
+
+    fn get_dir_r<'a>(&self, path: &Path, mut components: &mut Components<'a>) -> Option<Directory> {
+        debug!("--------");
+        debug!(
+            "`get_dir_r`: {:#?}, path: {:?}, components {:?}",
+            self, path, components
+        );
+        match components.next() {
+            Some(Component::Normal(name)) => match name.to_str() {
+                Some(name) => match self.entries.get(name) {
+                    Some(DirectoryEntry::Directory(sub_dir)) => {
+                        DirectoryMetadata::get_dir_r(sub_dir, path, &mut components)
+                    }
+                    _ => {
+                        warn!("`get_dir_r`: couldn't find {:?}", path);
+                        None
+                    }
+                },
+                _ => {
+                    error!("`get_dir_r`: invalid utf-8 in path {:?}", path);
+                    None
+                }
+            },
+            None => Some(Directory {
+                path: path.to_path_buf(),
+                directory: self.clone(),
+            }),
+            _ => {
+                error!("`get_dir_r`: wonky path: {:?}", path);
+                None
+            }
+        }
+    }
+
+    /// Retrieve a file by name from this directory
+    pub(crate) fn get_file_read_only<P>(&self, path: P) -> Option<File>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("--------");
+        debug!("`get_file_read_only`: {:?}", path.as_ref());
         match path.as_ref().file_name() {
             Some(file_name) => match file_name.to_str() {
                 Some(name) => match self.entries.get(name) {
                     Some(entry) => match entry {
-                        DirectoryEntry::File(file) => Some(File {
-                            path: path.as_ref().to_path_buf(),
-                            version: file.get_current_version(),
-                            file: file.clone(),
-                        }),
+                        DirectoryEntry::File(file) => {
+                            let mut file = file.clone();
+                            let v = if file.version_count() > 0 {
+                                file.versions[file.version_count() - 1].clone()
+                            } else {
+                                FileVersion::new()
+                            };
+                            file.current = Some(v);
+                            Some(File {
+                                path: path.as_ref().to_path_buf(),
+                                file,
+                            })
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => {
+                    error!("invalid utf-8 in path {:?}", path.as_ref());
+                    None
+                }
+            },
+            _ => {
+                error!("malformed path {:?}", path.as_ref());
+                None
+            }
+        }
+    }
+
+    /// Retrieve a file by name from this directory
+    pub(crate) fn get_file_read_write<P>(&mut self, path: P) -> Option<File>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("--------");
+        debug!("`get_file_read_write`: {:?}", path.as_ref());
+        // Mark the directory as dirty.
+        self.dirty = true;
+
+        match path.as_ref().file_name() {
+            Some(file_name) => match file_name.to_str() {
+                Some(name) => match self.entries.get(name) {
+                    Some(entry) => match entry {
+                        DirectoryEntry::File(file) => {
+                            let mut file = file.clone();
+                            let v = if file.version_count() > 0 {
+                                file.versions[file.version_count() - 1].clone()
+                            } else {
+                                FileVersion::new()
+                            };
+                            file.current = Some(v);
+                            Some(File {
+                                path: path.as_ref().to_path_buf(),
+                                file,
+                            })
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => {
+                    error!("invalid utf-8 in path {:?}", path.as_ref());
+                    None
+                }
+            },
+            _ => {
+                error!("malformed path {:?}", path.as_ref());
+                None
+            }
+        }
+    }
+
+    /// Retrieve a file by name from this directory
+    pub(crate) fn get_file_write_only<P>(&mut self, path: P) -> Option<File>
+    where
+        P: AsRef<Path>,
+    {
+        debug!("--------");
+        debug!("`get_file_write_only`: {:?}", path.as_ref());
+        // Mark the directory as dirty.
+        self.dirty = true;
+
+        match path.as_ref().file_name() {
+            Some(file_name) => match file_name.to_str() {
+                Some(name) => match self.entries.get(name) {
+                    Some(entry) => match entry {
+                        DirectoryEntry::File(file) => {
+                            let mut file = file.clone();
+                            file.current = Some(FileVersion::new());
+                            Some(File {
+                                path: path.as_ref().to_path_buf(),
+                                file: file.clone(),
+                            })
+                        }
                         _ => None,
                     },
                     _ => None,
@@ -162,14 +383,17 @@ impl DirectoryMetadata {
     ///
     /// The current version is committed, and written if necessary.
     pub(crate) fn update_file(&mut self, file: File) {
-        if file.version.dirty {
+        debug!("--------");
+        debug!("`update_file`: {:#?}", file);
+        if file.file.current_version().unwrap().dirty {
             if let Some(file_name) = file.path.file_name() {
                 if let Some(name) = file_name.to_str() {
                     if let Some(ref mut entry) = self.entries.get_mut(name) {
                         match entry {
                             DirectoryEntry::File(ref mut my_file) => {
                                 self.dirty = true;
-                                my_file.commit_version(file.version)
+                                my_file
+                                    .commit_version(file.file.current_version().unwrap().clone());
                             }
                             _ => unreachable!(),
                         }
@@ -200,6 +424,8 @@ impl MetadataSerialize for DirectoryMetadata {
     fn serialize(&mut self) -> Result<Vec<u8>, failure::Error> {
         match bincode::serialize(&self) {
             Ok(r) => {
+                debug!("--------");
+                debug!("`serialize: {:#?}", self);
                 self.dirty = false;
                 Ok(r)
             }
@@ -213,7 +439,7 @@ impl MetadataDeserialize for DirectoryMetadata {
     fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
         match bincode::deserialize(&bytes) {
             Ok(r) => {
-                debug!("-------");
+                debug!("--------");
                 debug!("`deserialize`: {:#?}", r);
                 Ok(r)
             }
@@ -233,6 +459,8 @@ impl MetadataDeserialize for DirectoryMetadata {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileMetadata {
+    #[serde(skip)]
+    current: Option<FileVersion>,
     versions: Vec<FileVersion>,
 }
 
@@ -244,47 +472,84 @@ impl FileMetadata {
     /// that we capture a time stamp of when the file was created.
     pub(crate) fn new() -> Self {
         FileMetadata {
-            versions: vec![FileVersion::new()],
+            current: Some(FileVersion::new()),
+            versions: vec![],
         }
     }
 
-    /// Return the latest version number of the file.
-    pub(crate) fn version(&self) -> usize {
-        self.versions.len() - 1
+    /// Return the number of versions of the file
+    pub(crate) fn version_count(&self) -> usize {
+        self.versions.len()
     }
 
-    /// Return a list of all of the versions of the file.
-    pub(crate) fn versions(&self) -> &Vec<FileVersion> {
+    /// Return a list of all of the versions of the file
+    pub(crate) fn get_versions(&self) -> &Vec<FileVersion> {
         &self.versions
     }
 
-    /// Return the latest `FileVersion` of the file.
-    pub(crate) fn get_current_version(&self) -> FileVersion {
-        let version = self.versions.last().unwrap().clone();
-        debug!("-------");
-        debug!("`get_current_version`:");
-        trace!("{:#?}", version);
-        version
+    /// Return the latest `FileVersion` of the file
+    pub(crate) fn current_version(&self) -> Option<&FileVersion> {
+        debug!("--------");
+        debug!("`current_version`: {:#?}", self.current);
+        self.current.as_ref()
     }
 
-    /// Commit a new version of the file.
+    /// Return the latest `FileVersion` of the file
+    pub(crate) fn current_version_mut(&mut self) -> Option<&mut FileVersion> {
+        debug!("--------");
+        debug!("`current_version_mut`: {:#?}", self.current);
+        self.current.as_mut()
+    }
+
+    /// Commit the current version of the file
+    pub(crate) fn commit(&mut self) {
+        debug!("--------");
+        debug!("`commit`: {:#?}", self);
+        match &self.current {
+            Some(v) => {
+                if v.dirty {
+                    self.versions.push(v.clone());
+                    self.current = None
+                }
+            }
+            None => warn!("called commit with empty FileVersion"),
+        }
+    }
+
+    /// Commit a new version of the file
     pub(crate) fn commit_version(&mut self, mut version: FileVersion) {
+        debug!("--------");
+        debug!("`commit_version`: {:#?}", version);
         if version.dirty {
-            debug!("-------");
-            debug!("`commit_version`: {:#?}", version);
             version.dirty = false;
             self.versions.push(version);
         }
     }
 
-    /// Return the `write_time` timestamp of the latest version.
+    /// Return the `write_time` timestamp of the latest version
     pub(crate) fn write_time(&self) -> UfsTime {
-        self.versions.last().unwrap().write_time()
+        match &self.current {
+            Some(v) => v.write_time(),
+            None => match self.versions.last() {
+                Some(v) => v.write_time(),
+                None => {
+                    panic!("called write_time(), but no version exists");
+                }
+            },
+        }
     }
 
-    /// Return the size of the latest version.
+    /// Return the size of the latest version
     pub(crate) fn size(&self) -> FileSize {
-        self.versions.last().unwrap().size()
+        match &self.current {
+            Some(v) => v.size(),
+            None => match self.versions.last() {
+                Some(v) => v.size(),
+                None => {
+                    panic!("called size(), but no version exists");
+                }
+            },
+        }
     }
 }
 
@@ -363,6 +628,7 @@ impl FileVersion {
         debug!("adding block {} to blocklist", block.number());
         self.size += block.size() as FileSize;
         debug!("new size {}", self.size);
+        debug!("{:#?}", self);
     }
 
     /// Return the `write_time` timestamp

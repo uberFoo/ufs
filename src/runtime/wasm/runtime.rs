@@ -14,9 +14,11 @@ extern "C" {
     //     pub fn open_file(path: &str) -> Option<FileHandle>;
     pub fn __rust_close_file(handle: FileHandle);
     pub fn __rust_write_file(handle: FileHandle, data: u32);
-    //     pub fn read_file(handle: FileHandle, offset: i32, size: u32)
-    //         -> Result<Vec<u8>, failure::Error>;
+//     pub fn read_file(handle: FileHandle, offset: i32, size: u32)
+//         -> Result<Vec<u8>, failure::Error>;
+}
 
+extern "C" {
     // Methods in the WASM program, ultimately called from Rust.
     pub fn handle_file_create(path: &str);
     pub fn handle_file_close(path: &str);
