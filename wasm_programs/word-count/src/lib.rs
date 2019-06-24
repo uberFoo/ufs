@@ -31,8 +31,6 @@ pub extern "C" fn handle_file_create(path: &str) {
 
     if !wc.handles.contains_key(&path) {
         let mut file_path = PathBuf::new();
-        // Hack for different ways paths are used -- fix upstream!
-        file_path.push("/");
         file_path.push(path);
 
         // Create a file to hold our word counts.  Being sure to add it to our handles hash so that

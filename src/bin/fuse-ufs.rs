@@ -25,8 +25,7 @@ fn main() -> Result<(), failure::Error> {
     if fs::read_dir(&opt.bundle_path).is_ok() {
         let ufs = UberFileSystem::load_file_backed(&opt.bundle_path)?;
         let mounter = UfsMounter::new(ufs);
-        let mut ufs_fuse = UberFSFuse::new(mounter);
-        ufs_fuse.load_root_directory();
+        let ufs_fuse = UberFSFuse::new(mounter);
 
         mount(ufs_fuse, &opt.mount_path, &[])?;
     } else {
