@@ -15,17 +15,32 @@ use crate::block::{
     manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
     MemoryStore,
 };
-use crate::metadata::{DirectoryEntry, File, FileHandle, FileSize, FileVersion};
+use crate::metadata::{
+    Directory, DirectoryEntry, DirectoryMetadata, File, FileHandle, FileSize, FileVersion,
+};
 use crate::runtime::{init_runtime, FileSystemOperator, Process, UfsMessage};
 use crate::UfsUuid;
 
+/// File mode for `open` call.
+///
 #[derive(Debug)]
 pub enum OpenFileMode {
+    /// Open file for reading
+    ///
     Read,
+    /// Open file for writing
+    ///
     Write,
+    /// Open file for reading and writing
+    ///
     ReadWrite,
 }
 
+/// File System integration with WASM interpreter
+///
+/// This struct encapsulates both `UberFileSystem` and instances of [`wasmi`]. The former is wrapped
+/// in a `Mutex`, wrapped in an `Arc`, which invokes callbacks on the former. The wasmi instances
+/// may also make calls into the file system.
 pub struct UfsMounter<B: BlockStorage + 'static> {
     // FIXME: I think that the Mutex can be an RwLock...
     inner: Arc<Mutex<UberFileSystem<B>>>,
@@ -33,6 +48,8 @@ pub struct UfsMounter<B: BlockStorage + 'static> {
 }
 
 impl<B: BlockStorage> UfsMounter<B> {
+    /// Constructor
+    ///
     pub fn new(ufs: UberFileSystem<B>) -> Self {
         let mut new_ufs = UfsMounter {
             inner: Arc::new(Mutex::new(ufs)),
@@ -94,6 +111,7 @@ pub struct UberFileSystem<B: BlockStorage + 'static> {
     ///
     block_manager: BlockManager<B>,
     open_files: HashMap<FileHandle, File>,
+    open_dirs: HashMap<FileHandle, Directory>,
     open_file_counter: FileHandle,
     listeners: Vec<crossbeam_channel::Sender<UfsMessage>>,
 }
@@ -111,6 +129,7 @@ impl UberFileSystem<MemoryStore> {
         UberFileSystem {
             block_manager,
             open_files: HashMap::new(),
+            open_dirs: HashMap::new(),
             open_file_counter: 0,
             listeners: vec![],
         }
@@ -130,6 +149,7 @@ impl UberFileSystem<FileStore> {
         Ok(UberFileSystem {
             block_manager,
             open_files: HashMap::new(),
+            open_dirs: HashMap::new(),
             open_file_counter: 0,
             listeners: vec![],
         })
@@ -153,7 +173,10 @@ impl UberFileSystem<FileStore> {
 impl<B: BlockStorage> UberFileSystem<B> {
     fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
-            listener.send(msg.clone()).unwrap();
+            match listener.send(msg.clone()) {
+                Ok(_) => (),
+                Err(e) => error!("unable to send on channel {}", e),
+            }
         }
     }
 
@@ -161,105 +184,121 @@ impl<B: BlockStorage> UberFileSystem<B> {
         &self.block_manager
     }
 
+    /// Retrieve the root directory
+    ///
+    pub(crate) fn get_root_directory(&self) -> DirectoryEntry {
+        DirectoryEntry::Directory(self.block_manager.root_dir().clone())
+    }
+
     /// List the contents of a Directory
     ///
-    /// This function takes a Path and returns a Vec of (name, size) tuples -- one for each file
-    /// contained within the specified directory.
-    ///
-    /// TODO: Verify that the path exists, and do something with it!
-    pub(crate) fn list_files(&self, path: &Path) -> Vec<(String, FileSize, Timespec)> {
+    pub(crate) fn list_files(
+        &self,
+        handle: FileHandle,
+    ) -> Option<&HashMap<String, DirectoryEntry>> {
         debug!("-------");
-        debug!("`list_files`: {:?}", path);
-        // let mut files = Vec::new();
-        // for (name, entry) in self.block_manager.root_dir().entries() {
-        //     match entry {
-        //         DirectoryEntry::Directory(d) => {
-        //             debug!("dir: {}", name);
-        //             files.push((name.clone(), 0, d.write_time().into()));
-        //         }
-        //         DirectoryEntry::File(f) => {
-        //             for (n, version) in f.versions().iter().enumerate() {
-        //                 let mut name = name.clone();
-        //                 name.push('@');
-        //                 name.push_str(&n.to_string());
-        //                 let size = version.size();
-        //                 let write_time = version.write_time();
-        //                 debug!("file: {}, size: {}", name, size);
-        //                 files.push((name.clone(), size, write_time.into()));
-        //             }
-        //             let size = f.get_current_version().size();
-        //             debug!("file: {}, size: {}", name, size);
-        //             files.push((name.clone(), size, f.write_time().into()));
-        //         }
-        //     }
-        // }
+        debug!("`list_files`: {}", handle);
+        match self.open_dirs.get(&handle) {
+            Some(dir) => Some(dir.directory.entries()),
+            None => {
+                warn!("\tdirectory not opened");
+                None
+            }
+        }
+    }
 
-        // files
-        self.block_manager
-            .root_dir()
-            .entries()
-            .iter()
-            .map(|(name, e)| match e {
-                DirectoryEntry::Directory(d) => {
-                    debug!("dir: {}", name);
-                    (name.clone(), 0, d.write_time().into())
-                }
-                DirectoryEntry::File(f) => {
-                    let size = f.get_current_version().size();
-                    debug!("file: {}, size: {}", name, size);
-                    (name.clone(), size, f.write_time().into())
-                }
-            })
-            .collect()
+    /// Create a directory
+    ///
+    pub(crate) fn create_directory(&mut self, path: &Path) -> Result<Directory, failure::Error> {
+        debug!("--------");
+        debug!("`create_directory`: {:?}", path);
+        self.block_manager.root_dir_mut().new_directory(path)
+    }
+
+    /// Open a directory
+    ///
+    /// FIXME: Should this return a Result?
+    pub(crate) fn open_directory(&mut self, path: &Path) -> Option<FileHandle> {
+        debug!("--------");
+        debug!("`open_directory`: {:?}", path);
+        if let Ok(dir) = self.block_manager.root_dir_mut().get_directory(path) {
+            let fh = self.open_file_counter;
+            self.open_file_counter = self.open_file_counter.wrapping_add(1);
+
+            self.open_dirs.insert(fh, dir);
+
+            return Some(fh);
+        }
+        None
+    }
+
+    /// Close a directory
+    ///
+    pub(crate) fn close_directory(&mut self, handle: FileHandle) {
+        debug!("--------");
+        match self.open_dirs.remove(&handle) {
+            Some(dir) => {
+                debug!("`close_directory`: handle: {}", handle);
+                trace!("{:#?}", dir);
+            }
+            None => warn!("asked to close a directory not in the map {}", handle),
+        }
     }
 
     /// Create a file
     ///
-    pub(crate) fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {
-        if let Some(ostr_name) = path.file_name() {
-            if let Some(name) = ostr_name.to_str() {
-                let file = self.block_manager.root_dir_mut().new_file(name);
-                let time = file.version.write_time();
+    pub(crate) fn create_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<(FileHandle, Timespec), failure::Error> {
+        debug!("--------");
+        debug!("`create_file`: {:?}", path);
+        let file = self.block_manager.root_dir_mut().new_file(path)?;
+        let time = file.file.write_time();
 
-                let fh = self.open_file_counter;
-                self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        let fh = self.open_file_counter;
+        self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        self.open_files.insert(fh, file);
 
-                self.open_files.insert(fh, file);
+        self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
 
-                debug!("`create_file`: {:?}, handle: {}", path, fh);
-
-                self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
-
-                return Some((fh, time.into()));
-            }
-        }
-
-        None
+        Ok((fh, time.into()))
     }
 
     /// Open a file
     ///
-    pub(crate) fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle> {
-        debug!("-------");
-        if let Some(mut file) = self.block_manager.root_dir().get_file(&path) {
-            // If the file is opened for writing, allocate a new FileVersion for it's bits.
-            match mode {
-                OpenFileMode::Write | OpenFileMode::ReadWrite => file.version = FileVersion::new(),
-                _ => (),
-            }
-            let fh = self.open_file_counter;
-            self.open_file_counter = self.open_file_counter.wrapping_add(1);
+    pub(crate) fn open_file(
+        &mut self,
+        path: &Path,
+        mode: OpenFileMode,
+    ) -> Result<FileHandle, failure::Error> {
+        debug!("--------");
+        debug!("`open_file` {:?}, mode: {:?}", path, mode);
+        let file = match mode {
+            OpenFileMode::Write => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_write_only(&path)?,
+            OpenFileMode::Read => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_read_only(&path)?,
+            OpenFileMode::ReadWrite => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_read_write(&path)?,
+        };
 
-            self.open_files.insert(fh, file);
+        let fh = self.open_file_counter;
+        self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-            debug!("`open_file`: {:?}, handle: {}, mode: {:?}", path, fh, mode);
+        self.open_files.insert(fh, file);
 
-            self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
+        debug!("\thandle: {}", fh);
 
-            Some(fh)
-        } else {
-            None
-        }
+        self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
+
+        Ok(fh)
     }
 
     /// Close a file
@@ -271,14 +310,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Some(file) => {
                 let path = file.path.clone();
 
-                debug!("`close_file`: {:?}, handle: {}", path, handle);
-                self.block_manager.root_dir_mut().update_file(file);
+                debug!("`close_file`: {:#?}, handle: {}", file, handle);
+                self.block_manager.root_dir_mut().commit_file(file);
 
                 self.notify_listeners(UfsMessage::FileClose(path));
             }
-            None => {
-                warn!("asked to close a file not in the map {}", handle);
-            }
+            None => warn!("asked to close a file not in the map {}", handle),
         }
     }
 
@@ -299,7 +336,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     match self.block_manager.write(&bytes[written..]) {
                         Ok(block) => {
                             written += block.size() as usize;
-                            file.version.append_block(&block);
+                            if let Some(v) = file.file.current_version_mut() {
+                                v.append_block(&block);
+                            } else {
+                                panic!("attempted to append_block to file with no version");
+                            }
                         }
                         Err(e) => {
                             error!("problem writing data to file: {}", e);
@@ -341,7 +382,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let start_block = (offset / block_size as i64) as usize;
         let mut start_offset = (offset % block_size as i64) as usize;
 
-        let mut blocks = file.version.blocks().clone();
+        let mut blocks = file.file.current_version().unwrap().blocks().clone();
         trace!("reading from blocks {:?}", &blocks);
         let block_iter = &mut blocks.iter_mut().skip(start_block);
         trace!("current iterator {:?}", block_iter);

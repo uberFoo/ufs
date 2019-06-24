@@ -86,7 +86,7 @@ impl Process {
         self.sender.clone()
     }
 
-    fn dispatch_message(&mut self, handler: &mut UfsMessageHandler, message: UfsMessage) {
+    fn dispatch_message(&mut self, handler: &mut dyn UfsMessageHandler, message: UfsMessage) {
         match message {
             UfsMessage::FileCreate(p) => {
                 info!("dispatch FileCreate {:?}", p);

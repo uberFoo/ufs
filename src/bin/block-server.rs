@@ -21,7 +21,7 @@ use pretty_env_logger;
 use ufs::{BlockNumber, BlockReader, BlockWriter, FileStore};
 
 // Just a simple type alias
-type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
+type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
 fn get_store(
     uri_path: &str,
