@@ -118,9 +118,57 @@ impl DirectoryMetadata {
         }
     }
 
+    fn get_directory_metadata<'a>(
+        &mut self,
+        path: &Path,
+        mark_dirty: bool,
+        mut components: &mut Components<'a>,
+    ) -> Option<&mut DirectoryMetadata> {
+        debug!("--------");
+        debug!(
+            "`get_directory_metadata`: path: {:?}, components {:?}",
+            path, components
+        );
+        match components.next() {
+            Some(Component::RootDir) => {
+                if mark_dirty {
+                    self.dirty = true;
+                }
+                self.get_directory_metadata(path, mark_dirty, &mut components)
+            }
+            Some(Component::Normal(name)) => match name.to_str() {
+                Some(name) => match self.entries.get_mut(name) {
+                    Some(DirectoryEntry::Directory(sub_dir)) => {
+                        if mark_dirty {
+                            sub_dir.dirty = true;
+                        }
+                        DirectoryMetadata::get_directory_metadata(
+                            sub_dir,
+                            path,
+                            mark_dirty,
+                            &mut components,
+                        )
+                    }
+                    _ => {
+                        warn!("`get_directory_metadata`: couldn't find {:?}", path);
+                        None
+                    }
+                },
+                _ => {
+                    error!("`get_directory_metadata`: invalid utf-8 in path {:?}", path);
+                    None
+                }
+            },
+            None => Some(self),
+            _ => {
+                error!("`get_directory_metadata`: wonky path: {:?}", path);
+                None
+            }
+        }
+    }
+
     /// Create a new directory in this directory
-    /// FIXME: This should return a Result maybe?
-    pub(crate) fn new_directory<P>(&mut self, path: P) -> Option<Directory>
+    pub(crate) fn new_directory<P>(&mut self, path: P) -> Result<Directory, failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -129,277 +177,253 @@ impl DirectoryMetadata {
         if let Some(dir_name) = path.as_ref().file_name() {
             if let Some(root) = path.as_ref().parent() {
                 let mut iter = root.components();
-                match iter.next() {
-                    Some(Component::RootDir) => {
-                        if let Some(dir_root) = self.new_dir_r(root, &mut iter) {
-                            let dir = DirectoryMetadata::new();
+                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
+                    let dir = DirectoryMetadata::new();
 
-                            dir_root.entries.insert(
-                                dir_name.to_str().unwrap().to_owned(),
-                                DirectoryEntry::Directory(dir.clone()),
-                            );
-                            dir_root.dirty = true;
-                            debug!("\treturning: {:#?}", dir);
-                            return Some(Directory {
-                                path: path.as_ref().to_owned(),
-                                directory: dir,
-                            });
-                        }
-                    }
-                    _ => {
-                        error!("\tcalled with absolute path");
-                        return None;
-                    }
+                    dir_root.entries.insert(
+                        dir_name.to_str().unwrap().to_owned(),
+                        DirectoryEntry::Directory(dir.clone()),
+                    );
+
+                    debug!("\treturning: {:#?}", dir);
+                    return Ok(Directory {
+                        path: path.as_ref().to_owned(),
+                        directory: dir,
+                    });
                 }
             }
         }
-        None
-    }
-
-    fn new_dir_r<'a>(
-        &mut self,
-        path: &Path,
-        mut components: &mut Components<'a>,
-    ) -> Option<&mut DirectoryMetadata> {
-        debug!("--------");
-        debug!(
-            "`new_dir_r`: {:#?}, path: {:?}, components {:?}",
-            self, path, components
-        );
-        match components.next() {
-            Some(Component::Normal(name)) => match name.to_str() {
-                Some(name) => match self.entries.get_mut(name) {
-                    Some(DirectoryEntry::Directory(sub_dir)) => {
-                        DirectoryMetadata::new_dir_r(sub_dir, path, &mut components)
-                    }
-                    _ => {
-                        warn!("`get_dir_r`: couldn't find {:?}", path);
-                        None
-                    }
-                },
-                _ => {
-                    error!("`get_dir_r`: invalid utf-8 in path {:?}", path);
-                    None
-                }
-            },
-            None => Some(self),
-            _ => {
-                error!("`get_dir_r`: wonky path: {:?}", path);
-                None
-            }
-        }
+        Err(format_err!(
+            "`new_directory` could not create directory {:?}",
+            path.as_ref()
+        ))
     }
 
     /// Create a new file in this directory
-    pub(crate) fn new_file(&mut self, name: &str) -> File {
+    pub(crate) fn new_file<P>(&mut self, path: P) -> Result<File, failure::Error>
+    where
+        P: AsRef<Path>,
+    {
         debug!("--------");
-        debug!("`new_file`: {}", name);
-        let file = FileMetadata::new();
-        self.entries
-            .insert(name.to_owned(), DirectoryEntry::File(file.clone()));
-        self.dirty = true;
-        File {
-            path: ["/", name].iter().collect(),
-            file: file.clone(),
+        debug!("`new_file`: {:?}", path.as_ref());
+        if let Some(file_name) = path.as_ref().file_name() {
+            if let Some(root) = path.as_ref().parent() {
+                let mut iter = root.components();
+                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
+                    let file = FileMetadata::new();
+
+                    dir_root.entries.insert(
+                        file_name.to_str().unwrap().to_owned(),
+                        DirectoryEntry::File(file.clone()),
+                    );
+
+                    debug!("\treturning {:#?}", file);
+                    Ok(File {
+                        path: path.as_ref().to_owned(),
+                        file,
+                    })
+                } else {
+                    Err(format_err!("bogus root directory"))
+                }
+            } else {
+                Err(format_err!("malformed path"))
+            }
+        } else {
+            Err(format_err!("malformed path"))
         }
     }
 
-    /// Recrieve a directory by name, from this directory
-    pub(crate) fn get_directory<P>(&self, path: P) -> Option<Directory>
+    /// Retrieve a directory by name, from this directory
+    pub(crate) fn get_directory<P>(&mut self, path: P) -> Result<Directory, failure::Error>
     where
         P: AsRef<Path>,
     {
         debug!("--------");
         debug!("`get_directory`: {:?}", path.as_ref());
         let mut iter = path.as_ref().components();
-        match iter.next() {
-            Some(Component::RootDir) => {
-                let dir = self.get_dir_r(path.as_ref(), &mut iter);
-                debug!("\treturning: {:#?}", dir);
-                dir
-            }
-            _ => {
-                error!("`get_dir` called with absolute path");
-                None
-            }
-        }
-    }
-
-    fn get_dir_r<'a>(&self, path: &Path, mut components: &mut Components<'a>) -> Option<Directory> {
-        debug!("--------");
-        debug!(
-            "`get_dir_r`: {:#?}, path: {:?}, components {:?}",
-            self, path, components
-        );
-        match components.next() {
-            Some(Component::Normal(name)) => match name.to_str() {
-                Some(name) => match self.entries.get(name) {
-                    Some(DirectoryEntry::Directory(sub_dir)) => {
-                        DirectoryMetadata::get_dir_r(sub_dir, path, &mut components)
-                    }
-                    _ => {
-                        warn!("`get_dir_r`: couldn't find {:?}", path);
-                        None
-                    }
-                },
-                _ => {
-                    error!("`get_dir_r`: invalid utf-8 in path {:?}", path);
-                    None
-                }
-            },
-            None => Some(Directory {
-                path: path.to_path_buf(),
-                directory: self.clone(),
-            }),
-            _ => {
-                error!("`get_dir_r`: wonky path: {:?}", path);
-                None
-            }
+        if let Some(dir) = self.get_directory_metadata(path.as_ref(), false, &mut iter) {
+            Ok(Directory {
+                path: path.as_ref().to_owned(),
+                directory: dir.clone(),
+            })
+        } else {
+            Err(format_err!("`get_directory` malformed path"))
         }
     }
 
     /// Retrieve a file by name from this directory
-    pub(crate) fn get_file_read_only<P>(&self, path: P) -> Option<File>
+    pub(crate) fn get_file_read_only<P>(&mut self, path: P) -> Result<File, failure::Error>
     where
         P: AsRef<Path>,
     {
         debug!("--------");
         debug!("`get_file_read_only`: {:?}", path.as_ref());
-        match path.as_ref().file_name() {
-            Some(file_name) => match file_name.to_str() {
-                Some(name) => match self.entries.get(name) {
-                    Some(entry) => match entry {
-                        DirectoryEntry::File(file) => {
-                            let mut file = file.clone();
-                            let v = if file.version_count() > 0 {
-                                file.versions[file.version_count() - 1].clone()
-                            } else {
-                                FileVersion::new()
-                            };
-                            file.current = Some(v);
-                            Some(File {
-                                path: path.as_ref().to_path_buf(),
-                                file,
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => {
-                    error!("invalid utf-8 in path {:?}", path.as_ref());
-                    None
+        if let Some(file_name) = path.as_ref().file_name() {
+            if let Some(root) = path.as_ref().parent() {
+                let mut iter = root.components();
+                if let Some(dir_root) = self.get_directory_metadata(root, false, &mut iter) {
+                    if let Some(DirectoryEntry::File(file)) =
+                        dir_root.entries.get(file_name.to_str().unwrap())
+                    {
+                        let mut file = file.clone();
+                        // Copy the latest version or create a new one if necessary.
+                        let v = if file.version_count() > 0 {
+                            file.versions[file.version_count() - 1].clone()
+                        } else {
+                            FileVersion::new()
+                        };
+                        file.current = Some(v);
+
+                        Ok(File {
+                            path: path.as_ref().to_path_buf(),
+                            file,
+                        })
+                    } else {
+                        Err(format_err!("can't find file: {:?}", path.as_ref()))
+                    }
+                } else {
+                    Err(format_err!("bogus root directory"))
                 }
-            },
-            _ => {
-                error!("malformed path {:?}", path.as_ref());
-                None
+            } else {
+                Err(format_err!("malformed path"))
             }
+        } else {
+            Err(format_err!("malformed path"))
         }
     }
 
     /// Retrieve a file by name from this directory
-    pub(crate) fn get_file_read_write<P>(&mut self, path: P) -> Option<File>
+    pub(crate) fn get_file_read_write<P>(&mut self, path: P) -> Result<File, failure::Error>
     where
         P: AsRef<Path>,
     {
         debug!("--------");
         debug!("`get_file_read_write`: {:?}", path.as_ref());
-        // Mark the directory as dirty.
-        self.dirty = true;
+        if let Some(file_name) = path.as_ref().file_name() {
+            if let Some(root) = path.as_ref().parent() {
+                let mut iter = root.components();
+                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
+                    if let Some(DirectoryEntry::File(file)) =
+                        dir_root.entries.get(file_name.to_str().unwrap())
+                    {
+                        let mut file = file.clone();
+                        // Copy the latest version or create a new one if necessary.
+                        let v = if file.version_count() > 0 {
+                            file.versions[file.version_count() - 1].clone()
+                        } else {
+                            FileVersion::new()
+                        };
+                        file.current = Some(v);
 
-        match path.as_ref().file_name() {
-            Some(file_name) => match file_name.to_str() {
-                Some(name) => match self.entries.get(name) {
-                    Some(entry) => match entry {
-                        DirectoryEntry::File(file) => {
-                            let mut file = file.clone();
-                            let v = if file.version_count() > 0 {
-                                file.versions[file.version_count() - 1].clone()
-                            } else {
-                                FileVersion::new()
-                            };
-                            file.current = Some(v);
-                            Some(File {
-                                path: path.as_ref().to_path_buf(),
-                                file,
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => {
-                    error!("invalid utf-8 in path {:?}", path.as_ref());
-                    None
+                        Ok(File {
+                            path: path.as_ref().to_path_buf(),
+                            file,
+                        })
+                    } else {
+                        Err(format_err!("can't find file: {:?}", path.as_ref()))
+                    }
+                } else {
+                    Err(format_err!("bogus root directory"))
                 }
-            },
-            _ => {
-                error!("malformed path {:?}", path.as_ref());
-                None
+            } else {
+                Err(format_err!("malformed path"))
             }
+        } else {
+            Err(format_err!("malformed path"))
         }
     }
 
     /// Retrieve a file by name from this directory
-    pub(crate) fn get_file_write_only<P>(&mut self, path: P) -> Option<File>
+    pub(crate) fn get_file_write_only<P>(&mut self, path: P) -> Result<File, failure::Error>
     where
         P: AsRef<Path>,
     {
         debug!("--------");
         debug!("`get_file_write_only`: {:?}", path.as_ref());
-        // Mark the directory as dirty.
-        self.dirty = true;
+        if let Some(file_name) = path.as_ref().file_name() {
+            if let Some(root) = path.as_ref().parent() {
+                let mut iter = root.components();
+                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
+                    if let Some(DirectoryEntry::File(file)) =
+                        dir_root.entries.get(file_name.to_str().unwrap())
+                    {
+                        let mut file = file.clone();
+                        file.current = Some(FileVersion::new());
 
-        match path.as_ref().file_name() {
-            Some(file_name) => match file_name.to_str() {
-                Some(name) => match self.entries.get(name) {
-                    Some(entry) => match entry {
-                        DirectoryEntry::File(file) => {
-                            let mut file = file.clone();
-                            file.current = Some(FileVersion::new());
-                            Some(File {
-                                path: path.as_ref().to_path_buf(),
-                                file: file.clone(),
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => {
-                    error!("invalid utf-8 in path {:?}", path.as_ref());
-                    None
+                        Ok(File {
+                            path: path.as_ref().to_path_buf(),
+                            file,
+                        })
+                    } else {
+                        Err(format_err!("can't find file: {:?}", path.as_ref()))
+                    }
+                } else {
+                    Err(format_err!("bogus root directory"))
                 }
-            },
-            _ => {
-                error!("malformed path {:?}", path.as_ref());
-                None
+            } else {
+                Err(format_err!("malformed path"))
             }
+        } else {
+            Err(format_err!("malformed path"))
         }
     }
 
-    /// Update a file under this directory
+    // /// Commit changes to a directory
+    // pub(crate) fn commit_directory(&mut self, dir: Directory) -> Result<(), failure::Error> {
+    //     debug!("--------");
+    //     debug!("`commit_directory`: {#?}", dir);
+    //     if dir.directory.dirty {
+
+    //     }
+    //     Ok(())
+    // }
+
+    /// Commit changes to a file under this directory
     ///
     /// The current version is committed, and written if necessary.
-    pub(crate) fn update_file(&mut self, file: File) {
+    pub(crate) fn commit_file(&mut self, file: File) -> Result<(), failure::Error> {
         debug!("--------");
-        debug!("`update_file`: {:#?}", file);
+        debug!("`commit_file`: {:#?}", file);
         if file.file.current_version().unwrap().dirty {
             if let Some(file_name) = file.path.file_name() {
-                if let Some(name) = file_name.to_str() {
-                    if let Some(ref mut entry) = self.entries.get_mut(name) {
-                        match entry {
-                            DirectoryEntry::File(ref mut my_file) => {
-                                self.dirty = true;
-                                my_file
-                                    .commit_version(file.file.current_version().unwrap().clone());
+                if let Some(root) = file.path.parent() {
+                    let mut iter = root.components();
+                    if let Some(dir_root) = self.get_directory_metadata(root, false, &mut iter) {
+                        if let Some(name) = file_name.to_str() {
+                            if let Some(ref mut entry) = dir_root.entries.get_mut(name) {
+                                match entry {
+                                    DirectoryEntry::File(ref mut my_file) => {
+                                        dir_root.dirty = true;
+                                        my_file.commit_version(
+                                            file.file.current_version().unwrap().clone(),
+                                        );
+                                        return Ok(());
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            } else {
+                                return Err(format_err!(
+                                    "`commit_file` can't find file {:?}",
+                                    file.path
+                                ));
                             }
-                            _ => unreachable!(),
+                        } else {
+                            return Err(format_err!(
+                                "`commit_file` malformed file name {:?}",
+                                file_name
+                            ));
                         }
+                    } else {
+                        return Err(format_err!("`commit_file` bogus root directory"));
                     }
+                } else {
+                    return Err(format_err!("`commit_file` malformed path"));
                 }
+            } else {
+                return Err(format_err!("`commit_file` malformed path"));
             }
+        } else {
+            return Ok(());
         }
     }
 

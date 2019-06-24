@@ -61,7 +61,7 @@ impl WasmRuntime {
         if let Ok(s) = String::from_utf8(payload) {
             let path = PathBuf::from(s);
             info!("`create_file` {:?}", path);
-            if let Some((handle, _)) = self.file_system.create_file(&path) {
+            if let Ok((handle, _)) = self.file_system.create_file(&path) {
                 Ok(Some(RuntimeValue::I32(handle as i32)))
             } else {
                 Ok(None)

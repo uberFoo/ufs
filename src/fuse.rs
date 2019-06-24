@@ -45,7 +45,7 @@ impl Inode {
 #[derive(Debug)]
 struct DirInode {
     number: u64,
-    name: String,
+    path: PathBuf,
     time: Timespec,
     files: HashMap<String, u64>,
 }
@@ -74,7 +74,7 @@ impl DirInode {
 #[derive(Debug)]
 struct FileInode {
     number: u64,
-    name: String,
+    path: PathBuf,
     time: Timespec,
     size: u64,
 }
@@ -124,13 +124,13 @@ impl UberFSFuse {
             // The first inode is always the root of the file system
             fs.inodes.push(Inode::Dir(DirInode {
                 number: 0,
-                name: "hack".to_string(),
+                path: PathBuf::from("hack"),
                 time: TIME,
                 files: HashMap::new(),
             }));
             fs.inodes.push(Inode::Dir(DirInode {
                 number: 1,
-                name: "/".to_string(),
+                path: PathBuf::from("/"),
                 time: TIME,
                 files: HashMap::new(),
             }));
@@ -185,6 +185,8 @@ impl Filesystem for UberFSFuse {
 
     // Return a directory entry given a name and parent inode
     // parent is the parent directory inode
+    // The mapping from file name -> inode number is stored in the parent inode.
+    // File name is relative to the parent inode.
     // **********************************************************************
     // FIXME: This should call back to the file system to get updated sizes.  See issue #13
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
@@ -283,7 +285,7 @@ impl Filesystem for UberFSFuse {
         debug!("--------");
         debug!("`opendir`: ino: {}, flags: {:x}", ino, _flags);
         if let Some(Inode::Dir(inode)) = self.inodes.get(ino as usize) {
-            let path: PathBuf = [&inode.name].iter().collect();
+            let path = PathBuf::from(&inode.path);
             debug!("\tpath: {:?}", path);
 
             let mut number = (self.inodes.len() - 1) as u64;
@@ -299,15 +301,15 @@ impl Filesystem for UberFSFuse {
                                     DirectoryEntry::Directory(d) => {
                                         dir_ino.files.entry(name.clone()).or_insert_with(|| {
                                             number += 1;
-                                            let mut dir_name = path.clone();
-                                            dir_name.push(name);
+                                            let mut dir_path = path.clone();
+                                            dir_path.push(name);
                                             debug!(
                                                 "\tadding directory: {:?}, ino: {}",
-                                                dir_name, number
+                                                dir_path, number
                                             );
                                             let inode = DirInode {
                                                 number,
-                                                name: dir_name.to_str().unwrap().to_owned(),
+                                                path: dir_path,
                                                 time: d.write_time().into(),
                                                 files: HashMap::new(),
                                             };
@@ -317,11 +319,16 @@ impl Filesystem for UberFSFuse {
                                     }
                                     DirectoryEntry::File(f) => {
                                         dir_ino.files.entry(name.clone()).or_insert_with(|| {
+                                            let mut file_path = path.clone();
+                                            file_path.push(name);
                                             number += 1;
-                                            debug!("\tadding file {:?}, ino: {}", name, number);
+                                            debug!(
+                                                "\tadding file {:?}, ino: {}",
+                                                file_path, number
+                                            );
                                             let inode = FileInode {
                                                 number,
-                                                name: name.clone(),
+                                                path: file_path,
                                                 time: f.write_time().into(),
                                                 size: f.size(),
                                             };
@@ -363,8 +370,6 @@ impl Filesystem for UberFSFuse {
         debug!("open ino: {}, flags {:x}", ino, flags);
 
         if let Some(Inode::File(inode)) = self.inodes.get_mut(ino as usize) {
-            let path: PathBuf = ["/", inode.name.as_str()].iter().collect();
-
             let open_flags = flags as i32;
             let mode = match open_flags {
                 O_RDONLY => OpenFileMode::Read,
@@ -377,8 +382,8 @@ impl Filesystem for UberFSFuse {
             };
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            match &mut guard.open_file(path.as_path(), mode) {
-                Some(fh) => reply.opened(*fh as u64, 0),
+            match &mut guard.open_file(inode.path.as_path(), mode) {
+                Ok(fh) => reply.opened(*fh as u64, 0),
                 _ => reply.error(ENOENT),
             }
         } else {
@@ -401,13 +406,13 @@ impl Filesystem for UberFSFuse {
 
         if let Some(Inode::Dir(parent_ino)) = self.inodes.get_mut(parent as usize) {
             let name = String::from(name.to_str().unwrap());
-            let path: PathBuf = [parent_ino.name.as_str(), &name].iter().collect();
+            let mut path = parent_ino.path.clone();
+            path.push(name.clone());
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
             let inode = if let Ok(_) = &mut guard.create_directory(&path) {
-                let path_string = path.to_str().unwrap().to_owned();
                 let inode = DirInode {
-                    name: path_string,
+                    path: path,
                     number: new_inode_number,
                     time: TIME,
                     files: HashMap::new(),
@@ -450,12 +455,13 @@ impl Filesystem for UberFSFuse {
 
         if let Some(Inode::Dir(ref mut parent_ino)) = self.inodes.get_mut(parent as usize) {
             let name = String::from(name.to_str().unwrap());
-            let path: PathBuf = [parent_ino.name.as_str(), &name].iter().collect();
+            let mut path = parent_ino.path.clone();
+            path.push(name.clone());
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            let inode = if let Some((fh, time)) = &mut guard.create_file(&path) {
+            let inode = if let Ok((fh, time)) = &mut guard.create_file(&path) {
                 let inode = FileInode {
-                    name: name.clone(),
+                    path: path,
                     number: new_inode_number,
                     time: *time,
                     size: 0,

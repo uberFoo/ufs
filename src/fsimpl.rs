@@ -212,18 +212,16 @@ impl<B: BlockStorage> UberFileSystem<B> {
     pub(crate) fn create_directory(&mut self, path: &Path) -> Result<Directory, failure::Error> {
         debug!("--------");
         debug!("`create_directory`: {:?}", path);
-        self.block_manager
-            .root_dir_mut()
-            .new_directory(path)
-            .ok_or(format_err!("unable to create directory {:?}", path))
+        self.block_manager.root_dir_mut().new_directory(path)
     }
 
     /// Open a directory
     ///
+    /// FIXME: Should this return a Result?
     pub(crate) fn open_directory(&mut self, path: &Path) -> Option<FileHandle> {
         debug!("--------");
-        debug!("`open_directory`: path: {:?}", path);
-        if let Some(dir) = self.block_manager.root_dir().get_directory(path) {
+        debug!("`open_directory`: {:?}", path);
+        if let Ok(dir) = self.block_manager.root_dir_mut().get_directory(path) {
             let fh = self.open_file_counter;
             self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
@@ -249,53 +247,58 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Create a file
     ///
-    pub(crate) fn create_file(&mut self, path: &Path) -> Option<(FileHandle, Timespec)> {
+    pub(crate) fn create_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<(FileHandle, Timespec), failure::Error> {
         debug!("--------");
-        if let Some(ostr_name) = path.file_name() {
-            if let Some(name) = ostr_name.to_str() {
-                let file = self.block_manager.root_dir_mut().new_file(name);
-                let time = file.file.write_time();
+        debug!("`create_file`: {:?}", path);
+        let file = self.block_manager.root_dir_mut().new_file(path)?;
+        let time = file.file.write_time();
 
-                let fh = self.open_file_counter;
-                self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        let fh = self.open_file_counter;
+        self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        self.open_files.insert(fh, file);
 
-                self.open_files.insert(fh, file);
+        self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
 
-                debug!("`create_file`: {:?}, handle: {}", path, fh);
-
-                self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
-
-                return Some((fh, time.into()));
-            }
-        }
-
-        None
+        Ok((fh, time.into()))
     }
 
     /// Open a file
     ///
-    pub(crate) fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Option<FileHandle> {
-        debug!("-------");
+    pub(crate) fn open_file(
+        &mut self,
+        path: &Path,
+        mode: OpenFileMode,
+    ) -> Result<FileHandle, failure::Error> {
+        debug!("--------");
+        debug!("`open_file` {:?}, mode: {:?}", path, mode);
         let file = match mode {
-            OpenFileMode::Write => self.block_manager.root_dir_mut().get_file_write_only(&path),
-            OpenFileMode::Read => self.block_manager.root_dir().get_file_read_only(&path),
-            OpenFileMode::ReadWrite => self.block_manager.root_dir_mut().get_file_read_write(&path),
+            OpenFileMode::Write => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_write_only(&path)?,
+            OpenFileMode::Read => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_read_only(&path)?,
+            OpenFileMode::ReadWrite => self
+                .block_manager
+                .root_dir_mut()
+                .get_file_read_write(&path)?,
         };
 
-        if let Some(file) = file {
-            let fh = self.open_file_counter;
-            self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        let fh = self.open_file_counter;
+        self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-            self.open_files.insert(fh, file);
+        self.open_files.insert(fh, file);
 
-            debug!("`open_file`: {:?}, handle: {}, mode: {:?}", path, fh, mode);
+        debug!("\thandle: {}", fh);
 
-            self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
+        self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
 
-            Some(fh)
-        } else {
-            None
-        }
+        Ok(fh)
     }
 
     /// Close a file
@@ -308,7 +311,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 let path = file.path.clone();
 
                 debug!("`close_file`: {:#?}, handle: {}", file, handle);
-                self.block_manager.root_dir_mut().update_file(file);
+                self.block_manager.root_dir_mut().commit_file(file);
 
                 self.notify_listeners(UfsMessage::FileClose(path));
             }
