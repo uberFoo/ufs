@@ -83,6 +83,7 @@ fn block_manager(
                     debug!("Request to read {}: {}", bundle, block);
                     if let Ok(data) = store.read_block(block) {
                         trace!("Read {} bytes", data.len());
+                        trace!("\t{}, {}, {}, {}", data[0], data[1], data[2], data[3]);
 
                         response.headers_mut().insert(
                             CONTENT_TYPE,

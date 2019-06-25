@@ -55,7 +55,7 @@ impl BlockWriter for FileWriter {
             fs::write(path, data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
-            trace!("{:#?}", data);
+            trace!("{:?}", data);
             Ok(data.len() as BlockSizeType)
         }
     }
@@ -76,7 +76,7 @@ impl BlockReader for FileReader {
         debug!("reading block from {:?}", path);
         let data = fs::read(path)?;
         debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
-        trace!("{:#?}", data);
+        trace!("{:?}", data);
 
         Ok(data)
     }

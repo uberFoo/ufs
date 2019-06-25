@@ -248,16 +248,16 @@ fn read_wrapper_block<BS: BlockReader>(
 ) -> Result<BlockMapWrapper, failure::Error> {
     debug!("Reading metadata from block {}", number);
     let bytes = store.read_block(number)?;
-    if let Ok(block) = bincode::deserialize::<BlockMapWrapper>(&bytes) {
-        if block.hash.validate(&block.data) {
-            return Ok(block);
-        } else {
-            error!("Error validating block {}", number);
-            return Err(format_err!("Error validating block {}", number));
+    match bincode::deserialize::<BlockMapWrapper>(&bytes) {
+        Ok(block) => {
+            if block.hash.validate(&block.data) {
+                return Ok(block);
+            } else {
+                error!("Error validating block {}", number);
+                return Err(format_err!("Error validating block {}", number));
+            }
         }
-    } else {
-        error!("Error deserializing block {}", number);
-        return Err(format_err!("Error deserializing block {}", number));
+        Err(e) => Err(format_err!("Error deserializing block {}: {}", number, e)),
     }
 }
 
