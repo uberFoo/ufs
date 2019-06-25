@@ -16,7 +16,7 @@ use log::{debug, error, trace, warn};
 use time::Timespec;
 
 use crate::{
-    block::{BlockCardinality, FileStore},
+    block::{BlockCardinality, BlockStorage, FileStore},
     metadata::DirectoryEntry,
     OpenFileMode, UfsMounter,
 };
@@ -102,16 +102,16 @@ impl FileInode {
 
 /// FUSE integration
 ///
-pub struct UberFSFuse {
-    file_system: UfsMounter<FileStore>,
+pub struct UberFSFuse<B: BlockStorage + 'static> {
+    file_system: UfsMounter<B>,
     // `inodes` is a mapping from "inode" number to an Inode
     inodes: Vec<Inode>,
 }
 
-impl UberFSFuse {
+impl<B: BlockStorage> UberFSFuse<B> {
     /// Create a new file system
     ///
-    pub fn new(file_system: UfsMounter<FileStore>) -> Self {
+    pub fn new(file_system: UfsMounter<B>) -> Self {
         let mut fs = UberFSFuse {
             file_system,
             inodes: Vec::new(),
@@ -155,7 +155,7 @@ impl UberFSFuse {
 ///  * `flush`
 ///  * `release`
 ///
-impl Filesystem for UberFSFuse {
+impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
     /// Start-up
     ///
     fn init(&mut self, _req: &Request) -> Result<(), c_int> {

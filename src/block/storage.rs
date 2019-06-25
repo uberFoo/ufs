@@ -46,18 +46,6 @@ pub trait BlockWriter {
         T: AsRef<[u8]>;
 }
 
-impl<'a, T> BlockWriter for &'a mut T
-where
-    T: BlockWriter,
-{
-    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, failure::Error>
-    where
-        D: AsRef<[u8]>,
-    {
-        self.write_block(bn, data.as_ref())
-    }
-}
-
 /// Reader of Blocks
 ///
 /// This is broken out from `BlockStorage` so that we can support reading  blocks prior to a full-
@@ -67,13 +55,4 @@ pub trait BlockReader {
     ///
     /// Return a fresh copy of the bytes contained in the specified block, as a `Vec<u8>`.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error>;
-}
-
-impl<'a, T> BlockReader for &'a mut T
-where
-    T: BlockReader,
-{
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
-        self.read_block(bn)
-    }
 }

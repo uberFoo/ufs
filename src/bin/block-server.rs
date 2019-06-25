@@ -28,7 +28,7 @@ fn get_store(
     bundle_root: &Path,
     store_map: &mut HashMap<String, Option<FileStore>>,
 ) -> Option<(String, FileStore)> {
-    trace!("store map {:#?}", store_map);
+    // trace!("store map {:#?}", store_map);
     let path = Path::new(uri_path).strip_prefix("/").unwrap();
     if path.iter().count() != 1 {
         // Don't allow arbitrary paths within the host file system -- this is just an ID.
@@ -83,7 +83,6 @@ fn block_manager(
                     debug!("Request to read {}: {}", bundle, block);
                     if let Ok(data) = store.read_block(block) {
                         trace!("Read {} bytes", data.len());
-                        trace!("\t{}, {}, {}, {}", data[0], data[1], data[2], data[3]);
 
                         response.headers_mut().insert(
                             CONTENT_TYPE,

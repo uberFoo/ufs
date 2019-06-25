@@ -264,18 +264,6 @@ impl BlockStorage for FileStore {
     }
 }
 
-// impl<'a, T> BlockWriter for &'a mut T
-// where
-//     T: BlockWriter,
-// {
-//     fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, Error>
-//     where
-//         D: AsRef<[u8]>,
-//     {
-//         self.write_block(bn, data.as_ref())
-//     }
-// }
-
 impl BlockWriter for FileStore {
     fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, failure::Error>
     where

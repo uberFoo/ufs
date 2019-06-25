@@ -26,6 +26,7 @@ structopt = "0.2.16"
 time = "0.1.42"
 wasmi = "0.4.5"
 crossbeam = "0.7.1"
+clap = "2.33.0"
 
 [dependencies.chrono]
 version = "0.4.6"
