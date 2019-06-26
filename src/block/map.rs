@@ -19,7 +19,6 @@ use crate::{
     UfsUuid,
 };
 
-#[derive(Debug, Deserialize, Serialize)]
 /// Block Map Wrapper Type
 ///
 /// The size of the block map changes over time, and while a maximum  _could_ be determined at
@@ -27,6 +26,7 @@ use crate::{
 ///
 /// This type chunks the block map data across the disk, starting at block 0.  Each block contains a
 ///  pointer to the next block, and the data is aggregated and reconstituted when read.
+#[derive(Debug, Deserialize, Serialize)]
 struct BlockMapWrapper {
     /// Underlying data
     data: Vec<u8>,
@@ -35,12 +35,12 @@ struct BlockMapWrapper {
     next_block: Option<BlockNumber>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 /// Block Map
 ///
 /// A mapping from block number to Blocks.  Each block is one of several block types, where each
 /// type may include metadata about the underlying block.  For instance, the hash value of the
 /// block, and the next block to come after it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BlockMap {
     /// The UUID of this file system
     ///
@@ -163,14 +163,13 @@ impl BlockMap {
                     None => return Err(format_err!("No free blocks.")),
                 };
                 debug!("Allocating new blockmap wrapper block {}", meta_block);
-                // self.get_mut(meta_block).unwrap().tag_metadata();
                 self.map[meta_block as usize].tag_metadata();
                 self.block_map_metadata_blocks.push(meta_block);
             }
 
             // Grab a fresh version of ourself to serialize since we converted free blocks to
             // metadata blocks
-            bytes = bincode::serialize(&self).unwrap();
+            bytes = bincode::serialize(&self)?;
 
             block_count = bytes.len() as u64 / chunk_size
                 + if bytes.len() as u64 % chunk_size > 0 {
@@ -246,7 +245,7 @@ fn read_wrapper_block<BS: BlockReader>(
     store: &BS,
     number: BlockNumber,
 ) -> Result<BlockMapWrapper, failure::Error> {
-    debug!("Reading metadata from block {}", number);
+    debug!("Reading block map from block {}", number);
     let bytes = store.read_block(number)?;
     match bincode::deserialize::<BlockMapWrapper>(&bytes) {
         Ok(block) => {
@@ -274,12 +273,10 @@ impl BlockType {
     }
 
     pub(in crate::block) fn new_data() -> Self {
-        // BlockType::Data(DataBlock { next_block: None })
         BlockType::Data
     }
 
     pub(in crate::block) fn new_metadata() -> Self {
-        // BlockType::Metadata(DataBlock { next_block: None })
         BlockType::Metadata
     }
 
