@@ -46,11 +46,13 @@ impl MemoryStore {
 }
 
 impl BlockStorage for MemoryStore {
-    fn metadata(&self) -> &BlockMap {
+    fn commit_map(&mut self) {}
+
+    fn map(&self) -> &BlockMap {
         &self.map
     }
 
-    fn metadata_mut(&mut self) -> &mut BlockMap {
+    fn map_mut(&mut self) -> &mut BlockMap {
         &mut self.map
     }
 

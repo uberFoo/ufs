@@ -10,10 +10,11 @@ use ::time::Timespec;
 use crossbeam::crossbeam_channel;
 use failure::format_err;
 use log::{debug, error, trace, warn};
+use reqwest::{IntoUrl, Url};
 
 use crate::block::{
     manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
-    MemoryStore,
+    MemoryStore, NetworkStore,
 };
 use crate::metadata::{
     Directory, DirectoryEntry, DirectoryMetadata, File, FileHandle, FileSize, FileVersion,
@@ -156,19 +157,20 @@ impl UberFileSystem<FileStore> {
     }
 }
 
-// impl UberFileSystem<NetworkStore> {
-//     pub fn new_networked(url: Url) -> Result<Self, failure::Error> {
-//         let net_store = NetworkStore::new(url)?;
-//         let block_manager = BlockManager::load(net_store)?;
+impl UberFileSystem<NetworkStore> {
+    pub fn new_networked<U: IntoUrl>(url: U) -> Result<Self, failure::Error> {
+        let net_store = NetworkStore::new(url)?;
+        let block_manager = BlockManager::load(net_store)?;
 
-//         Ok(UberFileSystem {
-//             block_manager,
-//             open_files: HashMap::new(),
-//             open_file_counter: 0,
-//             listeners: vec![],
-//         })
-//     }
-// }
+        Ok(UberFileSystem {
+            block_manager,
+            open_files: HashMap::new(),
+            open_dirs: HashMap::new(),
+            open_file_counter: 0,
+            listeners: vec![],
+        })
+    }
+}
 
 impl<B: BlockStorage> UberFileSystem<B> {
     fn notify_listeners(&self, msg: UfsMessage) {
@@ -449,6 +451,19 @@ mod test {
             h0 != h1,
             "two open calls to the same file should return different handles"
         );
+    }
+
+    #[test]
+    fn read_and_write_file_networked() {
+        init();
+
+        let mut ufs = UberFileSystem::new_networked("http://localhost:8888/test").unwrap();
+        let test = include_str!("lib.rs").as_bytes();
+
+        let (h, _) = ufs.create_file(&PathBuf::from("/lib.rs")).unwrap();
+        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        let bytes = ufs.read_file(h, 0, test.len()).unwrap();
+        assert_eq!(test, bytes.as_slice());
     }
 
     #[test]
