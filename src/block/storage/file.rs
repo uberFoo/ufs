@@ -87,13 +87,16 @@ fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
     let mut path = root.clone();
     let mut stack = vec![];
     let mut blk = block;
-    while blk > 0xf {
-        let nibble = blk & 0xf;
-        stack.push(nibble);
-        blk >>= 4;
+    if block < 0x10 {
+        stack.push(block);
+        stack.push(0);
+    } else {
+        while blk > 0x0 {
+            let nibble = blk & 0xf;
+            stack.push(nibble);
+            blk >>= 4;
+        }
     }
-    // Pulling this out of the loop avoids an issue with the `0` block.
-    path.push(format!("{:x?}", blk));
 
     while stack.len() > 0 {
         path.push(format!("{:x?}", stack.pop().unwrap()));
@@ -190,6 +193,7 @@ impl FileStore {
         /// blocks.  Note that it currently makes more directories than strictly necessary.  I just
         /// don't feel like adding (figuring out really) the additional logic to minimize things.
         fn make_dirs(root: &PathBuf, count: BlockCardinality) -> io::Result<()> {
+            trace!("`make_dirs({:?}, {})", root, count);
             if count > 0 {
                 let count = count - 1;
                 for i in 0x0..0x10 {
@@ -205,11 +209,12 @@ impl FileStore {
         }
 
         // The trick here is to count how many times the number of blocks needs to be shifted right
-        // to equal one, and then divide that number by four.  This tells us how many nibbles there
+        // to equal zero, and then divide that number by four.  This tells us how many nibbles there
         // are in the number, which is exactly the depth of our directory hierarchy.
         let mut n = 0;
+        // count - 1 because we start counting at 0, i.e., the first block is block 0
         let mut b = count - 1;
-        while b > 1 {
+        while b > 0 {
             b >>= 1;
             n += 1;
         }
@@ -220,7 +225,7 @@ impl FileStore {
         // Now allocate the blocks.
         for block in 0..count {
             let path = path_for_block(&path, block);
-            trace!("creating block file {:}", block);
+            trace!("creating block file {:x?}", block);
             fs::File::create(path)
                 .unwrap_or_else(|_| panic!("unable to create file for block {}.", block));
         }
@@ -229,8 +234,8 @@ impl FileStore {
     }
 }
 
-impl Drop for FileStore {
-    fn drop(&mut self) {
+impl BlockStorage for FileStore {
+    fn commit_map(&mut self) {
         debug!("writing BlockMap");
         let mut writer = FileWriter {
             block_size: self.block_size,
@@ -244,14 +249,12 @@ impl Drop for FileStore {
             Err(e) => error!("error dropping FileStore: {}", e),
         };
     }
-}
 
-impl BlockStorage for FileStore {
-    fn metadata(&self) -> &BlockMap {
+    fn map(&self) -> &BlockMap {
         &self.map
     }
 
-    fn metadata_mut(&mut self) -> &mut BlockMap {
+    fn map_mut(&mut self) -> &mut BlockMap {
         &mut self.map
     }
 
@@ -271,7 +274,6 @@ impl BlockWriter for FileStore {
     {
         let data = data.as_ref();
 
-        // let mut zeroes = [0u8; BlockSize::TwentyFortyEight as usize];
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {

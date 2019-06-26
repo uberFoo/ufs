@@ -3,7 +3,7 @@
 //! This is how we fetch blocks from the network.
 //!
 use failure::format_err;
-use log::{debug, trace, error};
+use log::{debug, error, trace};
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
 use crate::block::{
@@ -46,28 +46,26 @@ impl NetworkStore {
     }
 }
 
-impl Drop for NetworkStore {
-    fn drop(&mut self) {
+impl BlockStorage for NetworkStore {
+    fn commit_map(&mut self) {
         debug!("writing BlockMap");
         let mut writer = NetworkWriter {
             url: self.url.clone(),
-            client: self.client.clone()
+            client: self.client.clone(),
         };
 
         debug!("dropping NetworkStore");
         match self.map.serialize(&mut writer) {
             Ok(_) => debug!("dropped NetworkStore"),
-            Err(e) => error!("error dropping NetworkStore: {}", e)
+            Err(e) => error!("error dropping NetworkStore: {}", e),
         };
     }
-}
 
-impl BlockStorage for NetworkStore {
-    fn metadata(&self) -> &BlockMap {
+    fn map(&self) -> &BlockMap {
         &self.map
     }
 
-    fn metadata_mut(&mut self) -> &mut BlockMap {
+    fn map_mut(&mut self) -> &mut BlockMap {
         &mut self.map
     }
 
@@ -102,6 +100,8 @@ impl BlockWriter for NetworkStore {
             .header(CONTENT_TYPE, "application/octet-stream")
             .body(data.to_vec())
             .send()?;
+
+        // debug!("block: {}, bytes:\n{:?}", bn, data);
 
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
@@ -153,12 +153,13 @@ impl BlockWriter for NetworkWriter {
             .body(data.to_vec())
             .send()?;
 
+        // debug!("block: {}, bytes:\n{:?}", bn, data);
+
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
             Err(e) => Err(format_err!("Could not parse result as BlockSize: {}", e)),
         }
     }
-
 }
 
 struct NetworkReader {

@@ -45,7 +45,7 @@ where
 
     /// FIXME: This may be nice in a From<BlockMetadata>
     pub(crate) fn load(mut store: BS) -> Result<Self, failure::Error> {
-        match store.metadata().root_block() {
+        match store.map().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
                 match read_metadata(&mut store, root_block) {
@@ -81,13 +81,13 @@ where
     }
 
     pub(crate) fn get_block(&self, number: BlockNumber) -> Option<&Block> {
-        self.store.metadata().get(number)
+        self.store.map().get(number)
     }
 
     /// The number of available, un-allocated Blocks.
     ///
     pub(crate) fn free_block_count(&self) -> BlockCardinality {
-        self.store.metadata().free_blocks().len() as BlockCardinality
+        self.store.map().free_blocks().len() as BlockCardinality
     }
 
     /// Request a Block
@@ -95,7 +95,7 @@ where
     /// The implementor maintains a pool of available blocks, and if there is one available, this
     /// method will return it.
     pub(in crate::block) fn get_free_block(&mut self) -> Option<BlockCardinality> {
-        self.store.metadata_mut().free_blocks_mut().pop_front()
+        self.store.map_mut().free_blocks_mut().pop_front()
     }
 
     // /// Recycle a Block
@@ -113,19 +113,16 @@ where
     pub(crate) fn serialize(&mut self) {
         if self.root_dir.is_dirty() {
             let block_number = match write_metadata(&mut self.store, &mut self.root_dir) {
-                Ok(block) => Some(block),
+                Ok(block) => {
+                    debug!("Stored new root block {}", block);
+                    self.store.map_mut().set_root_block(block);
+                    self.store.commit_map();
+                }
                 Err(e) => {
                     error!("error writing metadata: {}", e);
-                    None
+                    error!("Did not store new root block");
                 }
             };
-            match block_number {
-                Some(n) => {
-                    debug!("Stored new root block {}", n);
-                    self.store.metadata_mut().set_root_block(n);
-                }
-                None => error!("Did not store new root block"),
-            }
         }
     }
 
@@ -140,7 +137,7 @@ where
             let bytes = &data[..end];
             let byte_count = self.store.write_block(number, bytes)?;
             debug!("wrote block 0x{:x?}", number);
-            let block = self.store.metadata_mut().get_mut(number).unwrap();
+            let block = self.store.map_mut().get_mut(number).unwrap();
             block.set_size(byte_count);
             block.set_hash(BlockHash::new(bytes));
             block.tag_data();

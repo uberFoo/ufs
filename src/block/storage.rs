@@ -9,14 +9,20 @@ use crate::block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, Bloc
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
 /// responsibility for mapping block numbers to _some_ storage location.  Additionally they are
 /// able to read and write data to blocks.
+///
+/// Finally, the block storage provides access to metadata, stored as blocks,
 pub trait BlockStorage: BlockWriter + BlockReader + Send {
+    /// Commit the block map to storage
+    ///
+    fn commit_map(&mut self);
+
     /// Get an immutable reference to the block map.
     ///
-    fn metadata(&self) -> &BlockMap;
+    fn map(&self) -> &BlockMap;
 
     /// Get a mutable reference to the block map.
     ///
-    fn metadata_mut(&mut self) -> &mut BlockMap;
+    fn map_mut(&mut self) -> &mut BlockMap;
 
     /// The system-wide Block Size, in bytes.
     ///
