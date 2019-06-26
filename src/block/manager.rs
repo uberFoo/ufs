@@ -112,7 +112,7 @@ where
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
         if self.root_dir.is_dirty() {
-            let block_number = match write_metadata(&mut self.store, &mut self.root_dir) {
+            match write_metadata(&mut self.store, &mut self.root_dir) {
                 Ok(block) => {
                     debug!("Stored new root block {}", block);
                     self.store.map_mut().set_root_block(block);

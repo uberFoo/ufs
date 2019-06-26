@@ -201,7 +201,10 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`list_files`: {}", handle);
         match self.open_dirs.get(&handle) {
-            Some(dir) => Some(dir.directory.entries()),
+            Some(dir) => {
+                trace!("\t{:#?}", dir.directory.entries());
+                Some(dir.directory.entries())
+            }
             None => {
                 warn!("\tdirectory not opened");
                 None
@@ -227,6 +230,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             let fh = self.open_file_counter;
             self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
+            trace!("\t{:#?}", dir);
             self.open_dirs.insert(fh, dir);
 
             return Some(fh);
