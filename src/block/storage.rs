@@ -9,14 +9,20 @@ use crate::block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, Bloc
 /// This trait is an abstraction for the underlying block storage.  An implementor is taking
 /// responsibility for mapping block numbers to _some_ storage location.  Additionally they are
 /// able to read and write data to blocks.
+///
+/// Finally, the block storage provides access to metadata, stored as blocks,
 pub trait BlockStorage: BlockWriter + BlockReader + Send {
+    /// Commit the block map to storage
+    ///
+    fn commit_map(&mut self);
+
     /// Get an immutable reference to the block map.
     ///
-    fn metadata(&self) -> &BlockMap;
+    fn map(&self) -> &BlockMap;
 
     /// Get a mutable reference to the block map.
     ///
-    fn metadata_mut(&mut self) -> &mut BlockMap;
+    fn map_mut(&mut self) -> &mut BlockMap;
 
     /// The system-wide Block Size, in bytes.
     ///
@@ -46,18 +52,6 @@ pub trait BlockWriter {
         T: AsRef<[u8]>;
 }
 
-impl<'a, T> BlockWriter for &'a mut T
-where
-    T: BlockWriter,
-{
-    fn write_block<D>(&mut self, bn: BlockNumber, data: D) -> Result<BlockSizeType, failure::Error>
-    where
-        D: AsRef<[u8]>,
-    {
-        self.write_block(bn, data.as_ref())
-    }
-}
-
 /// Reader of Blocks
 ///
 /// This is broken out from `BlockStorage` so that we can support reading  blocks prior to a full-
@@ -67,13 +61,4 @@ pub trait BlockReader {
     ///
     /// Return a fresh copy of the bytes contained in the specified block, as a `Vec<u8>`.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error>;
-}
-
-impl<'a, T> BlockReader for &'a mut T
-where
-    T: BlockReader,
-{
-    fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
-        self.read_block(bn)
-    }
 }

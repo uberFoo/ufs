@@ -28,7 +28,6 @@ fn get_store(
     bundle_root: &Path,
     store_map: &mut HashMap<String, Option<FileStore>>,
 ) -> Option<(String, FileStore)> {
-    trace!("store map {:#?}", store_map);
     let path = Path::new(uri_path).strip_prefix("/").unwrap();
     if path.iter().count() != 1 {
         // Don't allow arbitrary paths within the host file system -- this is just an ID.
@@ -40,7 +39,10 @@ fn get_store(
 
         let store = store_map.entry(bundle.to_string()).or_insert_with(|| {
             match FileStore::load(bundle_path.clone()) {
-                Ok(bs) => Some(bs),
+                Ok(bs) => {
+                    debug!("loaded file store {:?}", bundle_path);
+                    Some(bs)
+                }
                 Err(e) => {
                     error!(
                         "Unable to open File Store {}: {}",
@@ -80,7 +82,7 @@ fn block_manager(
                 // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
                 // * Allow a range of blocks, e.g., 5-9
                 if let Ok(block) = query.parse::<BlockNumber>() {
-                    debug!("Request to read {}: {}", bundle, block);
+                    debug!("Request to read {}:0x{:x?}", bundle, block);
                     if let Ok(data) = store.read_block(block) {
                         trace!("Read {} bytes", data.len());
 
@@ -94,7 +96,7 @@ fn block_manager(
                         *response.body_mut() = Body::from(data);
                         *response.status_mut() = StatusCode::OK;
                     } else {
-                        error!("Problem reading block {}", block);
+                        error!("Problem reading block {}:0x{:x?}", bundle, block);
                     }
                 } else {
                     error!("Invalid block number: '{}'", query);
@@ -109,7 +111,7 @@ fn block_manager(
         (&Method::POST, path, Some(query)) => {
             if let Some((bundle, mut store)) = get_store(path, bundle_root, store_map) {
                 if let Ok(block) = query.parse::<BlockNumber>() {
-                    debug!("Request to write {}:{}", bundle, block);
+                    debug!("Request to write {}:0x{:x?}", bundle, block);
 
                     let bytes_written = req
                         .into_body()
@@ -125,7 +127,7 @@ fn block_manager(
                                 *response.status_mut() = StatusCode::OK;
                                 response
                             } else {
-                                error!("Problem writing block {}", block);
+                                error!("Problem writing block {}:0x{:x?}", bundle, block);
                                 response
                             }
                         });

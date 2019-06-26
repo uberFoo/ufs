@@ -21,8 +21,8 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug FUSE",
-            "program": "${workspaceFolder}/target/debug/examples/fuse-ufs",
-            "args": ["bundles/test", "mnt"],
+            "program": "${workspaceFolder}/target/debug/fuse-ufs",
+            "args": ["--url", "http://localhost:8888/test", "mnt"],
             "env": [{ "name": "RUST_LOG", "value": "debug,ufs::runtime=info" }],
             "cwd": "${workspaceFolder}"
         }

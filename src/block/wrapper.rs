@@ -97,16 +97,12 @@ where
 
     // Add to our list with free blocks until we have enough blocks.
     while block_count > block_array.len() as u64 {
-        let meta_block = match store.metadata_mut().free_blocks_mut().pop_front() {
+        let meta_block = match store.map_mut().free_blocks_mut().pop_front() {
             Some(b) => b,
             None => return Err(format_err!("no free blocks")),
         };
         debug!("allocating new blockmap wrapper block {}", meta_block);
-        store
-            .metadata_mut()
-            .get_mut(meta_block)
-            .unwrap()
-            .tag_metadata();
+        store.map_mut().get_mut(meta_block).unwrap().tag_metadata();
         block_array.push_back(meta_block);
     }
 

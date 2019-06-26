@@ -546,7 +546,7 @@ impl FileMetadata {
             Some(v) => {
                 if v.dirty {
                     self.versions.push(v.clone());
-                    self.current = None
+                    self.current = None;
                 }
             }
             None => warn!("called commit with empty FileVersion"),
@@ -560,6 +560,7 @@ impl FileMetadata {
         if version.dirty {
             version.dirty = false;
             self.versions.push(version);
+            self.current = None;
         }
     }
 
