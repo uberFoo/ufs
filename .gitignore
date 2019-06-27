@@ -6,3 +6,4 @@ bundle*
 boneyard
 .DS_Store
 hello
+*.wasm
