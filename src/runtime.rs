@@ -3,8 +3,7 @@
 //! Support for running WASM code *inside* the file system.
 //!
 use std::{
-    fs,
-    io::Read,
+    path::PathBuf,
     thread::{spawn, JoinHandle},
 };
 
@@ -31,21 +30,23 @@ pub use self::fsops::FileSystemOps;
 pub use self::message::{UfsMessage, UfsMessageHandler};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn init_runtime() -> Result<Vec<Process>, failure::Error> {
-    Ok(vec![Process::new()])
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Process {
+    name: PathBuf,
     sender: crossbeam_channel::Sender<UfsMessage>,
     receiver: crossbeam_channel::Receiver<UfsMessage>,
+    program: Vec<u8>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Process {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(name: PathBuf, program: Vec<u8>) -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded::<UfsMessage>();
-        Process { sender, receiver }
+        Process {
+            name,
+            sender,
+            receiver,
+            program,
+        }
     }
 
     pub(crate) fn start(
@@ -55,10 +56,7 @@ impl Process {
         debug!("-------");
         debug!("`start`");
         spawn(move || {
-            let mut buffer = Vec::new();
-            let mut f = fs::File::open("wasm_programs/word_count.wasm")?;
-            f.read_to_end(&mut buffer)?;
-            let module = wasmi::Module::from_buffer(buffer)?;
+            let module = wasmi::Module::from_buffer(&p.program)?;
 
             let resolver = RuntimeModuleImportResolver::new();
             let mut builder = ImportsBuilder::new();
@@ -69,11 +67,13 @@ impl Process {
                 .assert_no_start();
 
             let mut handler = WasmMessageHandler::new(instance, fs_ops);
+            info!("WASM program {:?} started", p.name);
 
             loop {
                 let message = p.receiver.recv().unwrap();
                 p.dispatch_message(&mut handler, message.clone());
                 if let UfsMessage::Shutdown = message {
+                    info!("WASM program {:?} shutting down", p.name);
                     break;
                 }
             }
