@@ -1,11 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! FUSE Interface for uberFS
 //!
-use std::{
-    collections::HashMap,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -15,11 +11,7 @@ use libc::{c_int, ENOENT, O_RDONLY, O_RDWR, O_WRONLY};
 use log::{debug, error, trace, warn};
 use time::Timespec;
 
-use crate::{
-    block::{BlockCardinality, BlockStorage, FileStore},
-    metadata::DirectoryEntry,
-    OpenFileMode, UfsMounter,
-};
+use crate::{block::BlockStorage, metadata::DirectoryEntry, OpenFileMode, UfsMounter};
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };
 const TIME: Timespec = Timespec {
@@ -563,7 +555,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
             ino, offset, size
         );
 
-        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        let guard = self.file_system.lock().expect("poisoned ufs lock");
         if let Ok(buffer) = &mut guard.read_file(fh, offset, size as usize) {
             debug!("read {} bytes", buffer.len());
             trace!("{:?}", &buffer);

@@ -8,7 +8,7 @@ use ::time::Timespec;
 
 use crate::{
     block::BlockStorage,
-    metadata::{DirectoryEntry, FileHandle, FileSize},
+    metadata::{DirectoryEntry, FileHandle},
     OpenFileMode, UberFileSystem,
 };
 
@@ -68,7 +68,7 @@ impl<B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
         offset: i64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
-        let mut guard = self.inner.lock().expect("poisoned ufs lock");
+        let guard = self.inner.lock().expect("poisoned ufs lock");
         guard.read_file(handle, offset, size)
     }
 }

@@ -14,7 +14,7 @@ use std::{
 };
 
 use failure::format_err;
-use log::{debug, error, trace, warn};
+use log::{debug, error, warn};
 use serde_derive::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
