@@ -10,6 +10,7 @@
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     path::{Component, Components, Path, PathBuf},
 };
 
@@ -30,6 +31,10 @@ pub(crate) type FileSize = u64;
 
 /// The size of a FileHandle
 pub type FileHandle = u64;
+
+pub(crate) const WASM_DIR: &'static str = ".wasm";
+pub(crate) const WASM_EXT: &'static str = "wasm";
+pub(crate) const VERS_DIR: &'static str = ".vers";
 
 /// UFS internal definition of a File
 ///
@@ -118,7 +123,19 @@ impl DirectoryMetadata {
         };
         // Create the directory for WASM programs
         d.entries.insert(
-            ".wasm".to_string(),
+            WASM_DIR.to_string(),
+            DirectoryEntry::Directory(DirectoryMetadata {
+                dirty: false,
+                birth_time: time,
+                write_time: time,
+                change_time: time,
+                access_time: time,
+                entries: HashMap::new(),
+            }),
+        );
+        // Create the directory for file versions
+        d.entries.insert(
+            VERS_DIR.to_string(),
             DirectoryEntry::Directory(DirectoryMetadata {
                 dirty: false,
                 birth_time: time,
@@ -251,16 +268,149 @@ impl DirectoryMetadata {
     where
         P: AsRef<Path>,
     {
+        let path = path.as_ref();
         debug!("--------");
-        debug!("`get_directory`: {:?}", path.as_ref());
-        let mut iter = path.as_ref().components();
-        if let Some(dir) = self.get_directory_metadata(path.as_ref(), false, &mut iter) {
+        debug!("`get_directory`: {:?}", path);
+        let mut vers = false;
+        let mut files = HashMap::<String, DirectoryEntry>::new();
+        if path.file_name() == Some(OsStr::new(VERS_DIR)) {
+            vers = true;
+            if let Some(parent_path) = path.parent() {
+                let mut iter = parent_path.components();
+                if let Some(parent_dir) = self.get_directory_metadata(parent_path, false, &mut iter)
+                {
+                    for (name, entry) in &parent_dir.entries {
+                        if let DirectoryEntry::File(f) = entry {
+                            for (n, version) in f.get_versions().iter().enumerate() {
+                                let mut name = name.clone();
+                                name.push('@');
+                                name.push_str(&n.to_string());
+                                files.insert(
+                                    name,
+                                    DirectoryEntry::File(FileMetadata::new_with_version(
+                                        version.clone(),
+                                    )),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut iter = path.components();
+        if let Some(dir) = self.get_directory_metadata(path, false, &mut iter) {
+            let mut dir = dir.clone();
+            if vers {
+                dir.entries = files;
+            }
             Ok(Directory {
-                path: path.as_ref().to_owned(),
-                directory: dir.clone(),
+                path: path.to_owned(),
+                directory: dir,
             })
         } else {
             Err(format_err!("`get_directory` malformed path"))
+        }
+    }
+
+    fn get_file<P>(&mut self, path: P, dirty: bool) -> Result<FileMetadata, failure::Error>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref();
+        debug!("--------");
+        debug!("`get_file`: {:?}", path);
+        // Check to see if the file we are opening is in the "versions" subdirectory. If so,
+        // populate a `FileMetadata` with the requested file version.
+        if let Some(root_path) = path.parent() {
+            if root_path.file_name() == Some(OsStr::new(VERS_DIR)) {
+                debug!("\tworking in {} directory", VERS_DIR);
+                if let Some(root_path) = root_path.parent() {
+                    let mut iter = root_path.components();
+                    if let Some(dir_root) = self.get_directory_metadata(root_path, dirty, &mut iter)
+                    {
+                        if let Some(versioned_file_name) = path.file_name() {
+                            // FIXME: This will break if there are @'s in the file name
+                            if let Some(vfn_str) = versioned_file_name.to_str() {
+                                let mut i = vfn_str.split(|c| c == '@');
+                                if let Some(file_name) = i.next() {
+                                    if let Some(v_str) = i.next() {
+                                        if let Ok(file_version) = v_str.parse::<usize>() {
+                                            if let Some(DirectoryEntry::File(file)) =
+                                                dir_root.entries.get(file_name)
+                                            {
+                                                if let Some(version) =
+                                                    file.get_version(file_version)
+                                                {
+                                                    let file = FileMetadata::new_with_version(
+                                                        version.clone(),
+                                                    );
+                                                    debug!("\treturning file {:#?}", file);
+                                                    Ok(file)
+                                                } else {
+                                                    Err(format_err!(
+                                                        "can't find version {} for {:?}",
+                                                        file_version,
+                                                        path
+                                                    ))
+                                                }
+                                            } else {
+                                                Err(format_err!(
+                                                    "can't find {} in directory {:?}",
+                                                    file_name,
+                                                    root_path
+                                                ))
+                                            }
+                                        } else {
+                                            Err(format_err!(
+                                                "can't parse version number {:?}",
+                                                path
+                                            ))
+                                        }
+                                    } else {
+                                        Err(format_err!("file name missing version {:?}", path))
+                                    }
+                                } else {
+                                    Err(format_err!("malformed versioned file {:?}", path))
+                                }
+                            } else {
+                                Err(format_err!("malformed file name {:?}", versioned_file_name))
+                            }
+                        } else {
+                            Err(format_err!("malformed path {:?}", path))
+                        }
+                    } else {
+                        Err(format_err!("bogus root directory"))
+                    }
+                } else {
+                    Err(format_err!("malformed path {:?}", path))
+                }
+            } else {
+                // This is a request for a "regular" file, not a "versioned" file.
+                if let Some(file_name) = path.file_name() {
+                    if let Some(root) = path.parent() {
+                        let mut iter = root.components();
+                        if let Some(dir_root) = self.get_directory_metadata(root, dirty, &mut iter)
+                        {
+                            if let Some(DirectoryEntry::File(file)) =
+                                dir_root.entries.get(file_name.to_str().unwrap())
+                            {
+                                debug!("\treturning file {:#?}", file);
+                                Ok(file.clone())
+                            } else {
+                                Err(format_err!("can't find file: {:?}", path))
+                            }
+                        } else {
+                            Err(format_err!("bogus root directory"))
+                        }
+                    } else {
+                        Err(format_err!("malformed path {:?}", path))
+                    }
+                } else {
+                    Err(format_err!("malformed path {:?}", path))
+                }
+            }
+        } else {
+            Err(format_err!(""))
         }
     }
 
@@ -269,40 +419,30 @@ impl DirectoryMetadata {
     where
         P: AsRef<Path>,
     {
+        let path = path.as_ref();
         debug!("--------");
-        debug!("`get_file_read_only`: {:?}", path.as_ref());
-        if let Some(file_name) = path.as_ref().file_name() {
-            if let Some(root) = path.as_ref().parent() {
-                let mut iter = root.components();
-                if let Some(dir_root) = self.get_directory_metadata(root, false, &mut iter) {
-                    if let Some(DirectoryEntry::File(file)) =
-                        dir_root.entries.get(file_name.to_str().unwrap())
-                    {
-                        let mut file = file.clone();
-                        // Copy the latest version or create a new one if necessary.
-                        let v = if file.version_count() > 0 {
-                            file.versions[file.version_count() - 1].clone()
-                        } else {
-                            FileVersion::new()
-                        };
-                        file.current = Some(v);
+        debug!("`get_file_read_only`: {:?}", path);
+        let mut file = self.get_file(&path, false)?;
 
-                        Ok(File {
-                            path: path.as_ref().to_path_buf(),
-                            file,
-                        })
-                    } else {
-                        Err(format_err!("can't find file: {:?}", path.as_ref()))
-                    }
+        match file.current {
+            Some(_) => (),
+            None => {
+                // Copy the latest version or create a new one if necessary.
+                let v = if file.version_count() > 0 {
+                    file.versions[file.version_count() - 1].clone()
                 } else {
-                    Err(format_err!("bogus root directory"))
-                }
-            } else {
-                Err(format_err!("malformed path"))
+                    FileVersion::new()
+                };
+                file.current = Some(v);
             }
-        } else {
-            Err(format_err!("malformed path"))
-        }
+        };
+
+        debug!("\treturning file {:#?}", file);
+
+        Ok(File {
+            path: path.to_path_buf(),
+            file,
+        })
     }
 
     /// Retrieve a file by name from this directory
@@ -310,40 +450,24 @@ impl DirectoryMetadata {
     where
         P: AsRef<Path>,
     {
+        let path = path.as_ref();
         debug!("--------");
-        debug!("`get_file_read_write`: {:?}", path.as_ref());
-        if let Some(file_name) = path.as_ref().file_name() {
-            if let Some(root) = path.as_ref().parent() {
-                let mut iter = root.components();
-                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
-                    if let Some(DirectoryEntry::File(file)) =
-                        dir_root.entries.get(file_name.to_str().unwrap())
-                    {
-                        let mut file = file.clone();
-                        // Copy the latest version or create a new one if necessary.
-                        let v = if file.version_count() > 0 {
-                            file.versions[file.version_count() - 1].clone()
-                        } else {
-                            FileVersion::new()
-                        };
-                        file.current = Some(v);
-
-                        Ok(File {
-                            path: path.as_ref().to_path_buf(),
-                            file,
-                        })
-                    } else {
-                        Err(format_err!("can't find file: {:?}", path.as_ref()))
-                    }
-                } else {
-                    Err(format_err!("bogus root directory"))
-                }
-            } else {
-                Err(format_err!("malformed path"))
-            }
+        debug!("`get_file_read_write`: {:?}", path);
+        let mut file = self.get_file(&path, true)?;
+        // Copy the latest version or create a new one if necessary.
+        let v = if file.version_count() > 0 {
+            file.versions[file.version_count() - 1].clone()
         } else {
-            Err(format_err!("malformed path"))
-        }
+            FileVersion::new()
+        };
+        file.current = Some(v);
+
+        debug!("\treturning file {:#?}", file);
+
+        Ok(File {
+            path: path.to_path_buf(),
+            file,
+        })
     }
 
     /// Retrieve a file by name from this directory
@@ -351,45 +475,19 @@ impl DirectoryMetadata {
     where
         P: AsRef<Path>,
     {
+        let path = path.as_ref();
         debug!("--------");
-        debug!("`get_file_write_only`: {:?}", path.as_ref());
-        if let Some(file_name) = path.as_ref().file_name() {
-            if let Some(root) = path.as_ref().parent() {
-                let mut iter = root.components();
-                if let Some(dir_root) = self.get_directory_metadata(root, true, &mut iter) {
-                    if let Some(DirectoryEntry::File(file)) =
-                        dir_root.entries.get(file_name.to_str().unwrap())
-                    {
-                        let mut file = file.clone();
-                        file.current = Some(FileVersion::new());
+        debug!("`get_file_write_only`: {:?}", path);
+        let mut file = self.get_file(&path, true)?;
+        file.current = Some(FileVersion::new());
 
-                        Ok(File {
-                            path: path.as_ref().to_path_buf(),
-                            file,
-                        })
-                    } else {
-                        Err(format_err!("can't find file: {:?}", path.as_ref()))
-                    }
-                } else {
-                    Err(format_err!("bogus root directory"))
-                }
-            } else {
-                Err(format_err!("malformed path"))
-            }
-        } else {
-            Err(format_err!("malformed path"))
-        }
+        debug!("\treturning file {:#?}", file);
+
+        Ok(File {
+            path: path.to_path_buf(),
+            file,
+        })
     }
-
-    // /// Commit changes to a directory
-    // pub(crate) fn commit_directory(&mut self, dir: Directory) -> Result<(), failure::Error> {
-    //     debug!("--------");
-    //     debug!("`commit_directory`: {#?}", dir);
-    //     if dir.directory.dirty {
-
-    //     }
-    //     Ok(())
-    // }
 
     /// Commit changes to a file under this directory
     ///
@@ -514,6 +612,13 @@ impl FileMetadata {
         }
     }
 
+    fn new_with_version(version: FileVersion) -> Self {
+        FileMetadata {
+            current: Some(version),
+            versions: vec![],
+        }
+    }
+
     /// Return the number of versions of the file
     pub(crate) fn version_count(&self) -> usize {
         self.versions.len()
@@ -522,6 +627,11 @@ impl FileMetadata {
     /// Return a list of all of the versions of the file
     pub(crate) fn get_versions(&self) -> &Vec<FileVersion> {
         &self.versions
+    }
+
+    /// Returns a specific version of the file
+    fn get_version(&self, version: usize) -> Option<&FileVersion> {
+        self.versions.get(version)
     }
 
     /// Return the latest `FileVersion` of the file
