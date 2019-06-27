@@ -17,7 +17,9 @@ use crate::block::{
     manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
     MemoryStore, NetworkStore,
 };
-use crate::metadata::{Directory, DirectoryEntry, File, FileHandle, FileMetadata};
+use crate::metadata::{
+    Directory, DirectoryEntry, File, FileHandle, FileMetadata, WASM_DIR, WASM_EXT,
+};
 use crate::runtime::{FileSystemOperator, Process, UfsMessage};
 use crate::UfsUuid;
 
@@ -256,12 +258,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let mut programs = Vec::<(PathBuf, FileMetadata)>::new();
         for (d_name, d) in self.block_manager.root_dir().entries() {
             if let DirectoryEntry::Directory(dir) = d {
-                if d_name == ".wasm" {
+                if d_name == WASM_DIR {
                     for (f_name, f) in dir.entries() {
                         if let DirectoryEntry::File(file) = f {
                             let path = Path::new(f_name);
                             if let Some(ext) = path.extension() {
-                                if ext == "wasm" {
+                                if ext == WASM_EXT {
                                     programs
                                         .push(([d_name, f_name].iter().collect(), file.clone()));
                                 }
@@ -277,7 +279,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 if let Ok(fh) = self.open_file(&path, OpenFileMode::Read) {
                     let size = file.size();
                     if let Ok(program) = self.read_file(fh, 0, size as usize) {
-                        info!("Adding program {:?}to runtime.", path);
+                        info!("Adding program {:?} to runtime.", path);
                         program_mgr
                             .send(RuntimeManagerMsg::Program(WasmProgram {
                                 name: path.to_path_buf(),
@@ -429,7 +431,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 let mut execute = false;
                 if let Some(parent) = file.path.parent() {
                     for a in parent.ancestors() {
-                        if a.file_name() == Some(OsStr::new(".wasm")) {
+                        if a.file_name() == Some(OsStr::new(WASM_DIR)) {
                             execute = true;
                             break;
                         }
@@ -438,7 +440,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
                 if execute {
                     if let Some(ext) = file.path.extension() {
-                        if ext == "wasm" {
+                        if ext == WASM_EXT {
                             debug!("\tadding {:?} to runtime", file.path);
                             let size = file.file.size();
                             if let Ok(program) = self.read_file(handle, 0, size as usize) {
