@@ -179,6 +179,17 @@ impl<B: BlockStorage> RuntimeManager<B> {
     }
 }
 
+/// Remote and Local file system
+///
+pub struct DualFileSystem<BL: BlockStorage, BR: BlockStorage> {
+    local_file_system: UberFileSystem<BL>,
+    remote_file_system: UberFileSystem<BR>,
+}
+
+impl DualFileSystem {
+    pub fn new(local: )
+}
+
 /// Main File System Implementation
 ///
 pub struct UberFileSystem<B: BlockStorage> {
