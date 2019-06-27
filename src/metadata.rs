@@ -14,7 +14,7 @@ use std::{
 };
 
 use failure::format_err;
-use log::{debug, error, trace, warn};
+use log::{debug, error, warn};
 use serde_derive::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -108,14 +108,27 @@ pub struct DirectoryMetadata {
 impl DirectoryMetadata {
     pub(crate) fn new() -> Self {
         let time = UfsTime::now();
-        DirectoryMetadata {
+        let mut d = DirectoryMetadata {
             dirty: true,
             birth_time: time,
             write_time: time,
             change_time: time,
             access_time: time,
             entries: HashMap::new(),
-        }
+        };
+        // Create the directory for WASM programs
+        d.entries.insert(
+            ".wasm".to_string(),
+            DirectoryEntry::Directory(DirectoryMetadata {
+                dirty: false,
+                birth_time: time,
+                write_time: time,
+                change_time: time,
+                access_time: time,
+                entries: HashMap::new(),
+            }),
+        );
+        d
     }
 
     fn get_directory_metadata<'a>(

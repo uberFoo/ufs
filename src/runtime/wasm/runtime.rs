@@ -1,7 +1,6 @@
 use std::{
     alloc::{alloc, dealloc, Layout},
     mem,
-    path::{Path, PathBuf},
 };
 
 pub use crate::metadata::FileHandle;
