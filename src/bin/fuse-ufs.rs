@@ -37,6 +37,15 @@ fn main() -> Result<(), failure::Error> {
                 .requires("source")
                 .index(1),
         )
+        .arg(
+            Arg::with_name("remote")
+                .short("r")
+                .long("remote")
+                .value_name("REMOTE_URL")
+                .help("Remote file system to mount")
+                .required(false)
+                .takes_value(true),
+        )
         .get_matches();
 
     pretty_env_logger::init();
