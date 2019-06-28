@@ -219,15 +219,16 @@ impl FileStore {
             n += 1;
         }
 
-        let depth = n >> 2;
+        let depth = std::cmp::max(n >> 2, 1);
         make_dirs(&path, depth).unwrap();
+
 
         // Now allocate the blocks.
         for block in 0..count {
             let path = path_for_block(&path, block);
             trace!("creating block file {:x?}", block);
-            fs::File::create(path)
-                .unwrap_or_else(|_| panic!("unable to create file for block {}.", block));
+            fs::File::create(&path)
+                .unwrap_or_else(|e| panic!("unable to create file {:?} for block {}: {}", path, block, e));
         }
 
         Ok(())
@@ -371,6 +372,7 @@ mod test {
         let block = fs.write_block(7, &data[..]).unwrap();
 
         let mut path = PathBuf::from(&test_dir);
+        path.push("0");
         path.push("7");
         path.set_extension(BLOCK_EXT);
         assert_eq!(
@@ -401,6 +403,7 @@ mod test {
         expected_block[..data.len()].copy_from_slice(&data[..]);
 
         let mut path = PathBuf::from(&test_dir);
+        path.push("0");
         path.push("0");
         path.set_extension(BLOCK_EXT);
         fs::write(path, &expected_block).unwrap();
