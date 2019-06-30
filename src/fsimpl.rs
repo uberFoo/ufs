@@ -18,9 +18,9 @@ use crate::block::{
     MemoryStore, NetworkStore,
 };
 use crate::metadata::{
-    Directory, DirectoryEntry, File, FileHandle, FileMetadata, WASM_DIR, WASM_EXT,
+    Directory, DirectoryEntry, File, FileHandle, FileVersion, WASM_DIR, WASM_EXT,
 };
-use crate::runtime::{FileSystemOperator, Process, UfsMessage};
+use crate::runtime::{FileSystemOperator, FileSystemOps, Process, UfsMessage};
 use crate::UfsUuid;
 
 /// File mode for `open` call.
@@ -145,7 +145,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
                             wasm.name,
                             Process::start(
                                 process,
-                                Box::new(FileSystemOperator::new(runtime.ufs.clone())),
+                                Box::new(FileSystemOperator::new(runtime.ufs.clone()))
+                                    as Box<dyn FileSystemOps>,
                             ),
                         );
                     }
@@ -167,9 +168,10 @@ impl<B: BlockStorage> RuntimeManager<B> {
 
 /// Main File System Implementation
 ///
-pub struct UberFileSystem<B: BlockStorage + 'static> {
+pub struct UberFileSystem<B: BlockStorage> {
     /// Where we store blocks.
     ///
+    id: UfsUuid,
     block_manager: BlockManager<B>,
     open_files: HashMap<FileHandle, File>,
     open_dirs: HashMap<FileHandle, Directory>,
@@ -185,10 +187,11 @@ impl UberFileSystem<MemoryStore> {
     /// warranted.
     ///
     pub fn new_memory(size: BlockSize, count: BlockCardinality) -> Self {
-        let mem_store = MemoryStore::new(BlockMap::new(UfsUuid::new("test"), size, count));
+        let mem_store = MemoryStore::new(BlockMap::new(UfsUuid::new_root("test"), size, count));
         let block_manager = BlockManager::new(mem_store);
 
         UberFileSystem {
+            id: block_manager.id().clone(),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -210,6 +213,7 @@ impl UberFileSystem<FileStore> {
         let block_manager = BlockManager::load(file_store)?;
 
         Ok(UberFileSystem {
+            id: block_manager.id().clone(),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -226,6 +230,7 @@ impl UberFileSystem<NetworkStore> {
         let block_manager = BlockManager::load(net_store)?;
 
         Ok(UberFileSystem {
+            id: block_manager.id().clone(),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -255,7 +260,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         // Find .wasm directories
         // FIXME: This needs to recurse the subdirectories.
-        let mut programs = Vec::<(PathBuf, FileMetadata)>::new();
+        let mut programs = Vec::<(PathBuf, FileVersion)>::new();
         for (d_name, d) in self.block_manager.root_dir().entries() {
             if let DirectoryEntry::Directory(dir) = d {
                 if d_name == WASM_DIR {
@@ -264,8 +269,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
                             let path = Path::new(f_name);
                             if let Some(ext) = path.extension() {
                                 if ext == WASM_EXT {
-                                    programs
-                                        .push(([d_name, f_name].iter().collect(), file.clone()));
+                                    let program = file.get_latest();
+                                    programs.push(([d_name, f_name].iter().collect(), program));
                                 }
                             }
                         }
@@ -371,8 +376,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ) -> Result<(FileHandle, Timespec), failure::Error> {
         debug!("--------");
         debug!("`create_file`: {:?}", path);
-        let file = self.block_manager.root_dir_mut().new_file(path)?;
-        let time = file.file.write_time();
+
+        let file = self.block_manager.root_dir_mut().new_file(&self.id, path)?;
+        let time = file.version.write_time();
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
@@ -442,7 +448,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     if let Some(ext) = file.path.extension() {
                         if ext == WASM_EXT {
                             debug!("\tadding {:?} to runtime", file.path);
-                            let size = file.file.size();
+                            let size = file.version.size();
                             if let Ok(program) = self.read_file(handle, 0, size as usize) {
                                 program_mgr
                                     .send(RuntimeManagerMsg::Program(WasmProgram {
@@ -487,11 +493,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     match self.block_manager.write(&bytes[written..]) {
                         Ok(block) => {
                             written += block.size() as usize;
-                            if let Some(v) = file.file.current_version_mut() {
-                                v.append_block(&block);
-                            } else {
-                                panic!("attempted to append_block to file with no version");
-                            }
+                            file.version.append_block(&block);
                         }
                         Err(e) => {
                             error!("problem writing data to file: {}", e);
@@ -533,7 +535,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let start_block = (offset / block_size as i64) as usize;
         let mut start_offset = (offset % block_size as i64) as usize;
 
-        let mut blocks = file.file.current_version().unwrap().blocks().clone();
+        let mut blocks = file.version.blocks().clone();
         trace!("reading from blocks {:?}", &blocks);
         let block_iter = &mut blocks.iter_mut().skip(start_block);
         trace!("current iterator {:?}", block_iter);

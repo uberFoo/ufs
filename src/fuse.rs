@@ -110,8 +110,6 @@ impl<B: BlockStorage> UberFSFuse<B> {
         };
 
         {
-            let guard = fs.file_system.lock().expect("poisoned ufs lock");
-
             // Populate the name->inode and inode_num->inode tables.
             // The first inode is always the root of the file system
             fs.inodes.push(Inode::Dir(DirInode {
@@ -130,6 +128,8 @@ impl<B: BlockStorage> UberFSFuse<B> {
 
         fs
     }
+
+    // fn file_system(&self) ->
 }
 
 /// Talking nice with the kernel...
@@ -326,6 +326,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                     }
                                 }
                                 DirectoryEntry::File(f) => {
+                                    let file = f.get_latest();
                                     let inode_n =
                                         dir_file_map.entry(name.clone()).or_insert_with(|| {
                                             let mut file_path = path.clone();
@@ -334,15 +335,15 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                             debug!(
                                                 "\tadding file {:?}, size: {}, time: {:?}, ino: {}",
                                                 file_path,
-                                                f.size(),
-                                                f.write_time(),
+                                                file.size(),
+                                                file.write_time(),
                                                 number
                                             );
                                             let inode = FileInode {
                                                 number,
                                                 path: file_path,
-                                                time: f.write_time().into(),
-                                                size: f.size(),
+                                                time: file.write_time().into(),
+                                                size: file.size(),
                                             };
                                             inodes.push(Inode::File(inode));
                                             number
@@ -355,12 +356,12 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                         debug!(
                                             "\tupdating file {:?}, size: {}, time: {:?}, ino: {}",
                                             name,
-                                            f.size(),
-                                            f.write_time(),
+                                            file.size(),
+                                            file.write_time(),
                                             *inode_n
                                         );
-                                        ino.time = f.write_time().into();
-                                        ino.size = f.size();
+                                        ino.time = file.write_time().into();
+                                        ino.size = file.size();
                                     }
                                 }
                             };
@@ -398,6 +399,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         reply.ok();
     }
 
+    // Open a file
     fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         debug!("open ino: {}, flags {:x}", ino, flags);
 
@@ -467,6 +469,15 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         }
     }
 
+    // fn unlink(
+    // &mut self,
+    // _req: &Request,
+    // _parent: u64,
+    // _name: &OsStr,
+    // reply: ReplyEmpty
+    // ) {
+    //
+    // }
     // Create and open a file
     // parent is the inode of the parent directory
     fn create(
