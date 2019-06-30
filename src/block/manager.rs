@@ -12,6 +12,7 @@ use crate::{
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
     metadata::DirectoryMetadata,
+    uuid::UfsUuid,
 };
 
 /// Manager of Blocks
@@ -27,6 +28,7 @@ pub struct BlockManager<BS>
 where
     BS: BlockStorage,
 {
+    id: UfsUuid,
     store: BS,
     root_dir: DirectoryMetadata,
 }
@@ -38,6 +40,7 @@ where
     /// Layer metadata atop a block storage
     pub fn new(store: BS) -> Self {
         BlockManager {
+            id: store.id().clone(),
             root_dir: DirectoryMetadata::new(),
             store,
         }
@@ -53,6 +56,7 @@ where
                         debug!("loaded metadata");
 
                         Ok(BlockManager {
+                            id: store.id().clone(),
                             root_dir: root_dir,
                             store,
                         })
@@ -62,6 +66,10 @@ where
             }
             None => Err(format_err!("Missing root_block!")),
         }
+    }
+
+    pub(crate) fn id(&self) -> &UfsUuid {
+        &self.id
     }
 
     pub(crate) fn root_dir(&self) -> &DirectoryMetadata {
@@ -213,7 +221,7 @@ mod test {
     fn check_metadata() {
         init();
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             10,
         )));
@@ -224,7 +232,7 @@ mod test {
     #[test]
     fn not_enough_free_blocks_error() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             1,
         )));
@@ -240,7 +248,7 @@ mod test {
     #[test]
     fn tiny_test() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));
@@ -266,7 +274,7 @@ mod test {
     #[test]
     fn write_data_smaller_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));
@@ -284,7 +292,7 @@ mod test {
     #[test]
     fn write_data_larger_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             3,
         )));
@@ -302,7 +310,7 @@ mod test {
     #[test]
     fn read_block_bad_hash() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));

@@ -15,9 +15,12 @@
 use failure::format_err;
 use log::{debug, error, trace};
 
-use crate::block::{
-    map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
-    BlockStorage, BlockWriter,
+use crate::{
+    block::{
+        map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
+        BlockStorage, BlockWriter,
+    },
+    uuid::UfsUuid,
 };
 
 use std::{
@@ -110,6 +113,7 @@ fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
 ///
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileStore {
+    id: UfsUuid,
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -136,6 +140,7 @@ impl FileStore {
         map.serialize(&mut writer)?;
 
         Ok(FileStore {
+            id: map.id().clone(),
             block_size: map.block_size(),
             block_count: map.block_count(),
             root_path,
@@ -173,6 +178,7 @@ impl FileStore {
         let metadata = BlockMap::deserialize(&reader)?;
 
         Ok(FileStore {
+            id: metadata.id().clone(),
             block_size: metadata.block_size(),
             block_count: metadata.block_count(),
             root_path,
@@ -222,13 +228,16 @@ impl FileStore {
         let depth = std::cmp::max(n >> 2, 1);
         make_dirs(&path, depth).unwrap();
 
-
         // Now allocate the blocks.
         for block in 0..count {
             let path = path_for_block(&path, block);
             trace!("creating block file {:x?}", block);
-            fs::File::create(&path)
-                .unwrap_or_else(|e| panic!("unable to create file {:?} for block {}: {}", path, block, e));
+            fs::File::create(&path).unwrap_or_else(|e| {
+                panic!(
+                    "unable to create file {:?} for block {}: {}",
+                    path, block, e
+                )
+            });
         }
 
         Ok(())
@@ -236,6 +245,10 @@ impl FileStore {
 }
 
 impl BlockStorage for FileStore {
+    fn id(&self) -> &UfsUuid {
+        &self.id
+    }
+
     fn commit_map(&mut self) {
         debug!("writing BlockMap");
         let mut writer = FileWriter {
@@ -325,7 +338,7 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
             &test_dir,
-            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 3),
+            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3),
         )
         .unwrap();
 
@@ -346,7 +359,7 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
             &test_dir,
-            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
         assert!(fs.write_block(1, &data[..]).is_err());
@@ -365,7 +378,7 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
             &test_dir,
-            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
@@ -395,7 +408,7 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
             &test_dir,
-            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
@@ -421,7 +434,7 @@ mod test {
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
             &test_dir,
-            BlockMap::new(UfsUuid::new("test"), BlockSize::FiveTwelve, 4),
+            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4),
         )
         .unwrap();
 
