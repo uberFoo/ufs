@@ -317,7 +317,7 @@ mod test {
     #[test]
     fn one_block_simple() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
 
         // This tests that we pickup a metadata block.
@@ -346,7 +346,7 @@ mod test {
     #[test]
     fn not_enough_blocks() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
         for x in 1..100 {
@@ -360,7 +360,7 @@ mod test {
     #[test]
     fn test_large_blocks() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
 
         // This tests that we pickup a metadata block.
@@ -406,7 +406,7 @@ mod test {
     #[test]
     fn test_allocate_more_blocks_complex() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
         // This tests that we pickup a metadata block.

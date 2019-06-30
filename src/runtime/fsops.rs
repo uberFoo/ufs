@@ -26,17 +26,17 @@ pub trait FileSystemOps: Send {
     ) -> Result<Vec<u8>, failure::Error>;
 }
 
-pub(crate) struct FileSystemOperator<B: BlockStorage + 'static> {
+pub(crate) struct FileSystemOperator<B: BlockStorage> {
     inner: Arc<Mutex<UberFileSystem<B>>>,
 }
 
-impl<B: BlockStorage> FileSystemOperator<B> {
+impl<'a, B: BlockStorage> FileSystemOperator<B> {
     pub(crate) fn new(ufs: Arc<Mutex<UberFileSystem<B>>>) -> Self {
         FileSystemOperator { inner: ufs }
     }
 }
 
-impl<B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
+impl<'a, B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
     fn list_files(&self, handle: FileHandle) -> HashMap<String, DirectoryEntry> {
         let guard = self.inner.lock().expect("poisoned ufs lock");
         guard.list_files(handle).unwrap().clone()
