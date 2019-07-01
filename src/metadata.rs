@@ -187,7 +187,7 @@ impl Metadata {
     /// FIXME: Maintain a cache.
     pub(crate) fn lookup_dir(&self, id: UfsUuid) -> Option<&DirectoryMetadata> {
         trace!("--------");
-        trace!("`lookup_dir`: {:#?}", self);
+        trace!("`lookup_dir`: {:#?}\n{:#?}", id, self);
 
         if self.root_directory.id() == id {
             Some(&self.root_directory)
@@ -198,7 +198,7 @@ impl Metadata {
 
     pub(crate) fn lookup_dir_mut(&mut self, id: UfsUuid) -> Option<&mut DirectoryMetadata> {
         trace!("--------");
-        trace!("`lookup_dir`: {:#?}", self);
+        trace!("`lookup_dir_mut`: {:#?}\n{:#?}", id, self);
 
         self.root_directory.lookup_dir_mut(id)
     }

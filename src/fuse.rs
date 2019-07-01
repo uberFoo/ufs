@@ -471,7 +471,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                     Some(inode)
                 }
                 Err(e) => {
-                    error!("Unable to create directory {}", name);
+                    error!("Unable to create directory {}: {}", name, e);
                     None
                 }
             };
@@ -509,22 +509,26 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
             path.push(&name);
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            let inode = if let Ok((fh, file)) = &mut guard.create_file(&name) {
-                let inode = FileInode {
-                    path: path,
-                    id: file.file_id.clone(),
-                    number: new_inode_number,
-                    time: file.version.write_time().into(),
-                    size: 0,
-                };
-                debug!("inode: {}", inode.number);
+            let inode = match &mut guard.create_file(parent_ino.id, &name) {
+                Ok((fh, file)) => {
+                    let inode = FileInode {
+                        path: path,
+                        id: file.file_id.clone(),
+                        number: new_inode_number,
+                        time: file.version.write_time().into(),
+                        size: 0,
+                    };
+                    debug!("inode: {}", inode.number);
 
-                reply.created(&TTL, &inode.file_attr(), 0, *fh, flags);
+                    reply.created(&TTL, &inode.file_attr(), 0, *fh, flags);
 
-                parent_ino.files.insert(name, new_inode_number);
-                Some(inode)
-            } else {
-                None
+                    parent_ino.files.insert(name, new_inode_number);
+                    Some(inode)
+                }
+                Err(e) => {
+                    error!("Unable to create file {}: {}", name, e);
+                    None
+                }
             };
 
             if let Some(inode) = inode {

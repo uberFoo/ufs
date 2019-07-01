@@ -354,11 +354,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Create a file
     ///
-    pub(crate) fn create_file(&mut self, name: &str) -> Result<(FileHandle, File), failure::Error> {
+    pub(crate) fn create_file(
+        &mut self,
+        parent_id: UfsUuid,
+        name: &str,
+    ) -> Result<(FileHandle, File), failure::Error> {
         debug!("--------");
         debug!("`create_file`: {:?}", name);
 
-        let file = self.block_manager.metadata_mut().new_file(self.id, name)?;
+        let file = self
+            .block_manager
+            .metadata_mut()
+            .new_file(parent_id, name)?;
         // let time = file.version.write_time();
 
         let fh = self.open_file_counter;
