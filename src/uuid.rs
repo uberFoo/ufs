@@ -17,7 +17,7 @@ static ref ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"uberfoo.com");
 /// The ID is a version 5 UUID wit it's base namespace as "uberfoo.com". New ID's are derived from
 /// that root.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
 pub struct UfsUuid {
     inner: Uuid,
 }

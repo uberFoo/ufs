@@ -11,7 +11,7 @@ use crate::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
-    metadata::DirectoryMetadata,
+    metadata::{DirectoryMetadata, Metadata},
     uuid::UfsUuid,
 };
 
@@ -30,7 +30,7 @@ where
 {
     id: UfsUuid,
     store: BS,
-    root_dir: DirectoryMetadata,
+    metadata: Metadata,
 }
 
 impl<'a, BS> BlockManager<BS>
@@ -41,7 +41,7 @@ where
     pub fn new(store: BS) -> Self {
         BlockManager {
             id: store.id().clone(),
-            root_dir: DirectoryMetadata::new(),
+            metadata: Metadata::new(store.id()),
             store,
         }
     }
@@ -52,12 +52,12 @@ where
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
                 match read_metadata(&mut store, root_block) {
-                    Ok(root_dir) => {
+                    Ok(metadata) => {
                         debug!("loaded metadata");
 
                         Ok(BlockManager {
                             id: store.id().clone(),
-                            root_dir: root_dir,
+                            metadata,
                             store,
                         })
                     }
@@ -72,12 +72,12 @@ where
         &self.id
     }
 
-    pub(crate) fn root_dir(&self) -> &DirectoryMetadata {
-        &self.root_dir
+    pub(crate) fn metadata(&self) -> &Metadata {
+        &self.metadata
     }
 
-    pub(crate) fn root_dir_mut(&mut self) -> &mut DirectoryMetadata {
-        &mut self.root_dir
+    pub(crate) fn metadata_mut(&mut self) -> &mut Metadata {
+        &mut self.metadata
     }
 
     pub(crate) fn block_count(&self) -> BlockCardinality {
@@ -119,8 +119,8 @@ where
     ///
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
-        if self.root_dir.is_dirty() {
-            match write_metadata(&mut self.store, &mut self.root_dir) {
+        if self.metadata.is_dirty() {
+            match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
                     debug!("Stored new root block {}", block);
                     self.store.map_mut().set_root_block(block);

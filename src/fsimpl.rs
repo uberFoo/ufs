@@ -18,7 +18,7 @@ use crate::block::{
     MemoryStore, NetworkStore,
 };
 use crate::metadata::{
-    Directory, DirectoryEntry, File, FileHandle, FileVersion, WASM_DIR, WASM_EXT,
+    DirectoryEntry, DirectoryMetadata, File, FileHandle, FileVersion, WASM_DIR, WASM_EXT,
 };
 use crate::runtime::{FileSystemOperator, FileSystemOps, Process, UfsMessage};
 use crate::UfsUuid;
@@ -174,7 +174,7 @@ pub struct UberFileSystem<B: BlockStorage> {
     id: UfsUuid,
     block_manager: BlockManager<B>,
     open_files: HashMap<FileHandle, File>,
-    open_dirs: HashMap<FileHandle, Directory>,
+    open_dirs: HashMap<FileHandle, DirectoryMetadata>,
     open_file_counter: FileHandle,
     listeners: Vec<crossbeam_channel::Sender<UfsMessage>>,
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
@@ -242,6 +242,10 @@ impl UberFileSystem<NetworkStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
+    pub(crate) fn get_root_directory_id(&self) -> UfsUuid {
+        self.block_manager.metadata().root_directory().id()
+    }
+
     fn notify_listeners(&self, msg: UfsMessage) {
         for listener in &self.listeners {
             match listener.send(msg.clone()) {
@@ -261,7 +265,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Find .wasm directories
         // FIXME: This needs to recurse the subdirectories.
         let mut programs = Vec::<(PathBuf, FileVersion)>::new();
-        for (d_name, d) in self.block_manager.root_dir().entries() {
+        for (d_name, d) in self.block_manager.metadata().root_directory().entries() {
             if let DirectoryEntry::Directory(dir) = d {
                 if d_name == WASM_DIR {
                     for (f_name, f) in dir.entries() {
@@ -279,22 +283,22 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
         }
 
-        if let Some(program_mgr) = self.program_mgr.clone() {
-            for (path, file) in programs {
-                if let Ok(fh) = self.open_file(&path, OpenFileMode::Read) {
-                    let size = file.size();
-                    if let Ok(program) = self.read_file(fh, 0, size as usize) {
-                        info!("Adding program {:?} to runtime.", path);
-                        program_mgr
-                            .send(RuntimeManagerMsg::Program(WasmProgram {
-                                name: path.to_path_buf(),
-                                program,
-                            }))
-                            .unwrap()
-                    }
-                }
-            }
-        }
+        // if let Some(program_mgr) = self.program_mgr.clone() {
+        //     for (path, file) in programs {
+        //         if let Ok(fh) = self.open_file(&path, OpenFileMode::Read) {
+        //             let size = file.size();
+        //             if let Ok(program) = self.read_file(fh, 0, size as usize) {
+        //                 info!("Adding program {:?} to runtime.", path);
+        //                 program_mgr
+        //                     .send(RuntimeManagerMsg::Program(WasmProgram {
+        //                         name: path.to_path_buf(),
+        //                         program,
+        //                     }))
+        //                     .unwrap()
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     /// Return a reference to the `BlockManager`
@@ -303,11 +307,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
         &self.block_manager
     }
 
-    /// Retrieve the root directory
-    ///
-    pub(crate) fn get_root_directory(&self) -> DirectoryEntry {
-        DirectoryEntry::Directory(self.block_manager.root_dir().clone())
-    }
+    // /// Retrieve the root directory
+    // ///
+    // pub(crate) fn get_root_directory(&self) -> DirectoryEntry {
+    //     DirectoryEntry::Directory(self.block_manager.root_dir().clone())
+    // }
 
     /// List the contents of a Directory
     ///
@@ -319,8 +323,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("`list_files`: {}", handle);
         match self.open_dirs.get(&handle) {
             Some(dir) => {
-                trace!("\t{:#?}", dir.directory.entries());
-                Some(dir.directory.entries())
+                trace!("\t{:#?}", dir.entries());
+                Some(dir.entries())
             }
             None => {
                 warn!("\tdirectory not opened");
@@ -331,253 +335,270 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Create a directory
     ///
-    pub(crate) fn create_directory(&mut self, path: &Path) -> Result<Directory, failure::Error> {
+    pub(crate) fn create_directory(
+        &mut self,
+        parent_id: UfsUuid,
+        name: &str,
+    ) -> Result<DirectoryMetadata, failure::Error> {
         debug!("--------");
-        debug!("`create_directory`: {:?}", path);
-        self.block_manager.root_dir_mut().new_directory(path)
-    }
+        debug!("`create_directory`: {}", name);
 
-    /// Open a directory
-    ///
-    /// FIXME: Should this return a Result?
-    pub(crate) fn open_directory(&mut self, path: &Path) -> Option<FileHandle> {
-        debug!("--------");
-        debug!("`open_directory`: {:?}", path);
-        if let Ok(dir) = self.block_manager.root_dir_mut().get_directory(path) {
-            let fh = self.open_file_counter;
-            self.open_file_counter = self.open_file_counter.wrapping_add(1);
+        let dir = self
+            .block_manager
+            .metadata_mut()
+            .new_directory(parent_id, name);
 
-            trace!("\t{:#?}", dir);
-            self.open_dirs.insert(fh, dir);
-
-            return Some(fh);
-        }
-        None
-    }
-
-    /// Close a directory
-    ///
-    pub(crate) fn close_directory(&mut self, handle: FileHandle) {
-        debug!("--------");
-        match self.open_dirs.remove(&handle) {
-            Some(dir) => {
-                debug!("`close_directory`: handle: {}", handle);
-                trace!("{:#?}", dir);
-            }
-            None => warn!("asked to close a directory not in the map {}", handle),
-        }
+        debug!("end `create_directory`");
+        dir
     }
 
     /// Create a file
     ///
-    pub(crate) fn create_file(
-        &mut self,
-        path: &Path,
-    ) -> Result<(FileHandle, Timespec), failure::Error> {
+    pub(crate) fn create_file(&mut self, name: &str) -> Result<(FileHandle, File), failure::Error> {
         debug!("--------");
-        debug!("`create_file`: {:?}", path);
+        debug!("`create_file`: {:?}", name);
 
-        let file = self.block_manager.root_dir_mut().new_file(&self.id, path)?;
-        let time = file.version.write_time();
+        let file = self.block_manager.metadata_mut().new_file(self.id, name)?;
+        // let time = file.version.write_time();
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
-        self.open_files.insert(fh, file);
+        self.open_files.insert(fh, file.clone());
 
-        self.notify_listeners(UfsMessage::FileCreate(path.to_path_buf()));
+        // self.notify_listeners(UfsMessage::FileCreate(name);
 
-        Ok((fh, time.into()))
+        // Ok((fh, time.into()))
+        Ok((fh, file))
     }
 
-    /// Open a file
+    /// Open a directory
     ///
-    pub(crate) fn open_file(
-        &mut self,
-        path: &Path,
-        mode: OpenFileMode,
-    ) -> Result<FileHandle, failure::Error> {
+    pub(crate) fn open_directory(&mut self, id: UfsUuid) -> Result<FileHandle, failure::Error> {
         debug!("--------");
-        debug!("`open_file` {:?}, mode: {:?}", path, mode);
-        let file = match mode {
-            OpenFileMode::Write => self
-                .block_manager
-                .root_dir_mut()
-                .get_file_write_only(&path)?,
-            OpenFileMode::Read => self
-                .block_manager
-                .root_dir_mut()
-                .get_file_read_only(&path)?,
-            OpenFileMode::ReadWrite => self
-                .block_manager
-                .root_dir_mut()
-                .get_file_read_write(&path)?,
-        };
+        debug!("`open_directory`: {:?}", id);
+        let dir = self.block_manager.metadata().get_directory(id)?;
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-        self.open_files.insert(fh, file);
-
-        debug!("\thandle: {}", fh);
-
-        self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
+        trace!("\t{:#?}", dir);
+        self.open_dirs.insert(fh, dir);
 
         Ok(fh)
     }
 
-    /// Close a file
-    ///
-    pub(crate) fn close_file(&mut self, handle: FileHandle) {
-        debug!("-------");
-        debug!("`close_file`: {}", handle);
+    // /// Close a directory
+    // ///
+    // pub(crate) fn close_directory(&mut self, handle: FileHandle) {
+    //     debug!("--------");
+    //     match self.open_dirs.remove(&handle) {
+    //         Some(dir) => {
+    //             debug!("`close_directory`: handle: {}", handle);
+    //             trace!("{:#?}", dir);
+    //         }
+    //         None => warn!("asked to close a directory not in the map {}", handle),
+    //     }
+    // }
 
-        // Add any .wasm files, located in a .wasm directory, to the runtime.
-        if let Some(program_mgr) = &self.program_mgr {
-            if let Some(file) = self.open_files.get(&handle) {
-                let mut execute = false;
-                if let Some(parent) = file.path.parent() {
-                    for a in parent.ancestors() {
-                        if a.file_name() == Some(OsStr::new(WASM_DIR)) {
-                            execute = true;
-                            break;
-                        }
-                    }
-                }
+    // /// Remove a file
+    // ///
+    // pub(crate) fn remove_file(&mut self, path: &Path) -> Result<(), failure::Error> {
+    //     debug!("--------");
+    //     debug!("`remove_file`: {:?}", path);
 
-                if execute {
-                    if let Some(ext) = file.path.extension() {
-                        if ext == WASM_EXT {
-                            debug!("\tadding {:?} to runtime", file.path);
-                            let size = file.version.size();
-                            if let Ok(program) = self.read_file(handle, 0, size as usize) {
-                                program_mgr
-                                    .send(RuntimeManagerMsg::Program(WasmProgram {
-                                        name: file.path.to_path_buf(),
-                                        program,
-                                    }))
-                                    .unwrap()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    //     self.block_manager.root_dir_mut().unlink_file(path)?;
+    //     Ok(())
+    // }
 
-        match self.open_files.remove(&handle) {
-            Some(file) => {
-                let path = file.path.clone();
+    // /// Open a file
+    // ///
+    // pub(crate) fn open_file(
+    //     &mut self,
+    //     path: &Path,
+    //     mode: OpenFileMode,
+    // ) -> Result<FileHandle, failure::Error> {
+    //     debug!("--------");
+    //     debug!("`open_file` {:?}, mode: {:?}", path, mode);
+    //     let file = match mode {
+    //         OpenFileMode::Write => self
+    //             .block_manager
+    //             .root_dir_mut()
+    //             .get_file_write_only(&path)?,
+    //         OpenFileMode::Read => self
+    //             .block_manager
+    //             .root_dir_mut()
+    //             .get_file_read_only(&path)?,
+    //         OpenFileMode::ReadWrite => self
+    //             .block_manager
+    //             .root_dir_mut()
+    //             .get_file_read_write(&path)?,
+    //     };
 
-                debug!("\t{:#?}", file);
-                self.block_manager.root_dir_mut().commit_file(file);
+    //     let fh = self.open_file_counter;
+    //     self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-                self.notify_listeners(UfsMessage::FileClose(path));
-            }
-            None => warn!("asked to close a file not in the map {}", handle),
-        }
-    }
+    //     self.open_files.insert(fh, file);
 
-    /// Write bytes to a file.
-    ///
-    pub(crate) fn write_file(
-        &mut self,
-        handle: FileHandle,
-        bytes: &[u8],
-    ) -> Result<usize, failure::Error> {
-        debug!("-------");
-        debug!("`write_file`: handle: {}", handle);
+    //     debug!("\thandle: {}", fh);
 
-        match &mut self.open_files.get_mut(&handle) {
-            Some(file) => {
-                let mut written = 0;
-                while written < bytes.len() {
-                    match self.block_manager.write(&bytes[written..]) {
-                        Ok(block) => {
-                            written += block.size() as usize;
-                            file.version.append_block(&block);
-                        }
-                        Err(e) => {
-                            error!("problem writing data to file: {}", e);
-                        }
-                    }
-                }
-                debug!("wrote {} bytes", written,);
+    //     self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
 
-                let path = file.path.clone();
-                self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
+    //     Ok(fh)
+    // }
 
-                Ok(written)
-            }
-            None => {
-                warn!("asked to write file not in the map {}", handle);
-                Ok(0)
-            }
-        }
-    }
+    // /// Close a file
+    // ///
+    // pub(crate) fn close_file(&mut self, handle: FileHandle) {
+    //     debug!("-------");
+    //     debug!("`close_file`: {}", handle);
 
-    /// Read bytes from a file
-    ///
-    ///
-    pub(crate) fn read_file(
-        &self,
-        handle: FileHandle,
-        offset: i64,
-        size: usize,
-    ) -> Result<Vec<u8>, failure::Error> {
-        debug!("-------");
-        debug!(
-            "`read_file`: handle: {}, reading offset {}, size {}",
-            handle, offset, size
-        );
+    //     // Add any .wasm files, located in a .wasm directory, to the runtime.
+    //     if let Some(program_mgr) = &self.program_mgr {
+    //         if let Some(file) = self.open_files.get(&handle) {
+    //             let mut execute = false;
+    //             if let Some(parent) = file.path.parent() {
+    //                 for a in parent.ancestors() {
+    //                     if a.file_name() == Some(OsStr::new(WASM_DIR)) {
+    //                         execute = true;
+    //                         break;
+    //                     }
+    //                 }
+    //             }
 
-        let file = self.open_files.get(&handle).unwrap();
-        let block_size = self.block_manager.block_size();
+    //             if execute {
+    //                 if let Some(ext) = file.path.extension() {
+    //                     if ext == WASM_EXT {
+    //                         debug!("\tadding {:?} to runtime", file.path);
+    //                         let size = file.version.size();
+    //                         if let Ok(program) = self.read_file(handle, 0, size as usize) {
+    //                             program_mgr
+    //                                 .send(RuntimeManagerMsg::Program(WasmProgram {
+    //                                     name: file.path.to_path_buf(),
+    //                                     program,
+    //                                 }))
+    //                                 .unwrap()
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        let start_block = (offset / block_size as i64) as usize;
-        let mut start_offset = (offset % block_size as i64) as usize;
+    //     match self.open_files.remove(&handle) {
+    //         Some(file) => {
+    //             let path = file.path.clone();
 
-        let mut blocks = file.version.blocks().clone();
-        trace!("reading from blocks {:?}", &blocks);
-        let block_iter = &mut blocks.iter_mut().skip(start_block);
-        trace!("current iterator {:?}", block_iter);
+    //             debug!("\t{:#?}", file);
+    //             self.block_manager.root_dir_mut().commit_file(file);
 
-        let mut read = 0;
-        let mut buffer = vec![0; size];
-        while read < size {
-            if let Some(block_number) = block_iter.next() {
-                if let Some(block) = self.block_manager.get_block(*block_number) {
-                    trace!("reading block {:?}", &block);
-                    if let Ok(bytes) = self.block_manager.read(block) {
-                        trace!("read bytes\n{:?}", &bytes);
-                        let block_len = bytes.len();
-                        let width = std::cmp::min(size - read, block_len - start_offset);
+    //             self.notify_listeners(UfsMessage::FileClose(path));
+    //         }
+    //         None => warn!("asked to close a file not in the map {}", handle),
+    //     }
+    // }
 
-                        trace!(
-                            "copying to buffer[{}..{}] from bytes[{}..{}]",
-                            read,
-                            read + width,
-                            start_offset,
-                            start_offset + width
-                        );
-                        buffer[read..read + width]
-                            .copy_from_slice(&bytes[start_offset..start_offset + width]);
+    // /// Write bytes to a file.
+    // ///
+    // pub(crate) fn write_file(
+    //     &mut self,
+    //     handle: FileHandle,
+    //     bytes: &[u8],
+    // ) -> Result<usize, failure::Error> {
+    //     debug!("-------");
+    //     debug!("`write_file`: handle: {}", handle);
 
-                        read += width;
-                        trace!("buffer is now {:?}", &buffer);
-                    }
-                }
-                start_offset = 0;
-            }
-        }
+    //     match &mut self.open_files.get_mut(&handle) {
+    //         Some(file) => {
+    //             let mut written = 0;
+    //             while written < bytes.len() {
+    //                 match self.block_manager.write(&bytes[written..]) {
+    //                     Ok(block) => {
+    //                         written += block.size() as usize;
+    //                         file.version.append_block(&block);
+    //                     }
+    //                     Err(e) => {
+    //                         error!("problem writing data to file: {}", e);
+    //                     }
+    //                 }
+    //             }
+    //             debug!("wrote {} bytes", written,);
 
-        if buffer.len() == size {
-            let path = file.path.clone();
-            self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
+    //             let path = file.path.clone();
+    //             self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
 
-            Ok(buffer)
-        } else {
-            Err(format_err!("Error reading file {:?}", file.path))
-        }
-    }
+    //             Ok(written)
+    //         }
+    //         None => {
+    //             warn!("asked to write file not in the map {}", handle);
+    //             Ok(0)
+    //         }
+    //     }
+    // }
+
+    // /// Read bytes from a file
+    // ///
+    // ///
+    // pub(crate) fn read_file(
+    //     &self,
+    //     handle: FileHandle,
+    //     offset: i64,
+    //     size: usize,
+    // ) -> Result<Vec<u8>, failure::Error> {
+    //     debug!("-------");
+    //     debug!(
+    //         "`read_file`: handle: {}, reading offset {}, size {}",
+    //         handle, offset, size
+    //     );
+
+    //     let file = self.open_files.get(&handle).unwrap();
+    //     let block_size = self.block_manager.block_size();
+
+    //     let start_block = (offset / block_size as i64) as usize;
+    //     let mut start_offset = (offset % block_size as i64) as usize;
+
+    //     let mut blocks = file.version.blocks().clone();
+    //     trace!("reading from blocks {:?}", &blocks);
+    //     let block_iter = &mut blocks.iter_mut().skip(start_block);
+    //     trace!("current iterator {:?}", block_iter);
+
+    //     let mut read = 0;
+    //     let mut buffer = vec![0; size];
+    //     while read < size {
+    //         if let Some(block_number) = block_iter.next() {
+    //             if let Some(block) = self.block_manager.get_block(*block_number) {
+    //                 trace!("reading block {:?}", &block);
+    //                 if let Ok(bytes) = self.block_manager.read(block) {
+    //                     trace!("read bytes\n{:?}", &bytes);
+    //                     let block_len = bytes.len();
+    //                     let width = std::cmp::min(size - read, block_len - start_offset);
+
+    //                     trace!(
+    //                         "copying to buffer[{}..{}] from bytes[{}..{}]",
+    //                         read,
+    //                         read + width,
+    //                         start_offset,
+    //                         start_offset + width
+    //                     );
+    //                     buffer[read..read + width]
+    //                         .copy_from_slice(&bytes[start_offset..start_offset + width]);
+
+    //                     read += width;
+    //                     trace!("buffer is now {:?}", &buffer);
+    //                 }
+    //             }
+    //             start_offset = 0;
+    //         }
+    //     }
+
+    //     if buffer.len() == size {
+    //         let path = file.path.clone();
+    //         self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
+
+    //         Ok(buffer)
+    //     } else {
+    //         Err(format_err!("Error reading file {:?}", file.path))
+    //     }
+    // }
 }
 
 #[cfg(test)]

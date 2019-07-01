@@ -20,12 +20,12 @@ use super::FileSize;
 ///
 /// The primary purpose if this struct is to store information about the existing versions of a
 /// file.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileMetadata {
     /// The UUID of this file
     ///
     id: UfsUuid,
+    parent_id: UfsUuid,
     last_version: usize,
     versions: HashMap<usize, FileVersion>,
 }
@@ -36,11 +36,12 @@ impl FileMetadata {
     ///
     /// When a new file is created, a default, empty, [`FileVersion`] is created. This is mostly so
     /// that we capture a time stamp of when the file was created.
-    pub(crate) fn new(id: UfsUuid) -> Self {
+    pub(crate) fn new(id: UfsUuid, p_id: UfsUuid) -> Self {
         let mut versions = HashMap::new();
         versions.insert(0, FileVersion::new(id.random(), &id));
         FileMetadata {
             id,
+            parent_id: p_id,
             last_version: 0,
             versions,
         }
@@ -49,12 +50,19 @@ impl FileMetadata {
     fn new_with_version(v: FileVersion) -> Self {
         let mut versions = HashMap::new();
         let id = v.file_id.clone();
+        let parent = UfsUuid::new_root("fix me");
         versions.insert(0, v);
         FileMetadata {
             id,
+            parent_id: parent,
             last_version: 0,
             versions,
         }
+    }
+
+    /// Return the UUID of this file
+    pub(crate) fn file_id(&self) -> UfsUuid {
+        self.id
     }
 
     pub(crate) fn new_version(&mut self) -> FileVersion {
@@ -173,6 +181,16 @@ impl FileVersion {
     ///
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Return the UUID of this file version
+    pub(crate) fn version_id(&self) -> &UfsUuid {
+        &self.id
+    }
+
+    /// Return the UUID of this file version's file
+    pub(crate) fn file_id(&self) -> &UfsUuid {
+        &self.file_id
     }
 
     /// Return the size of the file, in bytes
