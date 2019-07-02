@@ -366,15 +366,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .block_manager
             .metadata_mut()
             .new_file(parent_id, name)?;
-        // let time = file.version.write_time();
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
 
+        // FIXME
         // self.notify_listeners(UfsMessage::FileCreate(name);
 
-        // Ok((fh, time.into()))
         Ok((fh, file))
     }
 
@@ -400,13 +399,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
     /// eventually allows us to refresh the file system contents.
     pub(crate) fn close_directory(&mut self, handle: FileHandle) {
         debug!("--------");
-        // match self.open_dirs.remove(&handle) {
-        //     Some(dir) => {
-        //         debug!("`close_directory`: handle: {}", handle);
-        //         trace!("{:#?}", dir);
-        //     }
-        //     None => warn!("asked to close a directory not in the map {}", handle),
-        // }
+
+        match self.open_dirs.remove(&handle) {
+            Some(dir) => {
+                debug!("`close_directory`: handle: {}", handle);
+                trace!("{:#?}", dir);
+            }
+            None => warn!("asked to close a directory not in the map {}", handle),
+        }
     }
 
     // /// Remove a file
@@ -441,6 +441,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         debug!("\thandle: {}", fh);
 
+        // FIXME
         // self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
 
         Ok(fh)
@@ -489,6 +490,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 debug!("\t{:#?}", file);
                 self.block_manager.metadata_mut().commit_file(file);
 
+                // FIXME
                 // self.notify_listeners(UfsMessage::FileClose(path));
             }
             None => warn!("asked to close a file not in the map {}", handle),
@@ -521,6 +523,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 }
                 debug!("wrote {} bytes", written,);
 
+                // FIXME
                 // self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
 
                 Ok(written)
@@ -547,52 +550,56 @@ impl<B: BlockStorage> UberFileSystem<B> {
             handle, offset, size
         );
 
-        let file = self.open_files.get(&handle).unwrap();
-        let block_size = self.block_manager.block_size();
+        if let Some(file) = self.open_files.get(&handle) {
+            let block_size = self.block_manager.block_size();
 
-        let start_block = (offset / block_size as i64) as usize;
-        let mut start_offset = (offset % block_size as i64) as usize;
+            let start_block = (offset / block_size as i64) as usize;
+            let mut start_offset = (offset % block_size as i64) as usize;
 
-        let mut blocks = file.version.blocks().clone();
-        trace!("reading from blocks {:?}", &blocks);
-        let block_iter = &mut blocks.iter_mut().skip(start_block);
-        trace!("current iterator {:?}", block_iter);
+            let mut blocks = file.version.blocks().clone();
+            trace!("reading from blocks {:?}", &blocks);
+            let block_iter = &mut blocks.iter_mut().skip(start_block);
+            trace!("current iterator {:?}", block_iter);
 
-        let mut read = 0;
-        let mut buffer = vec![0; size];
-        while read < size {
-            if let Some(block_number) = block_iter.next() {
-                if let Some(block) = self.block_manager.get_block(*block_number) {
-                    trace!("reading block {:?}", &block);
-                    if let Ok(bytes) = self.block_manager.read(block) {
-                        trace!("read bytes\n{:?}", &bytes);
-                        let block_len = bytes.len();
-                        let width = std::cmp::min(size - read, block_len - start_offset);
+            let mut read = 0;
+            let mut buffer = vec![0; size];
+            while read < size {
+                if let Some(block_number) = block_iter.next() {
+                    if let Some(block) = self.block_manager.get_block(*block_number) {
+                        trace!("reading block {:?}", &block);
+                        if let Ok(bytes) = self.block_manager.read(block) {
+                            trace!("read bytes\n{:?}", &bytes);
+                            let block_len = bytes.len();
+                            let width = std::cmp::min(size - read, block_len - start_offset);
 
-                        trace!(
-                            "copying to buffer[{}..{}] from bytes[{}..{}]",
-                            read,
-                            read + width,
-                            start_offset,
-                            start_offset + width
-                        );
-                        buffer[read..read + width]
-                            .copy_from_slice(&bytes[start_offset..start_offset + width]);
+                            trace!(
+                                "copying to buffer[{}..{}] from bytes[{}..{}]",
+                                read,
+                                read + width,
+                                start_offset,
+                                start_offset + width
+                            );
+                            buffer[read..read + width]
+                                .copy_from_slice(&bytes[start_offset..start_offset + width]);
 
-                        read += width;
-                        trace!("buffer is now {:?}", &buffer);
+                            read += width;
+                            trace!("buffer is now {:?}", &buffer);
+                        }
                     }
+                    start_offset = 0;
                 }
-                start_offset = 0;
             }
-        }
 
-        if buffer.len() == size {
-            // self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
+            if buffer.len() == size {
+                // FIXME
+                // self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
 
-            Ok(buffer)
+                Ok(buffer)
+            } else {
+                Err(format_err!("Error reading file {}", handle))
+            }
         } else {
-            Err(format_err!("Error reading file {:?}", handle))
+            Err(format_err!("File not open {}", handle))
         }
     }
 }
@@ -631,7 +638,7 @@ mod test {
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
-        let (h, _) = ufs.create_file(root_id, "/lib.rs").unwrap();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
@@ -646,7 +653,7 @@ mod test {
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
-        let (h, _) = ufs.create_file(root_id, "/lib.rs").unwrap();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
@@ -662,7 +669,7 @@ mod test {
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
-        let (h, _) = ufs.create_file(root_id, "/lib.rs").unwrap();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
 
         let mut offset = 0;
@@ -688,7 +695,7 @@ mod test {
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
-        let (h, _) = ufs.create_file(root_id, "/lib.rs").unwrap();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
 
         let mut offset = 0;

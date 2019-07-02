@@ -60,7 +60,7 @@ impl DirectoryMetadata {
     pub(crate) fn new(id: UfsUuid, p_id: Option<UfsUuid>) -> Self {
         let time = UfsTime::now();
         let mut d = DirectoryMetadata {
-            dirty: true,
+            dirty: false,
             id: id,
             parent_id: p_id,
             birth_time: time,
@@ -555,6 +555,11 @@ impl DirectoryMetadata {
         self.id
     }
 
+    /// Return the parent UUID
+    pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
+        self.parent_id
+    }
+
     /// Return the `write_time` timestamp
     pub(crate) fn write_time(&self) -> UfsTime {
         self.write_time
@@ -652,6 +657,8 @@ impl DirectoryMetadata {
             "`lookup_file_mut`: {:#?}, parent {:#?}",
             self.id, self.parent_id
         );
+
+        self.dirty = true;
 
         for e in self.entries.values_mut() {
             match e {

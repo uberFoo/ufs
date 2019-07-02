@@ -105,7 +105,7 @@ impl Metadata {
     ///
     /// The UUID of the file system is saved with the metadata.
     /// A new root directory is initialized.
-    pub(crate) fn new(file_system_id: &UfsUuid) -> Self {
+    pub(crate) fn new(file_system_id: UfsUuid) -> Self {
         Metadata {
             dirty: true,
             id: file_system_id.clone(),
@@ -324,5 +324,23 @@ pub mod test {
     use super::*;
 
     #[test]
-    fn new_directory() {}
+    fn new_metadata() {
+        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let root = m.root_directory();
+
+        assert_eq!(m.is_dirty(), true);
+        assert_eq!(root.is_dirty(), false);
+        assert_eq!(root.parent_id(), None);
+    }
+
+    #[test]
+    fn new_directory() {
+        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let root_id = m.root_directory().id();
+        let d = m.new_directory(root_id, "test").unwrap();
+        let d2 = m.new_directory(d.id(), "test2").unwrap();
+
+        assert_eq!(d.parent_id(), Some(root_id));
+        assert_eq!(d2.parent_id(), Some(d.id()));
+    }
 }

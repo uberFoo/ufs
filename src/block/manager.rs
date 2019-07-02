@@ -41,7 +41,7 @@ where
     pub fn new(store: BS) -> Self {
         BlockManager {
             id: store.id().clone(),
-            metadata: Metadata::new(store.id()),
+            metadata: Metadata::new(*store.id()),
             store,
         }
     }

@@ -410,32 +410,32 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         reply.ok();
     }
 
-    // // Open a file
-    // fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
-    //     debug!("open ino: {}, flags {:x}", ino, flags);
+    // Open a file
+    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        debug!("open ino: {}, flags {:x}", ino, flags);
 
-    //     if let Some(Inode::File(inode)) = self.inodes.get_mut(ino as usize) {
-    //         let open_flags = flags as i32;
-    //         let mode = match open_flags {
-    //             O_RDONLY => OpenFileMode::Read,
-    //             O_WRONLY => {
-    //                 inode.size = 0;
-    //                 OpenFileMode::Write
-    //             }
-    //             O_RDWR => OpenFileMode::ReadWrite,
-    //             _ => unreachable!(),
-    //         };
+        if let Some(Inode::File(inode)) = self.inodes.get_mut(ino as usize) {
+            let open_flags = flags as i32;
+            let mode = match open_flags {
+                O_RDONLY => OpenFileMode::Read,
+                O_WRONLY => {
+                    inode.size = 0;
+                    OpenFileMode::Write
+                }
+                O_RDWR => OpenFileMode::ReadWrite,
+                _ => unreachable!(),
+            };
 
-    //         let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-    //         match &mut guard.open_file(inode.path.as_path(), mode) {
-    //             Ok(fh) => reply.opened(*fh as u64, 0),
-    //             _ => reply.error(ENOENT),
-    //         }
-    //     } else {
-    //         warn!("\tcan't find inode {}", ino);
-    //         reply.error(ENOENT);
-    //     }
-    // }
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            match &mut guard.open_file(inode.id, mode) {
+                Ok(fh) => reply.opened(*fh as u64, 0),
+                _ => reply.error(ENOENT),
+            }
+        } else {
+            warn!("\tcan't find inode {}", ino);
+            reply.error(ENOENT);
+        }
+    }
 
     // Make a new directory
     // There's something very bogus about this function: it doesn't allow for returning a file
@@ -600,12 +600,16 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         );
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        if let Ok(buffer) = &mut guard.read_file(fh, offset, size as usize) {
-            debug!("read {} bytes", buffer.len());
-            trace!("{:?}", &buffer);
-            reply.data(&buffer)
-        } else {
-            reply.error(ENOENT)
+        match &mut guard.read_file(fh, offset, size as usize) {
+            Ok(buffer) => {
+                debug!("read {} bytes", buffer.len());
+                trace!("{:?}", &buffer);
+                reply.data(&buffer)
+            }
+            Err(e) => {
+                error!("{}", e);
+                reply.error(ENOENT)
+            }
         }
     }
 
