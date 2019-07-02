@@ -92,7 +92,6 @@ pub(crate) struct Metadata {
     /// Indicates that there is data to be serialized.
     #[serde(skip)]
     dirty: bool,
-
     /// The UUID of the File System
     ///
     id: UfsUuid,
@@ -157,11 +156,77 @@ impl Metadata {
             let new_file = root.new_file(name.to_owned())?;
             self.dirty = true;
             Ok(File {
-                file_id: new_file.file_id(),
+                file_id: new_file.id(),
                 version: new_file.get_latest(),
             })
         } else {
             Err(format_err!("unable to find directory with id {:?}", dir_id))
+        }
+    }
+
+    /// Get a file for read-only access
+    ///
+    pub(crate) fn get_file_read_only(&self, id: UfsUuid) -> Result<File, failure::Error> {
+        debug!("--------");
+        debug!("`get_file_read_only: {:?}", id);
+
+        if let Some(file) = self.lookup_file(id) {
+            Ok(File {
+                file_id: file.id(),
+                version: file.get_latest(),
+            })
+        } else {
+            Err(format_err!("unable to find file with id {:?}", id))
+        }
+    }
+
+    /// Get a file for read-write access
+    ///
+    pub(crate) fn get_file_read_write(&mut self, id: UfsUuid) -> Result<File, failure::Error> {
+        debug!("--------");
+        debug!("`get_file_read_write: {:?}", id);
+
+        if let Some(file) = self.lookup_file_mut(id) {
+            Ok(File {
+                file_id: file.id(),
+                version: file.get_latest(),
+            })
+        } else {
+            Err(format_err!("unable to find file with id {:?}", id))
+        }
+    }
+
+    /// Get a file for write-only access
+    ///
+    pub(crate) fn get_file_write_only(&mut self, id: UfsUuid) -> Result<File, failure::Error> {
+        debug!("--------");
+        debug!("`get_file_write_only: {:?}", id);
+
+        if let Some(file) = self.lookup_file_mut(id) {
+            Ok(File {
+                file_id: file.id(),
+                version: file.new_version(),
+            })
+        } else {
+            Err(format_err!("unable to find file with id {:?}", id))
+        }
+    }
+
+    /// Commit changes to an open file
+    ///
+    pub(crate) fn commit_file(&mut self, f: File) -> Result<(), failure::Error> {
+        debug!("--------");
+        debug!("`commit_file`: {:#?}", f);
+
+        if f.version.is_dirty() {
+            if let Some(file) = self.lookup_file_mut(f.file_id) {
+                file.commit_version(f.version.clone())?;
+                Ok(())
+            } else {
+                Err(format_err!("unable to find file {:#?}", f))
+            }
+        } else {
+            Ok(())
         }
     }
 
@@ -186,8 +251,9 @@ impl Metadata {
     /// Return the DirectoryMetadata corresponding to the given UfsUuid.
     /// FIXME: Maintain a cache.
     pub(crate) fn lookup_dir(&self, id: UfsUuid) -> Option<&DirectoryMetadata> {
-        trace!("--------");
-        trace!("`lookup_dir`: {:#?}\n{:#?}", id, self);
+        debug!("--------");
+        debug!("`lookup_dir`: {:#?}", id);
+        trace!("{:#?}", self);
 
         if self.root_directory.id() == id {
             Some(&self.root_directory)
@@ -197,10 +263,27 @@ impl Metadata {
     }
 
     pub(crate) fn lookup_dir_mut(&mut self, id: UfsUuid) -> Option<&mut DirectoryMetadata> {
-        trace!("--------");
-        trace!("`lookup_dir_mut`: {:#?}\n{:#?}", id, self);
+        debug!("--------");
+        debug!("`lookup_dir_mut`: {:#?}", id);
+        trace!("{:#?}", self);
 
         self.root_directory.lookup_dir_mut(id)
+    }
+
+    pub(crate) fn lookup_file(&self, id: UfsUuid) -> Option<&FileMetadata> {
+        debug!("--------");
+        debug!("`lookup_file`: {:#?}", id);
+        trace!("{:#?}", self);
+
+        self.root_directory.lookup_file(id)
+    }
+
+    pub(crate) fn lookup_file_mut(&mut self, id: UfsUuid) -> Option<&mut FileMetadata> {
+        debug!("--------");
+        debug!("`lookup_file_mut`: {:#?}", id);
+        trace!("{:#?}", self);
+
+        self.root_directory.lookup_file_mut(id)
     }
 }
 
@@ -234,4 +317,12 @@ impl MetadataDeserialize for Metadata {
             )),
         }
     }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+
+    #[test]
+    fn new_directory() {}
 }

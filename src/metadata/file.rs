@@ -5,6 +5,7 @@
 //! list of [`FileVersion`]s.
 use std::collections::HashMap;
 
+use failure::format_err;
 use log::{debug, error};
 use serde_derive::{Deserialize, Serialize};
 
@@ -61,7 +62,7 @@ impl FileMetadata {
     }
 
     /// Return the UUID of this file
-    pub(crate) fn file_id(&self) -> UfsUuid {
+    pub(crate) fn id(&self) -> UfsUuid {
         self.id
     }
 
@@ -102,13 +103,16 @@ impl FileMetadata {
         self.versions.get(&version)
     }
 
-    pub(crate) fn commit_version(&mut self, version: FileVersion) {
+    pub(crate) fn commit_version(&mut self, version: FileVersion) -> Result<(), failure::Error> {
         debug!("--------");
         debug!("`commit`: {:#?}", self);
         self.last_version += 1;
         match self.versions.insert(self.last_version, version) {
-            None => (),
-            Some(v) => error!("version existed during commit {:#?}", v),
+            None => Ok(()),
+            Some(v) => {
+                error!("version existed during commit {:#?}", v);
+                Err(format_err!("unable to insert version into version table"))
+            }
         }
     }
 }
@@ -156,12 +160,14 @@ impl FileVersion {
     /// Create a new `FileVersion`
     ///
     /// An empty file is just timestamps. The size of the file is 0, and it contains no blocks.
+    /// Note that this does not need to start life as "dirty", because the `FileMetadata` is
+    /// "dirty", and this will be written. The dirty flag is used when a version changes.
     fn new(id: UfsUuid, file_id: &UfsUuid) -> Self {
         let time = UfsTime::now();
         FileVersion {
             id,
             file_id: file_id.clone(),
-            dirty: true,
+            dirty: false,
             birth_time: time,
             write_time: time,
             change_time: time,

@@ -571,8 +571,8 @@ impl DirectoryMetadata {
     }
 
     pub(in crate::metadata) fn lookup_dir(&self, id: UfsUuid) -> Option<&DirectoryMetadata> {
-        trace!("--------");
-        trace!("`lookup_dir`: {:#?}, parent {:#?}", self.id, self.parent_id);
+        debug!("--------");
+        debug!("`lookup_dir`: {:#?}, parent {:#?}", self.id, self.parent_id);
 
         for e in self.entries.values() {
             if let DirectoryEntry::Directory(d) = e {
@@ -593,11 +593,10 @@ impl DirectoryMetadata {
         &mut self,
         id: UfsUuid,
     ) -> Option<&mut DirectoryMetadata> {
-        trace!("--------");
-        trace!(
+        debug!("--------");
+        debug!(
             "`lookup_dir_mut`: {:#?}, parent {:#?}",
-            self.id,
-            self.parent_id
+            self.id, self.parent_id
         );
 
         // Do a "stupid" search for the given ID
@@ -616,6 +615,59 @@ impl DirectoryMetadata {
                 }
             }
         }
+        None
+    }
+
+    pub(in crate::metadata) fn lookup_file(&self, id: UfsUuid) -> Option<&FileMetadata> {
+        debug!("--------");
+        debug!(
+            "`lookup_file_mut`: {:#?}, parent {:#?}",
+            self.id, self.parent_id
+        );
+
+        for e in self.entries.values() {
+            match e {
+                DirectoryEntry::File(f) => {
+                    if f.id() == id {
+                        return Some(f);
+                    }
+                }
+                DirectoryEntry::Directory(d) => {
+                    if let Some(f) = DirectoryMetadata::lookup_file(d, id) {
+                        return Some(f);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    pub(in crate::metadata) fn lookup_file_mut(
+        &mut self,
+        id: UfsUuid,
+    ) -> Option<&mut FileMetadata> {
+        debug!("--------");
+        debug!(
+            "`lookup_file_mut`: {:#?}, parent {:#?}",
+            self.id, self.parent_id
+        );
+
+        for e in self.entries.values_mut() {
+            match e {
+                DirectoryEntry::File(f) => {
+                    if f.id() == id {
+                        return Some(f);
+                    }
+                }
+                DirectoryEntry::Directory(d) => {
+                    if let Some(f) = DirectoryMetadata::lookup_file_mut(d, id) {
+                        return Some(f);
+                    }
+                }
+            }
+        }
+
         None
     }
 

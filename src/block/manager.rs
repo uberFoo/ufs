@@ -225,8 +225,6 @@ mod test {
             BlockSize::FiveTwelve,
             10,
         )));
-
-        print!("root dir {:#?}", bm.root_dir);
     }
 
     #[test]

@@ -400,15 +400,15 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         }
     }
 
-    // /// Close an opened directory
-    // fn releasedir(&mut self, _req: &Request, ino: u64, fh: u64, flags: u32, reply: ReplyEmpty) {
-    //     debug!("--------");
-    //     debug!("`releasedir` ino: {}, fh: {}, flags: {:#x}", ino, fh, flags);
+    /// Close an opened directory
+    fn releasedir(&mut self, _req: &Request, ino: u64, fh: u64, flags: u32, reply: ReplyEmpty) {
+        debug!("--------");
+        debug!("`releasedir` ino: {}, fh: {}, flags: {:#x}", ino, fh, flags);
 
-    //     let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-    //     &mut guard.close_directory(fh);
-    //     reply.ok();
-    // }
+        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        &mut guard.close_directory(fh);
+        reply.ok();
+    }
 
     // // Open a file
     // fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
@@ -564,87 +564,84 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
     //     }
     // }
 
-    // fn release(
-    //     &mut self,
-    //     _req: &Request,
-    //     ino: u64,
-    //     fh: u64,
-    //     flags: u32,
-    //     _lock_owner: u64,
-    //     flush: bool,
-    //     reply: ReplyEmpty,
-    // ) {
-    //     debug!("--------");
-    //     debug!(
-    //         "`release`: ino: {}, fh: {}, flags: {:#x}, flush: {}",
-    //         ino, fh, flags, flush
-    //     );
+    fn release(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        flags: u32,
+        _lock_owner: u64,
+        flush: bool,
+        reply: ReplyEmpty,
+    ) {
+        debug!("--------");
+        debug!(
+            "`release`: ino: {}, fh: {}, flags: {:#x}, flush: {}",
+            ino, fh, flags, flush
+        );
 
-    //     let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-    //     &mut guard.close_file(fh);
-    //     reply.ok();
-    // }
+        let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+        &mut guard.close_file(fh);
+        reply.ok();
+    }
 
-    // /// FIXME:
-    // ///  * BlockManager read should probably take an offset and a size.
-    // ///  * Also may want to consider caching something here and using the file handle?
-    // fn read(
-    //     &mut self,
-    //     _req: &Request,
-    //     ino: u64,
-    //     fh: u64,
-    //     offset: i64,
-    //     size: u32,
-    //     reply: ReplyData,
-    // ) {
-    //     debug!(
-    //         "read ino: {}, offset: {}, chunk size: {}",
-    //         ino, offset, size
-    //     );
+    fn read(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        reply: ReplyData,
+    ) {
+        debug!(
+            "read ino: {}, offset: {}, chunk size: {}",
+            ino, offset, size
+        );
 
-    //     let guard = self.file_system.lock().expect("poisoned ufs lock");
-    //     if let Ok(buffer) = &mut guard.read_file(fh, offset, size as usize) {
-    //         debug!("read {} bytes", buffer.len());
-    //         trace!("{:?}", &buffer);
-    //         reply.data(&buffer)
-    //     } else {
-    //         reply.error(ENOENT)
-    //     }
-    // }
+        let guard = self.file_system.lock().expect("poisoned ufs lock");
+        if let Ok(buffer) = &mut guard.read_file(fh, offset, size as usize) {
+            debug!("read {} bytes", buffer.len());
+            trace!("{:?}", &buffer);
+            reply.data(&buffer)
+        } else {
+            reply.error(ENOENT)
+        }
+    }
 
-    // fn write(
-    //     &mut self,
-    //     _req: &Request,
-    //     ino: u64,
-    //     fh: u64,
-    //     offset: i64,
-    //     data: &[u8],
-    //     _flags: u32,
-    //     reply: ReplyWrite,
-    // ) {
-    //     debug!(
-    //         "write ino: {}, offset: {}, data.len() {}",
-    //         ino,
-    //         offset,
-    //         data.len()
-    //     );
+    fn write(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        data: &[u8],
+        _flags: u32,
+        reply: ReplyWrite,
+    ) {
+        debug!(
+            "write ino: {}, offset: {}, data.len() {}",
+            ino,
+            offset,
+            data.len()
+        );
 
-    //     if let Some(Inode::File(inode)) = self.inodes.get_mut(ino as usize) {
-    //         let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-    //         if let Ok(len) = &mut guard.write_file(fh, data) {
-    //             debug!("wrote {} bytes", len);
-    //             trace!("{:?}", &data[..*len]);
+        if let Some(Inode::File(inode)) = self.inodes.get_mut(ino as usize) {
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            if let Ok(len) = &mut guard.write_file(fh, data) {
+                debug!("wrote {} bytes", len);
+                trace!("{:?}", &data[..*len]);
 
-    //             inode.size = inode.size + *len as u64;
+                inode.size = inode.size + *len as u64;
 
-    //             reply.written(*len as u32);
-    //         } else {
-    //             reply.error(ENOENT);
-    //         }
-    //     } else {
-    //         reply.error(ENOENT);
-    //     }
-    // }
+                reply.written(*len as u32);
+            } else {
+                reply.error(ENOENT);
+            }
+        } else {
+            reply.error(ENOENT);
+        }
+    }
 
     /// Return File System Statistics
     ///
