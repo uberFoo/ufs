@@ -214,6 +214,13 @@ impl FileVersion {
         &self.blocks
     }
 
+    /// Convert a copy of this FileVersion into a FileMetadata
+    ///
+    /// Note that the returned FileMetadata will contain only this version of the file
+    pub(crate) fn as_file_metadata(&self) -> FileMetadata {
+        FileMetadata::new_with_version(self.clone())
+    }
+
     /// Transform this FileVersion into a FileMetadata
     ///
     /// Note that the returned FileMetadata will contain only this version of the file

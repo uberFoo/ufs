@@ -8,6 +8,7 @@
 //! Metadata is versioned. Each time a file is written, a new copy in created.
 //!
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use failure::format_err;
@@ -140,7 +141,31 @@ impl Metadata {
         dir_id: UfsUuid,
     ) -> Result<DirectoryMetadata, failure::Error> {
         if let Some(dir) = self.lookup_dir(dir_id) {
-            Ok(dir.clone())
+            let mut dir = dir.clone();
+
+            // Populate the special "versions" directory.
+            let mut files = HashMap::<String, DirectoryEntry>::new();
+            if let Some(parent_dir_id) = dir.parent_id() {
+                if let Some(parent_dir) = self.lookup_dir(parent_dir_id) {
+                    for (name, entry) in parent_dir.entries() {
+                        if let DirectoryEntry::File(file) = entry {
+                            for (index, version) in file.get_versions().iter() {
+                                let mut name = name.clone();
+                                name.push('@');
+                                name.push_str(&index.to_string());
+                                trace!("\tfound version {}", name);
+                                files
+                                    .insert(name, DirectoryEntry::File(version.as_file_metadata()));
+                            }
+                        }
+                    }
+
+                    dir.set_entries(files);
+                }
+            }
+
+            trace!("\treturning {:#?}", dir);
+            Ok(dir)
         } else {
             Err(format_err!("unable to find directory with id {:?}", dir_id))
         }
