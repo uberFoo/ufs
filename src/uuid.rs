@@ -1,3 +1,5 @@
+use std::fmt;
+
 use lazy_static::lazy_static;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -59,5 +61,11 @@ impl UfsUuid {
 impl AsRef<Uuid> for UfsUuid {
     fn as_ref(&self) -> &Uuid {
         &self.inner
+    }
+}
+
+impl fmt::Display for UfsUuid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.inner)
     }
 }

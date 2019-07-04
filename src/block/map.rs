@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use failure::format_err;
-use log::{debug, error, trace};
+use log::{debug, error, trace, info};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -231,8 +231,14 @@ impl BlockMap {
             map.append(&mut block.data);
         }
 
-        match bincode::deserialize(&map) {
-            Ok(map) => Ok(map),
+        match bincode::deserialize::<BlockMap>(&map) {
+            Ok(map) => {
+                info!("Loaded BlockMap");
+                info!("id: {}", map.id);
+                info!("block count: {}", map.count);
+                info!("free blocks: {}", map.free_blocks.len());
+                Ok(map)
+            }
             Err(e) => {
                 error!("Failed to deserialize block map.");
                 Err(e.into())

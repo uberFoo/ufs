@@ -120,6 +120,7 @@ where
         let mut block = self.store.map_mut().get_mut(bn).unwrap();
         block.tag_free();
         self.store.map_mut().free_blocks_mut().push_back(bn);
+        debug!("Freed block 0x{:x?}", bn);
     }
 
     /// Save the state of the BlockManager
