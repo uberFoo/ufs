@@ -108,9 +108,13 @@ impl FileMetadata {
         self.versions.get(&version)
     }
 
-    pub(crate) fn commit_version(&mut self, version: FileVersion) -> Result<(), failure::Error> {
+    pub(crate) fn commit_version(
+        &mut self,
+        mut version: FileVersion,
+    ) -> Result<(), failure::Error> {
         debug!("--------");
         debug!("`commit_version`: {:?}", self);
+        version.dirty = false;
         self.last_version += 1;
         match self.versions.insert(self.last_version, version) {
             None => Ok(()),
