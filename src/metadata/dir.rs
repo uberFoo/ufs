@@ -38,6 +38,14 @@ pub struct DirectoryMetadata {
     /// The UUID of this directory's parent
     ///
     parent_id: Option<UfsUuid>,
+    /// Special ".wasm" directory flag
+    /// FIXME: I don't know if I like this. If I keep this, or similar, we should have one for the
+    /// ".vers" directory as well. This would be good as an extended attribute.
+    ///
+    wasm_dir: bool,
+    /// Special ".vers" directory flag
+    /// FIXME: See above
+    vers_dir: bool,
     /// Time directory was created (crtime)
     ///
     birth_time: UfsTime,
@@ -63,6 +71,8 @@ impl DirectoryMetadata {
             dirty: false,
             id: id,
             parent_id: p_id,
+            wasm_dir: false,
+            vers_dir: false,
             birth_time: time,
             write_time: time,
             change_time: time,
@@ -76,6 +86,8 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(WASM_DIR),
                 parent_id: Some(id),
+                wasm_dir: true,
+                vers_dir: false,
                 birth_time: time,
                 write_time: time,
                 change_time: time,
@@ -90,6 +102,8 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(VERS_DIR),
                 parent_id: Some(id),
+                wasm_dir: false,
+                vers_dir: true,
                 birth_time: time,
                 write_time: time,
                 change_time: time,
@@ -148,9 +162,14 @@ impl DirectoryMetadata {
         }
     }
 
-    /// Return a HashMap from entry name to DirectoryEntry structures
+    /// Return a reference to the HashMap from entry name to DirectoryEntry structures
     pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
         &self.entries
+    }
+
+    /// Return a mutable reference to the name -> DirectoryEntry HashMap
+    pub(crate) fn entries_mut(&mut self) -> &mut HashMap<String, DirectoryEntry> {
+        &mut self.entries
     }
 
     /// Set the entries
@@ -173,6 +192,16 @@ impl DirectoryMetadata {
         self.write_time
     }
 
+    /// Return if this is a ".wasm" directory
+    pub(crate) fn is_wasm_dir(&self) -> bool {
+        self.wasm_dir
+    }
+
+    /// Return if this is a ".vers" directory
+    pub(crate) fn is_vers_dir(&self) -> bool {
+        self.vers_dir
+    }
+
     /// Return true if the directory needs to be serialized
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
@@ -190,9 +219,12 @@ impl DirectoryMetadata {
         for e in self.entries.values() {
             if let DirectoryEntry::Directory(d) = e {
                 if d.id == id {
+                    debug!("\tfound {:#?}", d.id());
                     return Some(d);
                 } else {
+                    debug!("\tsearching {:#?}", d.id());
                     if let Some(d) = DirectoryMetadata::lookup_dir(d, id) {
+                        debug!("\treturning {:#?}", d.id());
                         return Some(d);
                     }
                 }
@@ -217,12 +249,15 @@ impl DirectoryMetadata {
         // Metadata::lookup_dir_mut.
         if self.id == id {
             self.dirty = true;
+            debug!("\tfound {:#?}", self.id());
             return Some(self);
         } else {
             for e in self.entries.values_mut() {
                 if let DirectoryEntry::Directory(ref mut d) = e {
+                    debug!("\tsearching {:#?}", d.id());
                     if let Some(d) = DirectoryMetadata::lookup_dir_mut(d, id) {
                         d.dirty = true;
+                        debug!("\treturning {:#?}", d.id());
                         return Some(d);
                     }
                 }
@@ -234,7 +269,7 @@ impl DirectoryMetadata {
     pub(in crate::metadata) fn lookup_file(&self, id: UfsUuid) -> Option<&FileMetadata> {
         debug!("--------");
         debug!(
-            "`lookup_file_mut`: {:#?}, parent {:#?}",
+            "`lookup_file`: {:#?}, parent {:#?}",
             self.id, self.parent_id
         );
 

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use failure::format_err;
-use log::{debug, error};
+use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -26,7 +26,7 @@ pub struct FileMetadata {
     /// The UUID of this file
     ///
     id: UfsUuid,
-    parent_id: UfsUuid,
+    dir_id: UfsUuid,
     last_version: usize,
     versions: HashMap<usize, FileVersion>,
 }
@@ -42,7 +42,7 @@ impl FileMetadata {
         versions.insert(0, FileVersion::new(id.random(), &id));
         FileMetadata {
             id,
-            parent_id: p_id,
+            dir_id: p_id,
             last_version: 0,
             versions,
         }
@@ -55,7 +55,7 @@ impl FileMetadata {
         versions.insert(0, v);
         FileMetadata {
             id,
-            parent_id: parent,
+            dir_id: parent,
             last_version: 0,
             versions,
         }
@@ -64,6 +64,11 @@ impl FileMetadata {
     /// Return the UUID of this file
     pub(crate) fn id(&self) -> UfsUuid {
         self.id
+    }
+
+    /// Return the directory id of this file
+    pub(crate) fn dir_id(&self) -> UfsUuid {
+        self.dir_id
     }
 
     pub(crate) fn new_version(&mut self) -> FileVersion {
@@ -105,7 +110,7 @@ impl FileMetadata {
 
     pub(crate) fn commit_version(&mut self, version: FileVersion) -> Result<(), failure::Error> {
         debug!("--------");
-        debug!("`commit`: {:#?}", self);
+        debug!("`commit_version`: {:?}", self);
         self.last_version += 1;
         match self.versions.insert(self.last_version, version) {
             None => Ok(()),
@@ -238,7 +243,7 @@ impl FileVersion {
         debug!("adding block {} to blocklist", block.number());
         self.size += block.size() as FileSize;
         debug!("new size {}", self.size);
-        debug!("{:#?}", self);
+        trace!("{:?}", self);
     }
 
     /// Return the `write_time` timestamp

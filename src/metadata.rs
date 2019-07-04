@@ -1,5 +1,8 @@
 //! File System Metadata
 //!
+//! Note that metadata contains id's that point at other metadata. Using id's instead of references
+//! allows for easy cloning.
+//!
 //! Metadata is stored in blocks, which are managed by the [`BlockMap`]. The file system begins life
 //! with a root directory, stored at block 0. As the file system mutates, changes are stored in
 //! memory.  When unmounted the [`BlockManager`] writes the metadata to the `BlockMap` via a
@@ -140,27 +143,33 @@ impl Metadata {
         &self,
         dir_id: UfsUuid,
     ) -> Result<DirectoryMetadata, failure::Error> {
+        debug!("--------");
+        debug!("`get_directory`: {:?}", dir_id);
         if let Some(dir) = self.lookup_dir(dir_id) {
             let mut dir = dir.clone();
 
             // Populate the special "versions" directory.
-            let mut files = HashMap::<String, DirectoryEntry>::new();
-            if let Some(parent_dir_id) = dir.parent_id() {
-                if let Some(parent_dir) = self.lookup_dir(parent_dir_id) {
-                    for (name, entry) in parent_dir.entries() {
-                        if let DirectoryEntry::File(file) = entry {
-                            for (index, version) in file.get_versions().iter() {
-                                let mut name = name.clone();
-                                name.push('@');
-                                name.push_str(&index.to_string());
-                                trace!("\tfound version {}", name);
-                                files
-                                    .insert(name, DirectoryEntry::File(version.as_file_metadata()));
+            if dir.is_vers_dir() {
+                let mut files = HashMap::<String, DirectoryEntry>::new();
+                if let Some(parent_dir_id) = dir.parent_id() {
+                    if let Some(parent_dir) = self.lookup_dir(parent_dir_id) {
+                        for (name, entry) in parent_dir.entries() {
+                            if let DirectoryEntry::File(file) = entry {
+                                for (index, version) in file.get_versions().iter() {
+                                    let mut name = name.clone();
+                                    name.push('@');
+                                    name.push_str(&index.to_string());
+                                    trace!("\tfound version {}", name);
+                                    files.insert(
+                                        name,
+                                        DirectoryEntry::File(version.as_file_metadata()),
+                                    );
+                                }
                             }
                         }
-                    }
 
-                    dir.set_entries(files);
+                        dir.set_entries(files);
+                    }
                 }
             }
 
@@ -186,6 +195,16 @@ impl Metadata {
             })
         } else {
             Err(format_err!("unable to find directory with id {:?}", dir_id))
+        }
+    }
+
+    /// Get FileMetadata
+    ///
+    pub(crate) fn get_file_metadata(&self, id: UfsUuid) -> Result<FileMetadata, failure::Error> {
+        if let Some(file) = self.lookup_file(id) {
+            Ok(file.clone())
+        } else {
+            Err(format_err!("unable to find file with id {:?}", id))
         }
     }
 
@@ -241,7 +260,7 @@ impl Metadata {
     ///
     pub(crate) fn commit_file(&mut self, f: File) -> Result<(), failure::Error> {
         debug!("--------");
-        debug!("`commit_file`: {:#?}", f);
+        debug!("`commit_file`: {:?}", f);
 
         if f.version.is_dirty() {
             if let Some(file) = self.lookup_file_mut(f.file_id) {
@@ -252,6 +271,37 @@ impl Metadata {
             }
         } else {
             Ok(())
+        }
+    }
+
+    /// Remove a file from a directory
+    ///
+    pub(crate) fn unlink_file(
+        &mut self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<(), failure::Error> {
+        debug!("--------");
+        debug!("`unlink_file`: {}, dir: {:#?}", name, dir_id);
+
+        if let Some(dir) = self.lookup_dir_mut(dir_id) {
+            // If this is a file in the special versions directory, then we are removing a version
+            // from the parent.
+            if dir.is_vers_dir() {
+                debug!("\tremoving version");
+                Ok(())
+            } else {
+                match dir.entries_mut().remove(name) {
+                    Some(file) => {
+                        debug!("\tremoved {:#?}\nfrom {:#?}", file, dir);
+                        self.dirty = true;
+                        Ok(())
+                    }
+                    None => Err(format_err!("did not find {} in {:#?}", name, dir)),
+                }
+            }
+        } else {
+            Err(format_err!("unable to find directory {:#?}", dir_id))
         }
     }
 
@@ -277,7 +327,7 @@ impl Metadata {
     /// FIXME: Maintain a cache.
     pub(crate) fn lookup_dir(&self, id: UfsUuid) -> Option<&DirectoryMetadata> {
         debug!("--------");
-        debug!("`lookup_dir`: {:#?}", id);
+        debug!("`lookup_dir`: {:?}", id);
         trace!("{:#?}", self);
 
         if self.root_directory.id() == id {
@@ -289,7 +339,7 @@ impl Metadata {
 
     pub(crate) fn lookup_dir_mut(&mut self, id: UfsUuid) -> Option<&mut DirectoryMetadata> {
         debug!("--------");
-        debug!("`lookup_dir_mut`: {:#?}", id);
+        debug!("`lookup_dir_mut`: {:?}", id);
         trace!("{:#?}", self);
 
         self.root_directory.lookup_dir_mut(id)
@@ -297,7 +347,7 @@ impl Metadata {
 
     pub(crate) fn lookup_file(&self, id: UfsUuid) -> Option<&FileMetadata> {
         debug!("--------");
-        debug!("`lookup_file`: {:#?}", id);
+        debug!("`lookup_file`: {:?}", id);
         trace!("{:#?}", self);
 
         self.root_directory.lookup_file(id)
@@ -305,7 +355,7 @@ impl Metadata {
 
     pub(crate) fn lookup_file_mut(&mut self, id: UfsUuid) -> Option<&mut FileMetadata> {
         debug!("--------");
-        debug!("`lookup_file_mut`: {:#?}", id);
+        debug!("`lookup_file_mut`: {:?}", id);
         trace!("{:#?}", self);
 
         self.root_directory.lookup_file_mut(id)

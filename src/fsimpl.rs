@@ -75,7 +75,7 @@ impl<B: BlockStorage> UfsMounter<B> {
         let runtime_mgr = RuntimeManager::new(inner.clone(), receiver);
         let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
 
-        let mut mounter = UfsMounter {
+        let mounter = UfsMounter {
             inner,
             runtime_mgr_channel: sender,
             runtime_mgr_thread: Some(runtime_mgr_thread),
@@ -356,23 +356,20 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ///
     pub(crate) fn create_file(
         &mut self,
-        parent_id: UfsUuid,
+        dir_id: UfsUuid,
         name: &str,
     ) -> Result<(FileHandle, File), failure::Error> {
         debug!("--------");
         debug!("`create_file`: {:?}", name);
 
-        let file = self
-            .block_manager
-            .metadata_mut()
-            .new_file(parent_id, name)?;
+        let file = self.block_manager.metadata_mut().new_file(dir_id, name)?;
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
 
         // FIXME
-        // self.notify_listeners(UfsMessage::FileCreate(name);
+        // self.notify_listeners(UfsMessage::FileCreate(dir_id, name.to_owned()));
 
         Ok((fh, file))
     }
@@ -409,15 +406,21 @@ impl<B: BlockStorage> UberFileSystem<B> {
         }
     }
 
-    // /// Remove a file
-    // ///
-    // pub(crate) fn remove_file(&mut self, path: &Path) -> Result<(), failure::Error> {
-    //     debug!("--------");
-    //     debug!("`remove_file`: {:?}", path);
+    /// Remove a file
+    ///
+    pub(crate) fn remove_file(
+        &mut self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<(), failure::Error> {
+        debug!("--------");
+        debug!("`remove_file`: {}, dir: {:?}", name, dir_id);
 
-    //     self.block_manager.root_dir_mut().unlink_file(path)?;
-    //     Ok(())
-    // }
+        self.block_manager
+            .metadata_mut()
+            .unlink_file(dir_id, name)?;
+        Ok(())
+    }
 
     /// Open a file
     ///
@@ -453,43 +456,61 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`close_file`: {}", handle);
 
-        //     // Add any .wasm files, located in a .wasm directory, to the runtime.
-        //     if let Some(program_mgr) = &self.program_mgr {
-        //         if let Some(file) = self.open_files.get(&handle) {
-        //             let mut execute = false;
-        //             if let Some(parent) = file.path.parent() {
-        //                 for a in parent.ancestors() {
-        //                     if a.file_name() == Some(OsStr::new(WASM_DIR)) {
-        //                         execute = true;
-        //                         break;
-        //                     }
-        //                 }
-        //             }
+        // Commit the file
+        if let Some(file) = self.open_files.get(&handle) {
+            debug!("\t{:?}", file);
+            self.block_manager.metadata_mut().commit_file(file.clone());
+        }
 
-        //             if execute {
-        //                 if let Some(ext) = file.path.extension() {
-        //                     if ext == WASM_EXT {
-        //                         debug!("\tadding {:?} to runtime", file.path);
-        //                         let size = file.version.size();
-        //                         if let Ok(program) = self.read_file(handle, 0, size as usize) {
-        //                             program_mgr
-        //                                 .send(RuntimeManagerMsg::Program(WasmProgram {
-        //                                     name: file.path.to_path_buf(),
-        //                                     program,
-        //                                 }))
-        //                                 .unwrap()
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
+        // Add any .wasm files, located in a .wasm directory, to the runtime.
+        if let Some(program_mgr) = &self.program_mgr {
+            if let Some(file) = self.open_files.get(&handle) {
+                // Check to see if this file is in the special ".wasm" directory.
+                let mut execute = false;
+                let file_id = file.file_id;
+                let file_a = self
+                    .block_manager
+                    .metadata()
+                    .get_file_metadata(file_id)
+                    .unwrap();
+                let dir = self
+                    .block_manager
+                    .metadata()
+                    .get_directory(file_a.dir_id())
+                    .unwrap();
+                if dir.is_wasm_dir() {
+                    execute = true;
+
+                    // Get the file's name and check for the correct extension
+                    for (name, entry) in dir.entries() {
+                        if let DirectoryEntry::File(f) = entry {
+                            if f.id() == file_id {
+                                let path = Path::new(name);
+                                if let Some(ext) = path.extension() {
+                                    if ext == WASM_EXT {
+                                        info!("adding {:?} to runtime", name);
+                                        let size = file.version.size();
+                                        if let Ok(program) =
+                                            self.read_file(handle, 0, size as usize)
+                                        {
+                                            program_mgr
+                                                .send(RuntimeManagerMsg::Program(WasmProgram {
+                                                    name: path.to_path_buf(),
+                                                    program,
+                                                }))
+                                                .unwrap()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         match self.open_files.remove(&handle) {
             Some(file) => {
-                debug!("\t{:#?}", file);
-                self.block_manager.metadata_mut().commit_file(file);
-
                 // FIXME
                 // self.notify_listeners(UfsMessage::FileClose(path));
             }
