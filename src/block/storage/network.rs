@@ -6,14 +6,18 @@ use failure::format_err;
 use log::{debug, error, trace};
 use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
 
-use crate::block::{
-    map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
-    BlockStorage, BlockWriter,
+use crate::{
+    block::{
+        map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
+        BlockStorage, BlockWriter,
+    },
+    uuid::UfsUuid,
 };
 
 /// Network-based Block Storage
 ///
 pub struct NetworkStore {
+    id: UfsUuid,
     url: Url,
     client: Client,
     block_size: BlockSize,
@@ -34,6 +38,7 @@ impl NetworkStore {
                 let metadata = BlockMap::deserialize(&reader)?;
 
                 Ok(NetworkStore {
+                    id: metadata.id().clone(),
                     url,
                     client,
                     block_size: metadata.block_size(),
@@ -47,6 +52,9 @@ impl NetworkStore {
 }
 
 impl BlockStorage for NetworkStore {
+    fn id(&self) -> &UfsUuid {
+        &self.id
+    }
     fn commit_map(&mut self) {
         debug!("writing BlockMap");
         let mut writer = NetworkWriter {

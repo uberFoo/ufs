@@ -11,15 +11,20 @@ use crate::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
-    metadata::DirectoryMetadata,
+    metadata::{DirectoryMetadata, Metadata},
+    uuid::UfsUuid,
 };
 
 /// Manager of Blocks
 ///
-/// This sits atop a BlockStorage and provides higher-level operations over blocks.  For example,
+/// This sits atop a `BlockStorage` and provides higher-level operations over blocks.  For example,
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
-/// hashes are calculated when writing, and validated when reading, a block.  Data written across
-/// multiple blocks are stored using the [`BlockMap`], etc.
+/// hashes are calculated when writing, and validated when reading, a block.
+///
+/// The physical blocks are managed by a [`BlockMap`], which is owned by the `BlockStorage`
+/// instance.
+///
+/// Files and Directories are managed by a `Metadata` structure, owned by this data structure.
 ///
 /// [`BlockMap`]: crate::block::map::BlockMap
 #[derive(Debug, PartialEq)]
@@ -27,8 +32,12 @@ pub struct BlockManager<BS>
 where
     BS: BlockStorage,
 {
+    /// The UUID of the File System
+    id: UfsUuid,
+    /// The physical storage medium for the File System blocks
     store: BS,
-    root_dir: DirectoryMetadata,
+    /// File and Directory metadata
+    metadata: Metadata,
 }
 
 impl<'a, BS> BlockManager<BS>
@@ -38,7 +47,8 @@ where
     /// Layer metadata atop a block storage
     pub fn new(store: BS) -> Self {
         BlockManager {
-            root_dir: DirectoryMetadata::new(),
+            id: store.id().clone(),
+            metadata: Metadata::new(*store.id()),
             store,
         }
     }
@@ -49,11 +59,12 @@ where
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
                 match read_metadata(&mut store, root_block) {
-                    Ok(root_dir) => {
+                    Ok(metadata) => {
                         debug!("loaded metadata");
 
                         Ok(BlockManager {
-                            root_dir: root_dir,
+                            id: store.id().clone(),
+                            metadata,
                             store,
                         })
                     }
@@ -64,12 +75,16 @@ where
         }
     }
 
-    pub(crate) fn root_dir(&self) -> &DirectoryMetadata {
-        &self.root_dir
+    pub(crate) fn id(&self) -> &UfsUuid {
+        &self.id
     }
 
-    pub(crate) fn root_dir_mut(&mut self) -> &mut DirectoryMetadata {
-        &mut self.root_dir
+    pub(crate) fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    pub(crate) fn metadata_mut(&mut self) -> &mut Metadata {
+        &mut self.metadata
     }
 
     pub(crate) fn block_count(&self) -> BlockCardinality {
@@ -98,12 +113,15 @@ where
         self.store.map_mut().free_blocks_mut().pop_front()
     }
 
-    // /// Recycle a Block
-    // ///
-    // /// The block is no longer being used, and may be returned to the free block pool.
-    // pub(crate) fn recycle_block(&mut self, block: BlockCardinality) {
-    //     self.free_blocks.push_back(block);
-    // }
+    /// Recycle a Block
+    ///
+    /// The block is no longer being used, and may be returned to the free block pool.
+    pub(crate) fn recycle_block(&mut self, bn: BlockNumber) {
+        let mut block = self.store.map_mut().get_mut(bn).unwrap();
+        block.tag_free();
+        self.store.map_mut().free_blocks_mut().push_back(bn);
+        debug!("Freed block 0x{:x?}", bn);
+    }
 
     /// Save the state of the BlockManager
     ///
@@ -111,8 +129,8 @@ where
     ///
     /// FIXME: If this fails, then what?
     pub(crate) fn serialize(&mut self) {
-        if self.root_dir.is_dirty() {
-            match write_metadata(&mut self.store, &mut self.root_dir) {
+        if self.metadata.is_dirty() {
+            match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
                     debug!("Stored new root block {}", block);
                     self.store.map_mut().set_root_block(block);
@@ -210,21 +228,9 @@ mod test {
     }
 
     #[test]
-    fn check_metadata() {
-        init();
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
-            BlockSize::FiveTwelve,
-            10,
-        )));
-
-        print!("root dir {:#?}", bm.root_dir);
-    }
-
-    #[test]
     fn not_enough_free_blocks_error() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             1,
         )));
@@ -240,7 +246,7 @@ mod test {
     #[test]
     fn tiny_test() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));
@@ -266,7 +272,7 @@ mod test {
     #[test]
     fn write_data_smaller_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));
@@ -284,7 +290,7 @@ mod test {
     #[test]
     fn write_data_larger_than_blocksize() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             3,
         )));
@@ -302,7 +308,7 @@ mod test {
     #[test]
     fn read_block_bad_hash() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new("test"),
+            UfsUuid::new_root("test"),
             BlockSize::FiveTwelve,
             2,
         )));
@@ -313,5 +319,27 @@ mod test {
         block.hash.replace(BlockHash::new("abcd"));
 
         assert!(bm.read(&block).is_err(), "hash validation failure");
+    }
+
+    #[test]
+    fn recycle_blocks() {
+        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
+            UfsUuid::new_root("test"),
+            BlockSize::FiveTwelve,
+            10,
+        )));
+
+        // One block is taken by the block map
+        assert_eq!(bm.free_block_count(), 9);
+
+        let block = bm.write(&vec![0x38; 511][..]).unwrap().clone();
+        assert_eq!(bm.free_block_count(), 8);
+        let from_map = bm.store.map().get(block.number).unwrap();
+        assert_eq!(from_map, &block);
+        assert!(from_map.is_data());
+
+        bm.recycle_block(block.number);
+        assert_eq!(bm.free_block_count(), 9);
+        assert!(bm.store.map().get(block.number).unwrap().is_free());
     }
 }

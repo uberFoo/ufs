@@ -22,7 +22,7 @@
             "request": "launch",
             "name": "Debug Remote FUSE",
             "program": "${workspaceFolder}/target/debug/fuse-ufs",
-            "args": ["--url", "http://localhost:8888/test", "mnt"],
+            "args": ["--url", "http://localhost:8888/demo", "mnt"],
             "env": [
                 {
                     "name": "RUST_LOG",
@@ -36,7 +36,7 @@
             "request": "launch",
             "name": "Debug FUSE",
             "program": "${workspaceFolder}/target/debug/fuse-ufs",
-            "args": ["--bundle", "bundles/test", "mnt"],
+            "args": ["--bundle", "bundles/demo", "mnt"],
             "env": [
                 {
                     "name": "RUST_LOG",

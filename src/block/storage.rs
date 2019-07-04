@@ -2,7 +2,10 @@ pub mod file;
 pub mod memory;
 pub mod network;
 
-use crate::block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, BlockSizeType};
+use crate::{
+    block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, BlockSizeType},
+    uuid::UfsUuid,
+};
 
 /// Persistent Storage for Blocks
 ///
@@ -12,6 +15,10 @@ use crate::block::{map::BlockMap, BlockCardinality, BlockNumber, BlockSize, Bloc
 ///
 /// Finally, the block storage provides access to metadata, stored as blocks,
 pub trait BlockStorage: BlockWriter + BlockReader + Send {
+    /// Uuid of BlockStorage
+    ///
+    fn id(&self) -> &UfsUuid;
+
     /// Commit the block map to storage
     ///
     fn commit_map(&mut self);
@@ -36,7 +43,7 @@ pub trait BlockStorage: BlockWriter + BlockReader + Send {
 /// Writer of Blocks
 ///
 /// This is broken out from `BlockStorage` so that we can support writing blocks prior to a full-
-/// blown BlockStorage is available.
+/// blown BlockStorage being available.
 pub trait BlockWriter {
     /// Write a Block
     ///
@@ -55,7 +62,7 @@ pub trait BlockWriter {
 /// Reader of Blocks
 ///
 /// This is broken out from `BlockStorage` so that we can support reading  blocks prior to a full-
-/// blown BlockStorage is available.
+/// blown BlockStorage being available.
 pub trait BlockReader {
     /// Read a Block
     ///

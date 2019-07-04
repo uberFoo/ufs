@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use failure::format_err;
-use log::{debug, error, trace};
+use log::{debug, error, trace, info};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -231,8 +231,14 @@ impl BlockMap {
             map.append(&mut block.data);
         }
 
-        match bincode::deserialize(&map) {
-            Ok(map) => Ok(map),
+        match bincode::deserialize::<BlockMap>(&map) {
+            Ok(map) => {
+                info!("Loaded BlockMap");
+                info!("id: {}", map.id);
+                info!("block count: {}", map.count);
+                info!("free blocks: {}", map.free_blocks.len());
+                Ok(map)
+            }
             Err(e) => {
                 error!("Failed to deserialize block map.");
                 Err(e.into())
@@ -317,7 +323,7 @@ mod test {
     #[test]
     fn one_block_simple() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
 
         // This tests that we pickup a metadata block.
@@ -346,10 +352,10 @@ mod test {
     #[test]
     fn not_enough_blocks() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
-        for x in 1..100 {
+        for _ in 1..100 {
             map.free_blocks.pop_front();
         }
 
@@ -360,7 +366,7 @@ mod test {
     #[test]
     fn test_large_blocks() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
 
         // This tests that we pickup a metadata block.
@@ -406,7 +412,7 @@ mod test {
     #[test]
     fn test_allocate_more_blocks_complex() {
         init();
-        let id = UfsUuid::new("test");
+        let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
         // This tests that we pickup a metadata block.

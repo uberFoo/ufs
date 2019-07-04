@@ -30,7 +30,7 @@ fn main() -> Result<(), failure::Error> {
     debug!("running with options {:?}", opt);
 
     let map = BlockMap::new(
-        UfsUuid::new(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
+        UfsUuid::new_root(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
         opt.block_size,
         opt.block_count,
     );
