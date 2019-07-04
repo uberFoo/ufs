@@ -46,15 +46,64 @@ use crate::block::{
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
-    /// Path to file
-    ///
-    // pub path: PathBuf,
     /// UfsUuid of the file
     ///
     pub file_id: UfsUuid,
     /// The file wrapper, itself
     ///
     pub version: FileVersion,
+}
+
+impl File {
+    pub(crate) fn get_path(&self, metadata: &Metadata) -> PathBuf {
+        let mut path = PathBuf::new();
+
+        fn make_path_file(path: &mut PathBuf, f: &FileMetadata, metadata: &Metadata) {
+            make_path_dir(
+                path,
+                metadata.lookup_dir(f.dir_id()).unwrap(),
+                f.id(),
+                metadata,
+            );
+        }
+
+        fn make_path_dir(
+            path: &mut PathBuf,
+            d: &DirectoryMetadata,
+            id: UfsUuid,
+            metadata: &Metadata,
+        ) {
+            if let Some(parent_id) = d.parent_id() {
+                make_path_dir(
+                    path,
+                    metadata.lookup_dir(parent_id).unwrap(),
+                    d.id(),
+                    metadata,
+                );
+            } else {
+                path.push("/");
+            }
+
+            for (name, entry) in d.entries() {
+                if id
+                    == match entry {
+                        DirectoryEntry::Directory(d) => d.id(),
+                        DirectoryEntry::File(f) => f.id(),
+                    }
+                {
+                    path.push(name);
+                    break;
+                }
+            }
+        }
+
+        make_path_file(
+            &mut path,
+            metadata.lookup_file(self.file_id).unwrap(),
+            metadata,
+        );
+        path
+    }
 }
 
 /// UFS internal definition of a directory
@@ -66,9 +115,6 @@ pub struct File {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Directory {
-    /// Path to the directory
-    ///
-    // pub path: PathBuf,
     /// UfsUuid of the directory
     ///
     pub id: UfsUuid,
@@ -431,5 +477,21 @@ pub mod test {
 
         assert_eq!(d.parent_id(), Some(root_id));
         assert_eq!(d2.parent_id(), Some(d.id()));
+    }
+
+    #[test]
+    fn path_for_file() {
+        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let root_id = m.root_directory().id();
+        let dir = m.new_directory(root_id, "foo").unwrap();
+        let wasm = dir.entries().get(".wasm").unwrap();
+        let wasm_id = if let DirectoryEntry::Directory(d) = wasm {
+            d.id()
+        } else {
+            panic!("got a DirectoryEntry::File");
+        };
+        let file = m.new_file(wasm_id, "test_program.wasm").unwrap();
+
+        assert_eq!(Path::new("/foo/.wasm/test_program.wasm"), file.get_path(&m));
     }
 }

@@ -153,7 +153,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
                 match msg {
                     RuntimeManagerMsg::Shutdown => break,
                     RuntimeManagerMsg::Program(wasm) => {
-                        info!("Adding WASM program {:?}", wasm.name);
+                        info!("Starting WASM program {:?}", wasm.name);
                         let process = Process::new(wasm.name.clone(), wasm.program);
                         let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
                         ufs.listeners.push(process.get_sender());
@@ -289,7 +289,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
                             let path = Path::new(f_name);
                             if let Some(ext) = path.extension() {
                                 if ext == WASM_EXT {
-                                    info!("adding {:?} to runtime", path);
                                     programs.push((
                                         ["/", d_name, f_name].iter().collect(),
                                         file.clone(),
@@ -309,7 +308,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     let version = file.get_latest();
                     let size = version.size();
                     if let Ok(program) = self.read_file(fh, 0, size as usize) {
-                        info!("Adding program {:?} to runtime.", path);
+                        info!("Adding existing program {:?} to runtime.", path);
                         program_mgr
                             .send(RuntimeManagerMsg::Program(WasmProgram {
                                 name: path,
@@ -375,7 +374,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         name: &str,
     ) -> Result<(FileHandle, File), failure::Error> {
         debug!("--------");
-        debug!("`create_file`: {:?}", name);
 
         let file = self.block_manager.metadata_mut().new_file(dir_id, name)?;
 
@@ -386,6 +384,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // FIXME WASM
         // self.notify_listeners(UfsMessage::FileCreate(dir_id, name.to_owned()));
 
+        debug!("`create_file`: {:?}, handle: {}", name, fh);
         Ok((fh, file))
     }
 
@@ -393,7 +392,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ///
     pub(crate) fn open_directory(&mut self, id: UfsUuid) -> Result<FileHandle, failure::Error> {
         debug!("--------");
-        debug!("`open_directory`: {:?}", id);
         let dir = self.block_manager.metadata().get_directory(id)?;
 
         let fh = self.open_file_counter;
@@ -402,6 +400,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         trace!("\t{:#?}", dir);
         self.open_dirs.insert(fh, dir);
 
+        debug!("`open_directory`: {:?}, handle: {}", id, fh);
         Ok(fh)
     }
 
@@ -450,7 +449,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         mode: OpenFileMode,
     ) -> Result<FileHandle, failure::Error> {
         debug!("--------");
-        debug!("`open_file` {:?}, mode: {:?}", id, mode);
         let file = match mode {
             OpenFileMode::Write => self.block_manager.metadata_mut().get_file_write_only(id)?,
             OpenFileMode::Read => self.block_manager.metadata().get_file_read_only(id)?,
@@ -462,11 +460,10 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         self.open_files.insert(fh, file);
 
-        debug!("\thandle: {}", fh);
-
         // FIXME WASM
         // self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
 
+        debug!("`open_file` {:?}, mode: {:?}, handle: {}", id, mode, fh);
         Ok(fh)
     }
 
@@ -476,7 +473,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`close_file`: {}", handle);
 
-        // Commit the file
+        // Commit the file first, so that we can read it's contents if it's a program file to run.
         if let Some(file) = self.open_files.get(&handle) {
             debug!("\t{:?}", file);
             self.block_manager.metadata_mut().commit_file(file.clone());
@@ -485,37 +482,44 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Add any .wasm files, located in a .wasm directory, to the runtime.
         if let Some(program_mgr) = &self.program_mgr {
             if let Some(file) = self.open_files.get(&handle) {
-                // Check to see if this file is in the special ".wasm" directory.
-                let file_id = file.file_id;
-                let file_a = self
-                    .block_manager
-                    .metadata()
-                    .get_file_metadata(file_id)
-                    .unwrap();
-                let dir = self
-                    .block_manager
-                    .metadata()
-                    .get_directory(file_a.dir_id())
-                    .unwrap();
-                if dir.is_wasm_dir() {
-                    // Get the file's name and check for the correct extension
-                    for (name, entry) in dir.entries() {
-                        if let DirectoryEntry::File(f) = entry {
-                            if f.id() == file_id {
-                                let path = Path::new(name);
-                                if let Some(ext) = path.extension() {
-                                    if ext == WASM_EXT {
-                                        info!("Adding program {:?} to runtime", name);
-                                        let size = file.version.size();
-                                        if let Ok(program) =
-                                            self.read_file(handle, 0, size as usize)
-                                        {
-                                            program_mgr
-                                                .send(RuntimeManagerMsg::Program(WasmProgram {
-                                                    name: path.to_path_buf(),
-                                                    program,
-                                                }))
-                                                .unwrap()
+                // This check is a bit of a hack. Basically, we only want to load the program if
+                // it's new. For some reason FUSE will open and close a newly created file after the
+                // new file is closed. So we check to see if the FileVersion is dirty here, since it
+                // will only be so if we haven't already written it.
+                if file.version.is_dirty() {
+                    // Check to see if this file is in the special ".wasm" directory.
+                    let file_id = file.file_id;
+                    let file_a = self
+                        .block_manager
+                        .metadata()
+                        .get_file_metadata(file_id)
+                        .unwrap();
+                    let dir = self
+                        .block_manager
+                        .metadata()
+                        .get_directory(file_a.dir_id())
+                        .unwrap();
+                    if dir.is_wasm_dir() {
+                        // Get the file's name and check for the correct extension
+                        for (name, entry) in dir.entries() {
+                            if let DirectoryEntry::File(f) = entry {
+                                if f.id() == file_id {
+                                    let path = file.get_path(self.block_manager.metadata());
+                                    // let path = Path::new(name);
+                                    if let Some(ext) = path.extension() {
+                                        if ext == WASM_EXT {
+                                            info!("Adding program {:?} to runtime", name);
+                                            let size = file.version.size();
+                                            if let Ok(program) =
+                                                self.read_file(handle, 0, size as usize)
+                                            {
+                                                program_mgr
+                                                    .send(RuntimeManagerMsg::Program(WasmProgram {
+                                                        name: path.to_path_buf(),
+                                                        program,
+                                                    }))
+                                                    .unwrap()
+                                            }
                                         }
                                     }
                                 }
@@ -681,6 +685,9 @@ mod test {
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
         assert_eq!(test, bytes.as_slice());
+
+        // If we don't remove the file, the test fails on the next run.
+        ufs.remove_file(root_id, "lib.rs");
     }
 
     #[test]
