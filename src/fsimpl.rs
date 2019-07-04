@@ -466,7 +466,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         if let Some(program_mgr) = &self.program_mgr {
             if let Some(file) = self.open_files.get(&handle) {
                 // Check to see if this file is in the special ".wasm" directory.
-                let mut execute = false;
                 let file_id = file.file_id;
                 let file_a = self
                     .block_manager
@@ -479,8 +478,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     .get_directory(file_a.dir_id())
                     .unwrap();
                 if dir.is_wasm_dir() {
-                    execute = true;
-
                     // Get the file's name and check for the correct extension
                     for (name, entry) in dir.entries() {
                         if let DirectoryEntry::File(f) = entry {

@@ -400,7 +400,7 @@ pub mod test {
 
     #[test]
     fn new_metadata() {
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let m = Metadata::new(UfsUuid::new_root("test"));
         let root = m.root_directory();
 
         assert_eq!(m.is_dirty(), true);

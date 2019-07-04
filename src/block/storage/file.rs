@@ -382,7 +382,7 @@ mod test {
         )
         .unwrap();
 
-        let block = fs.write_block(7, &data[..]).unwrap();
+        let _ = fs.write_block(7, &data[..]).unwrap();
 
         let mut path = PathBuf::from(&test_dir);
         path.push("0");
@@ -406,7 +406,7 @@ mod test {
         );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(
+        let fs = FileStore::new(
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
@@ -432,7 +432,7 @@ mod test {
     fn construction_sanity() {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
-        let mut fs = FileStore::new(
+        let fs = FileStore::new(
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4),
         )

@@ -349,7 +349,7 @@ mod test {
         let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
-        for x in 1..100 {
+        for _ in 1..100 {
             map.free_blocks.pop_front();
         }
 
