@@ -17,10 +17,14 @@ use crate::{
 
 /// Manager of Blocks
 ///
-/// This sits atop a BlockStorage and provides higher-level operations over blocks.  For example,
+/// This sits atop a `BlockStorage` and provides higher-level operations over blocks.  For example,
 /// reads and writes of arbitrary size (files) are aggregated across multiple blocks.  Per-block
-/// hashes are calculated when writing, and validated when reading, a block.  Data written across
-/// multiple blocks are stored using the [`BlockMap`], etc.
+/// hashes are calculated when writing, and validated when reading, a block.
+///
+/// The physical blocks are managed by a [`BlockMap`], which is owned by the `BlockStorage`
+/// instance.
+///
+/// Files and Directories are managed by a `Metadata` structure, owned by this data structure.
 ///
 /// [`BlockMap`]: crate::block::map::BlockMap
 #[derive(Debug, PartialEq)]
@@ -28,8 +32,11 @@ pub struct BlockManager<BS>
 where
     BS: BlockStorage,
 {
+    /// The UUID of the File System
     id: UfsUuid,
+    /// The physical storage medium for the File System blocks
     store: BS,
+    /// File and Directory metadata
     metadata: Metadata,
 }
 
