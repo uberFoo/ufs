@@ -32,7 +32,10 @@ pub(crate) use dir::DirectoryMetadata;
 pub(crate) use dir::{WASM_DIR, WASM_EXT};
 pub(crate) use file::{FileMetadata, FileVersion};
 
-use crate::block::wrapper::{MetadataDeserialize, MetadataSerialize};
+use crate::block::{
+    wrapper::{MetadataDeserialize, MetadataSerialize},
+    BlockNumber,
+};
 
 /// UFS internal definition of a File
 ///
@@ -280,7 +283,7 @@ impl Metadata {
         &mut self,
         dir_id: UfsUuid,
         name: &str,
-    ) -> Result<(), failure::Error> {
+    ) -> Result<Vec<BlockNumber>, failure::Error> {
         debug!("--------");
         debug!("`unlink_file`: {}, dir: {:#?}", name, dir_id);
 
@@ -288,16 +291,27 @@ impl Metadata {
             // If this is a file in the special versions directory, then we are removing a version
             // from the parent.
             if dir.is_vers_dir() {
-                debug!("\tremoving version");
-                Ok(())
+                debug!("\teventually, we'll be able to remove specific versions of the file");
+                debug!("\tsomeday, I'd even like to make removing the root file, save it");
+                debug!("\tsomeplace until all of the versions are removed");
+                Ok(vec![])
             } else {
                 match dir.entries_mut().remove(name) {
-                    Some(file) => {
+                    Some(DirectoryEntry::File(file)) => {
                         debug!("\tremoved {:#?}\nfrom {:#?}", file, dir);
                         self.dirty = true;
-                        Ok(())
+                        // We need to collect all of the blocks, for all of the versions of the file
+                        // and return them as a single list to be deleted by the caller
+                        let mut blocks = vec![];
+                        for v in file.get_versions().values() {
+                            for b in v.blocks() {
+                                blocks.push(*b);
+                            }
+                            // blocks.append(v.blocks());
+                        }
+                        Ok(blocks)
                     }
-                    None => Err(format_err!("did not find {} in {:#?}", name, dir)),
+                    _ => Err(format_err!("did not find {} in {:#?}", name, dir)),
                 }
             }
         } else {

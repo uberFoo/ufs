@@ -416,9 +416,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("--------");
         debug!("`remove_file`: {}, dir: {:?}", name, dir_id);
 
-        self.block_manager
+        let free_blocks = self
+            .block_manager
             .metadata_mut()
             .unlink_file(dir_id, name)?;
+
+        for b in free_blocks {
+            self.block_manager.recycle_block(b)
+        }
         Ok(())
     }
 
