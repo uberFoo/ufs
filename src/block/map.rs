@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use failure::format_err;
-use log::{debug, error, trace, info};
+use log::{debug, error, info, trace};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
