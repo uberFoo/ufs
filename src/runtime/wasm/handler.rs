@@ -48,7 +48,7 @@ impl UfsMessageHandler for WasmMessageHandler {
                 .instance
                 .invoke_export("file_create", &args, &mut self.runtime)
             {
-                Ok(v) => info!("`file_create` success"),
+                Ok(_) => info!("`file_create` success"),
                 Err(e) => error!("error invoking `file_create` in WASM: {:?}", e),
             }
         }
@@ -73,7 +73,7 @@ impl UfsMessageHandler for WasmMessageHandler {
                 .instance
                 .invoke_export("file_close", &args, &mut self.runtime)
             {
-                Ok(v) => info!("`file_close` success"),
+                Ok(_) => info!("`file_close` success"),
                 Err(e) => error!("error invoking `file_close` in WASM: {:?}", e),
             }
         }
@@ -109,7 +109,7 @@ impl UfsMessageHandler for WasmMessageHandler {
                     .instance
                     .invoke_export("file_write", &args, &mut self.runtime)
                 {
-                    Ok(v) => info!("`file_write` success"),
+                    Ok(_) => info!("`file_write` success"),
                     Err(e) => error!("error invoking `file_write` in WASM: {:?}", e),
                 }
             }
