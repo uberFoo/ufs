@@ -106,12 +106,14 @@ where
         self.store.map_mut().free_blocks_mut().pop_front()
     }
 
-    // /// Recycle a Block
-    // ///
-    // /// The block is no longer being used, and may be returned to the free block pool.
-    // pub(crate) fn recycle_block(&mut self, block: BlockCardinality) {
-    //     self.free_blocks.push_back(block);
-    // }
+    /// Recycle a Block
+    ///
+    /// The block is no longer being used, and may be returned to the free block pool.
+    pub(crate) fn recycle_block(&mut self, bn: BlockNumber) {
+        let mut block = self.store.map_mut().get_mut(bn).unwrap();
+        block.tag_free();
+        self.store.map_mut().free_blocks_mut().push_back(bn);
+    }
 
     /// Save the state of the BlockManager
     ///
@@ -218,16 +220,6 @@ mod test {
     }
 
     #[test]
-    fn check_metadata() {
-        init();
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            10,
-        )));
-    }
-
-    #[test]
     fn not_enough_free_blocks_error() {
         let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
             UfsUuid::new_root("test"),
@@ -319,5 +311,27 @@ mod test {
         block.hash.replace(BlockHash::new("abcd"));
 
         assert!(bm.read(&block).is_err(), "hash validation failure");
+    }
+
+    #[test]
+    fn recycle_blocks() {
+        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
+            UfsUuid::new_root("test"),
+            BlockSize::FiveTwelve,
+            10,
+        )));
+
+        // One block is taken by the block map
+        assert_eq!(bm.free_block_count(), 9);
+
+        let block = bm.write(&vec![0x38; 511][..]).unwrap().clone();
+        assert_eq!(bm.free_block_count(), 8);
+        let from_map = bm.store.map().get(block.number).unwrap();
+        assert_eq!(from_map, &block);
+        assert!(from_map.is_data());
+
+        bm.recycle_block(block.number);
+        assert_eq!(bm.free_block_count(), 9);
+        assert!(bm.store.map().get(block.number).unwrap().is_free());
     }
 }

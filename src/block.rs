@@ -154,6 +154,13 @@ impl FromStr for BlockSize {
     }
 }
 
+/// Fundamental File System Block Metadata
+///
+/// This is the record keeping associated with a physical block on some media. It does not contain
+/// any data. It contains the number of bytes in the block, the number of the block from the
+/// perspective of the media, the SHA-256 hash of the block's data, and the type of block.
+///
+/// This is stored in the `BlockMap`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Block {
     byte_count: BlockSizeType,
@@ -172,43 +179,58 @@ impl Block {
         }
     }
 
+    /// Mark a block as containing metadata
     pub(in crate::block) fn tag_metadata(&mut self) {
         self.block_type = BlockType::new_metadata();
     }
 
+    /// Mark a block as containing data
     pub(in crate::block) fn tag_data(&mut self) {
         self.block_type = BlockType::new_data();
     }
 
-    pub(crate) fn number(&self) -> BlockCardinality {
-        self.number
+    /// Mark a block as being free
+    pub(in crate::block) fn tag_free(&mut self) {
+        self.block_type = BlockType::new_free();
     }
 
-    pub(crate) fn size(&self) -> BlockSizeType {
-        self.byte_count
+    /// Check if a block contains metadata
+    pub(in crate::block) fn is_metadata(&self) -> bool {
+        self.block_type.is_metadata()
     }
 
-    pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {
-        self.byte_count = size
-    }
-
-    pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
-        self.hash
-    }
-
-    pub(in crate::block) fn set_hash(&mut self, hash: BlockHash) {
-        self.hash = Some(hash);
-    }
-
-    pub(in crate::block) fn is_free(&self) -> bool {
-        self.block_type.is_free()
-    }
-
+    /// Check if a block contains data
     pub(in crate::block) fn is_data(&self) -> bool {
         self.block_type.is_data()
     }
 
-    pub(in crate::block) fn is_metadata(&self) -> bool {
-        self.block_type.is_metadata()
+    /// Check if a block is free
+    pub(in crate::block) fn is_free(&self) -> bool {
+        self.block_type.is_free()
+    }
+
+    /// Return the block number
+    pub(crate) fn number(&self) -> BlockNumber {
+        self.number
+    }
+
+    /// Return the number of bytes stored in this block
+    pub(crate) fn size(&self) -> BlockSizeType {
+        self.byte_count
+    }
+
+    /// Set the number of bytes in this block
+    pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {
+        self.byte_count = size
+    }
+
+    /// Set the SHA-256 hash of this block
+    pub(in crate::block) fn set_hash(&mut self, hash: BlockHash) {
+        self.hash = Some(hash);
+    }
+
+    /// Return the SHA-256 hash of this block
+    pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
+        self.hash
     }
 }
