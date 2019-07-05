@@ -1,3 +1,9 @@
+//! Runtime in WASM-land
+//!
+//! The code here runs in WASM-land, i.e., these functions are available to WASM code. Some of the
+//! functions are utility. Some are called by WASM code to perform operations on the file system.
+//! Yet others are meant to unmarshall WASM data types back into Rust data types, from message
+//! handlers invoked on the Rust side of things.
 use std::{
     alloc::{alloc, dealloc, Layout},
     mem,
@@ -5,8 +11,8 @@ use std::{
 
 pub use crate::metadata::FileHandle;
 
+/// Rust methods, ultimately called by the WASM program.
 extern "C" {
-    // Rust methods, ultimately called by the WASM program.
     pub fn __rust_print(string: u32);
     //     pub fn list_files(path: &str) -> Vec<(String, FileSize, Timespec)>;
     pub fn __rust_create_file(path: u32) -> u32;
@@ -17,10 +23,12 @@ extern "C" {
 //         -> Result<Vec<u8>, failure::Error>;
 }
 
+/// Methods in the WASM program, ultimately called from Rust.
 extern "C" {
-    // Methods in the WASM program, ultimately called from Rust.
     pub fn handle_file_create(path: &str);
+    pub fn handle_file_remove(path: &str);
     pub fn handle_file_close(path: &str);
+    pub fn handle_file_read(path: &str, data: &[u8]);
     pub fn handle_file_write(path: &str, data: &[u8]);
 }
 
@@ -57,6 +65,9 @@ pub fn write_file(handle: FileHandle, data: &[u8]) {
     unsafe { __rust_write_file(handle, ptr as u32) };
 }
 
+// The functions below run in WASM-land. They are invoked by functions in handler.rs. They serve to
+// reconstruct values from WASM ints into Rust values, and then they invoke the user's Rust
+// functions.
 #[export_name = "file_create"]
 pub unsafe extern "C" fn file_create(path_ptr: *const u8, path_len: usize) {
     let path = {
@@ -66,6 +77,15 @@ pub unsafe extern "C" fn file_create(path_ptr: *const u8, path_len: usize) {
     handle_file_create(path);
 }
 
+#[export_name = "file_remove"]
+pub unsafe extern "C" fn file_remove(path_str: *const u8, path_len: usize) {
+    let path = {
+        let slice = ::std::slice::from_raw_parts(path_str, path_len);
+        ::std::str::from_utf8_unchecked(slice)
+    };
+    handle_file_remove(path);
+}
+
 #[export_name = "file_close"]
 pub unsafe extern "C" fn file_close(path_ptr: *const u8, path_len: usize) {
     let path = {
@@ -73,6 +93,23 @@ pub unsafe extern "C" fn file_close(path_ptr: *const u8, path_len: usize) {
         ::std::str::from_utf8_unchecked(slice)
     };
     handle_file_close(path);
+}
+
+#[export_name = "file_read"]
+pub unsafe extern "C" fn file_read(
+    path_ptr: *const u8,
+    path_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+) {
+    let path = {
+        let slice = ::std::slice::from_raw_parts(path_ptr, path_len);
+        ::std::str::from_utf8_unchecked(slice)
+    };
+
+    let data = ::std::slice::from_raw_parts(data_ptr, data_len);
+
+    handle_file_read(path, data);
 }
 
 #[export_name = "file_write"]

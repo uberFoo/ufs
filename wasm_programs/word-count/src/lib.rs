@@ -48,6 +48,11 @@ pub extern "C" fn handle_file_create(path: &str) {
 }
 
 #[no_mangle]
+pub extern "C" fn handle_file_remove(path: &str) {
+    print(&format!("handle_file_remove: {}", path));
+}
+
+#[no_mangle]
 pub extern "C" fn handle_file_close(path: &str) {
     print(&format!("handle_file_close: {}", path));
     let mut wc = PROGRAM.write().unwrap();
@@ -76,6 +81,11 @@ pub extern "C" fn handle_file_close(path: &str) {
             close_file(*h);
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn handle_file_read(path: &str, data: &[u8]) {
+    print(&format!("handle_file_read: {}", path));
 }
 
 #[no_mangle]
