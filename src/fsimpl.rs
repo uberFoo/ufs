@@ -379,7 +379,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_files.insert(fh, file.clone());
 
         self.notify_listeners(UfsMessage::FileCreate(
-            file.get_path(self.block_manager.metadata()),
+            self.block_manager
+                .metadata()
+                .path_from_file_id(file.file_id),
         ));
 
         debug!("`create_file`: {:?}, handle: {}", name, fh);
@@ -428,6 +430,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("--------");
         debug!("`remove_file`: {}, dir: {:?}", name, dir_id);
 
+        // It seems reasonable to allow the WASM program an opportunity to do something with the
+        // soon-to-be-deleted file, prior to it being relegated to the bit-bucket.
+        if let Ok(file) = self
+            .block_manager
+            .metadata()
+            .get_file_metadata_from_dir_and_name(dir_id, name)
+        {
+            self.notify_listeners(UfsMessage::FileRemove(
+                self.block_manager.metadata().path_from_file_id(file.id()),
+            ));
+        }
+
         let free_blocks = self
             .block_manager
             .metadata_mut()
@@ -436,6 +450,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         for b in free_blocks {
             self.block_manager.recycle_block(b)
         }
+
         Ok(())
     }
 
@@ -457,7 +472,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
         self.notify_listeners(UfsMessage::FileOpen(
-            file.get_path(self.block_manager.metadata()),
+            self.block_manager
+                .metadata()
+                .path_from_file_id(file.file_id),
         ));
 
         self.open_files.insert(fh, file);
@@ -503,8 +520,10 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         for (name, entry) in dir.entries() {
                             if let DirectoryEntry::File(f) = entry {
                                 if f.id() == file_id {
-                                    let path = file.get_path(self.block_manager.metadata());
-                                    // let path = Path::new(name);
+                                    let path = self
+                                        .block_manager
+                                        .metadata()
+                                        .path_from_file_id(file.file_id);
                                     if let Some(ext) = path.extension() {
                                         if ext == WASM_EXT {
                                             info!("Adding program {:?} to runtime", name);
@@ -532,7 +551,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         match self.open_files.remove(&handle) {
             Some(file) => {
                 self.notify_listeners(UfsMessage::FileClose(
-                    file.get_path(self.block_manager.metadata()),
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id),
                 ));
             }
             None => warn!("asked to close a file not in the map {}", handle),
@@ -576,7 +597,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Down here to appease the Borrow Checker Gods
         if let Some(file) = self.open_files.get(&handle) {
             self.notify_listeners(UfsMessage::FileWrite(
-                file.get_path(self.block_manager.metadata()),
+                self.block_manager
+                    .metadata()
+                    .path_from_file_id(file.file_id),
                 bytes.to_vec(),
             ));
         }
@@ -641,7 +664,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
             if buffer.len() == size {
                 self.notify_listeners(UfsMessage::FileRead(
-                    file.get_path(self.block_manager.metadata()),
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id),
                     buffer.clone(),
                 ));
 
