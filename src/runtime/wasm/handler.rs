@@ -4,7 +4,8 @@
 //!
 //! The `WasmMessageHandler` struct maintains a handle to the wasm runtime. The impl block contains
 //! functions that are invoked _by Rust_ to transform Rust data types into WASM data types, and then
-//! invokes the WASM functions in WASM-land.
+//! invokes the WASM functions in WASM-land. The WASM-side functions are defined in runtime.rs.
+//!
 use log::{error, info};
 use wasmi::{MemoryRef, ModuleRef, RuntimeValue};
 
@@ -82,6 +83,31 @@ impl UfsMessageHandler for WasmMessageHandler {
             {
                 Ok(_) => info!("`file_remove` success"),
                 Err(e) => error!("error invoking `file_remove` in WASM: {}", e),
+            }
+        }
+    }
+
+    fn file_open(&mut self, path: &str) {
+        // Allocate memory for the path string
+        let mut args = Vec::<RuntimeValue>::new();
+        args.push(RuntimeValue::from(path.len() as i32));
+        if let Ok(Some(RuntimeValue::I32(mem_ptr))) =
+            self.instance
+                .invoke_export("__wbindgen_malloc", &args, &mut self.runtime)
+        {
+            self.memory.set(mem_ptr as u32, path.as_bytes()).unwrap();
+
+            // Invoke the function in WASM-land
+            let mut args = Vec::<RuntimeValue>::new();
+            args.push(RuntimeValue::from(mem_ptr));
+            args.push(RuntimeValue::from(path.len() as i32));
+            info!("handle `file_open` {}", path);
+            match self
+                .instance
+                .invoke_export("file_open", &args, &mut self.runtime)
+            {
+                Ok(_) => info!("`file_open` success"),
+                Err(e) => error!("error invoking `file_open` in WASM: {}", e),
             }
         }
     }
@@ -181,6 +207,56 @@ impl UfsMessageHandler for WasmMessageHandler {
                     Ok(_) => info!("`file_write` success"),
                     Err(e) => error!("error invoking `file_write` in WASM: {}", e),
                 }
+            }
+        }
+    }
+
+    fn dir_create(&mut self, path: &str) {
+        // Allocate memory for the path string
+        let mut args = Vec::<RuntimeValue>::new();
+        args.push(RuntimeValue::from(path.len() as i32));
+        if let Ok(Some(RuntimeValue::I32(mem_ptr))) =
+            self.instance
+                .invoke_export("__wbindgen_malloc", &args, &mut self.runtime)
+        {
+            self.memory.set(mem_ptr as u32, path.as_bytes()).unwrap();
+
+            // Invoke the function in WASM-land
+            let mut args = Vec::<RuntimeValue>::new();
+            args.push(RuntimeValue::from(mem_ptr));
+            args.push(RuntimeValue::from(path.len() as i32));
+            info!("handle `dir_create` {}", path);
+            match self
+                .instance
+                .invoke_export("dir_create", &args, &mut self.runtime)
+            {
+                Ok(_) => info!("`dir_create` success"),
+                Err(e) => error!("error invoking `dir_create` in WASM: {}", e),
+            }
+        }
+    }
+
+    fn dir_remove(&mut self, path: &str) {
+        // Allocate memory for the path string
+        let mut args = Vec::<RuntimeValue>::new();
+        args.push(RuntimeValue::from(path.len() as i32));
+        if let Ok(Some(RuntimeValue::I32(mem_ptr))) =
+            self.instance
+                .invoke_export("__wbindgen_malloc", &args, &mut self.runtime)
+        {
+            self.memory.set(mem_ptr as u32, path.as_bytes()).unwrap();
+
+            // Invoke the function in WASM-land
+            let mut args = Vec::<RuntimeValue>::new();
+            args.push(RuntimeValue::from(mem_ptr));
+            args.push(RuntimeValue::from(path.len() as i32));
+            info!("handle `dir_remove` {}", path);
+            match self
+                .instance
+                .invoke_export("dir_remove", &args, &mut self.runtime)
+            {
+                Ok(_) => info!("`dir_remove` success"),
+                Err(e) => error!("error invoking `dir_remove` in WASM: {}", e),
             }
         }
     }
