@@ -357,10 +357,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let dir = self
             .block_manager
             .metadata_mut()
-            .new_directory(parent_id, name);
+            .new_directory(parent_id, name)?;
+
+        self.notify_listeners(UfsMessage::DirCreate(
+            self.block_manager.metadata().path_from_dir_id(dir.id()),
+        ));
 
         debug!("end `create_directory`");
-        dir
+        Ok(dir)
     }
 
     /// Create a file
