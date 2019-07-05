@@ -15,7 +15,7 @@ use hyper::{
     Body, Method, Request, Response, Server, StatusCode,
 };
 // Note to self: error > warn > info > debug > trace
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 use pretty_env_logger;
 
 use ufs::{BlockNumber, BlockReader, BlockWriter, FileStore};
