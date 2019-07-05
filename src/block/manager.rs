@@ -11,7 +11,7 @@ use crate::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
-    metadata::{DirectoryMetadata, Metadata},
+    metadata::Metadata,
     uuid::UfsUuid,
 };
 
