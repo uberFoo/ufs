@@ -475,6 +475,43 @@ impl Metadata {
         make_path_file(&mut path, self.lookup_file(id).unwrap(), &self);
         path
     }
+
+    pub(crate) fn path_from_dir_id(&self, id: UfsUuid) -> PathBuf {
+        let mut path = PathBuf::new();
+
+        fn make_path_dir(
+            path: &mut PathBuf,
+            d: &DirectoryMetadata,
+            id: UfsUuid,
+            metadata: &Metadata,
+        ) {
+            if let Some(parent_id) = d.parent_id() {
+                make_path_dir(
+                    path,
+                    metadata.lookup_dir(parent_id).unwrap(),
+                    d.id(),
+                    metadata,
+                );
+            } else {
+                path.push("/");
+            }
+
+            for (name, entry) in d.entries() {
+                if id
+                    == match entry {
+                        DirectoryEntry::Directory(d) => d.id(),
+                        DirectoryEntry::File(f) => f.id(),
+                    }
+                {
+                    path.push(name);
+                    break;
+                }
+            }
+        }
+
+        make_path_dir(&mut path, self.lookup_dir(id).unwrap(), id, &self);
+        path
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -594,5 +631,8 @@ pub mod test {
             Path::new("/foo/.wasm/test_program.wasm"),
             m.path_from_file_id(file.file_id)
         );
+
+        assert_eq!(Path::new("/"), m.path_from_dir_id(root_id));
+        assert_eq!(Path::new("/foo/.wasm"), m.path_from_dir_id(wasm_id));
     }
 }
