@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
-    ffi::OsStr,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread::{spawn, JoinHandle},
 };
 
-use ::time::Timespec;
 use crossbeam::crossbeam_channel;
 use failure::format_err;
 use log::{debug, error, info, trace, warn};
@@ -18,8 +16,7 @@ use crate::block::{
     MemoryStore, NetworkStore,
 };
 use crate::metadata::{
-    DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileVersion, WASM_DIR,
-    WASM_EXT,
+    DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, WASM_EXT,
 };
 use crate::runtime::{FileSystemOperator, FileSystemOps, Process, UfsMessage};
 use crate::UfsUuid;
@@ -381,8 +378,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
 
-        // FIXME WASM
-        // self.notify_listeners(UfsMessage::FileCreate(dir_id, name.to_owned()));
+        self.notify_listeners(UfsMessage::FileCreate(
+            file.get_path(self.block_manager.metadata()),
+        ));
 
         debug!("`create_file`: {:?}, handle: {}", name, fh);
         Ok((fh, file))
@@ -458,10 +456,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-        self.open_files.insert(fh, file);
+        self.notify_listeners(UfsMessage::FileOpen(
+            file.get_path(self.block_manager.metadata()),
+        ));
 
-        // FIXME WASM
-        // self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
+        self.open_files.insert(fh, file);
 
         debug!("`open_file` {:?}, mode: {:?}, handle: {}", id, mode, fh);
         Ok(fh)
@@ -532,8 +531,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         match self.open_files.remove(&handle) {
             Some(file) => {
-                // FIXME WASM
-                // self.notify_listeners(UfsMessage::FileClose(path));
+                self.notify_listeners(UfsMessage::FileClose(
+                    file.get_path(self.block_manager.metadata()),
+                ));
             }
             None => warn!("asked to close a file not in the map {}", handle),
         }
@@ -549,7 +549,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
 
-        match &mut self.open_files.get_mut(&handle) {
+        let result = match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
                 while written < bytes.len() {
@@ -565,16 +565,23 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 }
                 debug!("wrote {} bytes", written,);
 
-                // FIXME WASM
-                // self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
-
                 Ok(written)
             }
             None => {
                 warn!("asked to write file not in the map {}", handle);
                 Ok(0)
             }
+        };
+
+        // Down here to appease the Borrow Checker Gods
+        if let Some(file) = self.open_files.get(&handle) {
+            self.notify_listeners(UfsMessage::FileWrite(
+                file.get_path(self.block_manager.metadata()),
+                bytes.to_vec(),
+            ));
         }
+
+        result
     }
 
     /// Read bytes from a file
@@ -633,8 +640,10 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
 
             if buffer.len() == size {
-                // FIXME WASM
-                // self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
+                self.notify_listeners(UfsMessage::FileRead(
+                    file.get_path(self.block_manager.metadata()),
+                    buffer.clone(),
+                ));
 
                 Ok(buffer)
             } else {
