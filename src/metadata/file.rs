@@ -9,6 +9,7 @@ use failure::format_err;
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::{
     block::{Block, BlockNumber},
     time::UfsTime,
@@ -21,6 +22,7 @@ use super::FileSize;
 ///
 /// The primary purpose if this struct is to store information about the existing versions of a
 /// file.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileMetadata {
     /// The UUID of this file

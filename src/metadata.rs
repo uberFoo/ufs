@@ -21,6 +21,7 @@ use serde_derive::{Deserialize, Serialize};
 pub(crate) mod dir;
 pub(crate) mod file;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::uuid::UfsUuid;
 
 pub(crate) type FileSize = u64;
@@ -28,10 +29,13 @@ pub(crate) type FileSize = u64;
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use dir::DirectoryMetadata;
 pub(crate) use dir::WASM_EXT;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use file::{FileMetadata, FileVersion};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::block::{
     wrapper::{MetadataDeserialize, MetadataSerialize},
     BlockNumber,
@@ -54,6 +58,7 @@ pub struct File {
     pub version: FileVersion,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl File {
     pub(crate) fn from_path<P: AsRef<Path>>(path: P, metadata: &Metadata) -> Option<Self> {
         fn from_path_r(
@@ -192,6 +197,7 @@ pub(crate) struct Metadata {
     root_directory: DirectoryMetadata,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Metadata {
     /// Create a new file system metadata instance
     ///
