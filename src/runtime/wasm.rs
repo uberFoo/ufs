@@ -107,7 +107,7 @@ impl WasmRuntime {
         let data = self.memory.get(ptr, len as usize).unwrap();
 
         info!("`write_file` handle {}, bytes {:?}", handle, data);
-        if let Ok(bytes) = self.file_system.write_file(handle, data.as_slice()) {
+        if let Ok(_bytes) = self.file_system.write_file(handle, data.as_slice()) {
             // Ok(Some(RuntimeValue::I32(bytes as i32)))
             Ok(None)
         } else {

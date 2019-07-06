@@ -496,7 +496,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Commit the file first, so that we can read it's contents if it's a program file to run.
         if let Some(file) = self.open_files.get(&handle) {
             debug!("\t{:?}", file);
-            self.block_manager.metadata_mut().commit_file(file.clone());
+            if let Err(e) = self.block_manager.metadata_mut().commit_file(file.clone()) {
+                error!("{}", e);
+            }
         }
 
         // Add any .wasm files, located in a .wasm directory, to the runtime.

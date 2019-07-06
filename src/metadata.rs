@@ -43,11 +43,9 @@ use crate::block::{
 
 /// UFS internal definition of a File
 ///
-/// Here we associate a path with a particular file, and it's version. This gets indexed by a "file
-/// handle", which is returned to the FUSE implementation.
-/// We need to store the path because sometimes FUSE hands us paths, and not file handles.
-/// FIXME: I don't know that this should be public.
-#[cfg(not(target_arch = "wasm32"))]
+/// This structure is used by the file system implementation as a file handle. It is a watered-down
+/// FileMetadata that is cheaply cloneable. It contains the metadata id of the parent FileMetadata,
+/// and a single, usually the latest, FileVersion of the file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
     /// UfsUuid of the file
@@ -56,23 +54,6 @@ pub struct File {
     /// The file wrapper, itself
     ///
     pub version: FileVersion,
-}
-
-/// UFS internal definition of a directory
-///
-/// This struct associates a path with a directory. This gets indexed by a "file handle", which is
-/// returned to the FUSE implementation.
-/// We need to store the path because sometimes FUSE hands us paths, and not file handles.
-/// FIXME: I don't know that this should be public.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Debug, PartialEq)]
-pub struct Directory {
-    /// UfsUuid of the directory
-    ///
-    pub id: UfsUuid,
-    /// The directory wrapper
-    ///
-    pub directory: DirectoryMetadata,
 }
 
 /// Entries in [`DirectoryMetadata`] structures

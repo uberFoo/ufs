@@ -28,8 +28,15 @@ pub struct FileMetadata {
     /// The UUID of this file
     ///
     id: UfsUuid,
+    /// The UUID of the parent directory
+    ///
     dir_id: UfsUuid,
+
+    /// The most recent version of this file
+    ///
     last_version: usize,
+    /// A map of all versions of this file
+    ///
     versions: HashMap<usize, FileVersion>,
 }
 
