@@ -46,6 +46,7 @@ use crate::block::{
 /// This structure is used by the file system implementation as a file handle. It is a watered-down
 /// FileMetadata that is cheaply cloneable. It contains the metadata id of the parent FileMetadata,
 /// and a single, usually the latest, FileVersion of the file.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
     /// UfsUuid of the file
@@ -54,6 +55,75 @@ pub struct File {
     /// The file wrapper, itself
     ///
     pub version: FileVersion,
+}
+
+/// File and Directory Permissions
+///
+/// Basic read, write, execute permissions. I expect that this list will grow.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub enum Permission {
+    /// No permissions
+    ///
+    Nada,
+    /// Permission to read
+    ///
+    Read,
+    /// Permission to write
+    ///
+    Write,
+    /// Permission to executer
+    ///
+    Execute,
+    /// Permission to read, write, and execute
+    ///
+    ReadWriteExecute,
+    /// Permission to read and write
+    ///
+    ReadWrite,
+    /// Permission to read and execute
+    ///
+    ReadExecute,
+    /// Permission to write and execute
+    ///
+    WriteExecute,
+}
+
+impl Permission {
+    pub fn as_u16(&self) -> u16 {
+        match self {
+            Permission::Nada => 0,
+            Permission::Read => 4,
+            Permission::Write => 2,
+            Permission::Execute => 1,
+            Permission::ReadWriteExecute => 7,
+            Permission::ReadWrite => 6,
+            Permission::ReadExecute => 5,
+            Permission::WriteExecute => 3,
+        }
+    }
+}
+
+/// File Permission Groups
+///
+/// Basic organization of file and directory permissions, that align with unix permissions.
+/// This is necessary, but likely not sufficiont, and I expect this will need to evolve to meet the
+/// needs of the full-blown file system.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PermissionGroups {
+    user: Permission,
+    group: Permission,
+    other: Permission,
+}
+
+impl PermissionGroups {
+    fn as_u16(&self) -> u16 {
+        let mut perms = self.user.as_u16();
+        perms <<= 3;
+        perms += self.group.as_u16();
+        perms <<= 3;
+        perms += self.other.as_u16();
+        perms
+    }
 }
 
 /// Entries in [`DirectoryMetadata`] structures
@@ -69,6 +139,8 @@ pub enum DirectoryEntry {
     ///
     File(FileMetadata),
 }
+
+///
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -615,5 +687,29 @@ pub mod test {
 
         assert_eq!(Path::new("/"), m.path_from_dir_id(root_id));
         assert_eq!(Path::new("/foo/.wasm"), m.path_from_dir_id(wasm_id));
+    }
+
+    #[test]
+    fn permissions() {
+        let p755 = PermissionGroups {
+            user: Permission::ReadWriteExecute,
+            group: Permission::ReadExecute,
+            other: Permission::ReadExecute,
+        };
+        assert_eq!(0o755, p755.as_u16());
+
+        let p644 = PermissionGroups {
+            user: Permission::ReadWrite,
+            group: Permission::Read,
+            other: Permission::Read,
+        };
+        assert_eq!(0o644, p644.as_u16());
+
+        let p201 = PermissionGroups {
+            user: Permission::Write,
+            group: Permission::Nada,
+            other: Permission::Execute,
+        };
+        assert_eq!(0o201, p201.as_u16());
     }
 }

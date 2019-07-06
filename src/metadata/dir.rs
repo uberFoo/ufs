@@ -18,7 +18,7 @@ pub(crate) const WASM_EXT: &'static str = "wasm";
 pub(crate) const VERS_DIR: &'static str = ".vers";
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::{DirectoryEntry, FileMetadata};
+use super::{DirectoryEntry, FileMetadata, Permission, PermissionGroups};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -33,6 +33,9 @@ pub struct DirectoryMetadata {
     /// The UUID of this directory's parent
     ///
     parent_id: Option<UfsUuid>,
+    /// Permission Groups for this directory
+    ///
+    perms: PermissionGroups,
     /// Special ".wasm" directory flag
     /// FIXME: I don't know if I like this. If I keep this, or similar, we should have one for the
     /// ".vers" directory as well. This would be good as an extended attribute.
@@ -55,6 +58,7 @@ pub struct DirectoryMetadata {
     ///
     access_time: UfsTime,
     /// HashMap of directory contents, from name to `DirectoryEntry`
+    ///
     entries: HashMap<String, DirectoryEntry>,
 }
 
@@ -62,10 +66,16 @@ pub struct DirectoryMetadata {
 impl DirectoryMetadata {
     pub(crate) fn new(id: UfsUuid, p_id: Option<UfsUuid>) -> Self {
         let time = UfsTime::now();
+        let perms = PermissionGroups {
+            user: Permission::ReadWriteExecute,
+            group: Permission::ReadExecute,
+            other: Permission::ReadExecute,
+        };
         let mut d = DirectoryMetadata {
             dirty: false,
             id: id,
             parent_id: p_id,
+            perms: perms.clone(),
             wasm_dir: false,
             vers_dir: false,
             birth_time: time,
@@ -81,6 +91,7 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(WASM_DIR),
                 parent_id: Some(id),
+                perms: perms.clone(),
                 wasm_dir: true,
                 vers_dir: false,
                 birth_time: time,
@@ -97,6 +108,7 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(VERS_DIR),
                 parent_id: Some(id),
+                perms,
                 wasm_dir: false,
                 vers_dir: true,
                 birth_time: time,
@@ -180,6 +192,11 @@ impl DirectoryMetadata {
     /// Return the parent UUID
     pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
         self.parent_id
+    }
+
+    // Return the directory permissions, as a unix octal number
+    pub(crate) fn unix_perms(&self) -> u16 {
+        self.perms.as_u16()
     }
 
     /// Return the `write_time` timestamp

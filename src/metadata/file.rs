@@ -16,7 +16,7 @@ use crate::{
     uuid::UfsUuid,
 };
 
-use super::FileSize;
+use super::{FileSize, Permission, PermissionGroups};
 
 /// Data about Files
 ///
@@ -31,7 +31,9 @@ pub struct FileMetadata {
     /// The UUID of the parent directory
     ///
     dir_id: UfsUuid,
-
+    /// Permission Groups for this file
+    ///
+    perms: PermissionGroups,
     /// The most recent version of this file
     ///
     last_version: usize,
@@ -52,6 +54,11 @@ impl FileMetadata {
         FileMetadata {
             id,
             dir_id: p_id,
+            perms: PermissionGroups {
+                user: Permission::ReadWrite,
+                group: Permission::Read,
+                other: Permission::Read,
+            },
             last_version: 0,
             versions,
         }
@@ -65,6 +72,11 @@ impl FileMetadata {
         FileMetadata {
             id,
             dir_id: parent,
+            perms: PermissionGroups {
+                user: Permission::ReadWrite,
+                group: Permission::Read,
+                other: Permission::Read,
+            },
             last_version: 0,
             versions,
         }
@@ -78,6 +90,12 @@ impl FileMetadata {
     /// Return the directory id of this file
     pub(crate) fn dir_id(&self) -> UfsUuid {
         self.dir_id
+    }
+
+    /// Return the file permissions, as a unix octal number
+    ///
+    pub(crate) fn unix_perms(&self) -> u16 {
+        self.perms.as_u16()
     }
 
     pub(crate) fn new_version(&mut self) -> FileVersion {
