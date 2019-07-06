@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! FUSE Interface for uberFS
 //!
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -34,16 +34,22 @@ impl Inode {
             Inode::File(i) => i.file_attr(),
         }
     }
+
+    fn set_perm(&mut self, perm: u16) {
+        match self {
+            Inode::Dir(i) => i.set_perm(perm),
+            Inode::File(i) => i.set_perm(perm),
+        }
+    }
 }
 
-/// FIXME: try getting rid of path
 #[derive(Clone, Debug)]
 struct DirInode {
     number: u64,
-    path: PathBuf,
     id: UfsUuid,
     time: Timespec,
     files: HashMap<String, u64>,
+    perm: u16,
 }
 
 impl DirInode {
@@ -57,7 +63,7 @@ impl DirInode {
             ctime: self.time,
             crtime: self.time,
             kind: FileType::Directory,
-            perm: 0o755,
+            perm: self.perm,
             nlink: 2,
             uid: 501,
             gid: 20,
@@ -65,15 +71,19 @@ impl DirInode {
             flags: 0,
         }
     }
+
+    fn set_perm(&mut self, perm: u16) {
+        self.perm = perm
+    }
 }
 
 #[derive(Clone, Debug)]
 struct FileInode {
     number: u64,
-    path: PathBuf,
     id: UfsUuid,
     time: Timespec,
     size: u64,
+    perm: u16,
 }
 
 impl FileInode {
@@ -87,13 +97,17 @@ impl FileInode {
             ctime: self.time,
             crtime: self.time,
             kind: FileType::RegularFile,
-            perm: 0o644,
+            perm: self.perm,
             nlink: 1,
             uid: 501,
             gid: 20,
             rdev: 0,
             flags: 0,
         }
+    }
+
+    fn set_perm(&mut self, perm: u16) {
+        self.perm = perm
     }
 }
 
@@ -124,10 +138,10 @@ impl<B: BlockStorage> UberFSFuse<B> {
                 0,
                 Inode::Dir(DirInode {
                     number: 0,
-                    path: PathBuf::from("hack"),
                     id: UfsUuid::new_root("hack"),
                     time: TIME,
                     files: HashMap::new(),
+                    perm: 0o755,
                 }),
             );
             fs.inodes.insert(
@@ -135,9 +149,9 @@ impl<B: BlockStorage> UberFSFuse<B> {
                 Inode::Dir(DirInode {
                     number: 1,
                     id: root_id,
-                    path: PathBuf::from("/"),
                     time: TIME,
                     files: HashMap::new(),
+                    perm: 0o755,
                 }),
             );
         }
@@ -217,8 +231,8 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
     fn setattr(
         &mut self,
         _req: &Request,
-        _ino: u64,
-        _mode: Option<u32>,
+        ino: u64,
+        mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
         _size: Option<u64>,
@@ -231,19 +245,33 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         _flags: Option<u32>,
         reply: ReplyAttr,
     ) {
-        trace!("setattr inode: {}\nmode: {:x?}, flags: {:#x?}, uid: {:?}, gid: {:?}, size: {:?}, atime: {:?}, mtime: {:?}, fh: {:?}, crtime: {:?}, chgtime: {:?}, bkuptime: {:?}",_ino, _mode, _flags, _uid, _gid, _size, _atime, _mtime, _fh, _crtime, _chgtime, _bkuptime);
+        debug!("--------");
+        debug!("setattr inode: {}\nmode: {:x?}, flags: {:#x?}, uid: {:?}, gid: {:?}, size: {:?}, atime: {:?}, mtime: {:?}, fh: {:?}, crtime: {:?}, chgtime: {:?}, bkuptime: {:?}",ino, mode, _flags, _uid, _gid, _size, _atime, _mtime, _fh, _crtime, _chgtime, _bkuptime);
 
-        self.getattr(_req, _ino, reply);
+        if let Some(inode) = self.inodes.get_mut(&ino) {
+            if let Some(mode) = mode {
+                // First off, the `perms` field in the `FileAttr` struct is only a u16, so let's
+                // truncate the mode.
+                let mode: u16 = mode as u16;
+                inode.set_perm(mode);
+                debug!("mode {:#05o}", mode);
+            }
+        }
+
+        self.getattr(_req, ino, reply);
     }
+
+    // fn access(&mut self, _req: &Request, _ino: u64, _mask: u32, reply: ReplyEmpty) {
+    //     debug!("--------");
+    //     debug!("access: {}, mask: {:x?}", _ino, _mask);
+    //     reply.ok();
+    // }
 
     /// Open a directory
     fn opendir(&mut self, _req: &Request, ino: u64, _flags: u32, reply: ReplyOpen) {
         debug!("--------");
         debug!("`opendir`: ino: {}, flags: {:x}", ino, _flags);
         if let Some(Inode::Dir(inode)) = self.inodes.get(&ino) {
-            let path = PathBuf::from(&inode.path);
-            debug!("\tpath: {:?}", path);
-
             let mut inodes = vec![];
 
             // FIXME: We are leaking inodes here!
@@ -276,37 +304,32 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
                             match entry {
                                 DirectoryEntry::Directory(d) => {
-                                    let mut dir_path = path.clone();
-                                    dir_path.push(name);
-                                    debug!("\tadding directory: {:?}, ino: {}", dir_path, number);
+                                    debug!("\tadding directory: {}", number);
                                     let inode = DirInode {
                                         number,
-                                        path: dir_path,
                                         id: d.id().clone(),
                                         time: d.write_time().into(),
                                         files: HashMap::new(),
+                                        perm: 0o755,
                                     };
                                     inodes.push(Inode::Dir(inode));
                                     dir_file_map.insert(name.clone(), number);
                                 }
                                 DirectoryEntry::File(f) => {
                                     let file = f.get_latest();
-                                    let mut file_path = path.clone();
-                                    file_path.push(name);
                                     self.inode_number = number.wrapping_add(1);
                                     debug!(
-                                        "\tadding file {:?}, size: {}, time: {:?}, ino: {}",
-                                        file_path,
+                                        "\tadding file size: {}, time: {:?}, ino: {}",
                                         file.size(),
                                         file.write_time(),
-                                        number
+                                        number,
                                     );
                                     let inode = FileInode {
                                         number,
-                                        path: file_path,
                                         id: file.file_id().clone(),
                                         time: file.write_time().into(),
                                         size: file.size(),
+                                        perm: 0o644,
                                     };
                                     inodes.push(Inode::File(inode));
                                     dir_file_map.insert(name.clone(), number);
@@ -331,7 +354,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                     }
                 }
                 Err(e) => {
-                    warn!("\tcouldn't open directory {:?}: {}", path, e);
+                    warn!("\tcouldn't open directory: {}", e);
                     reply.error(ENOENT)
                 }
             }
@@ -443,18 +466,16 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
         if let Some(Inode::Dir(parent_ino)) = self.inodes.get_mut(&parent) {
             let name = String::from(name.to_str().unwrap());
-            let mut path = parent_ino.path.clone();
-            path.push(&name);
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
             let inode = match &mut guard.create_directory(parent_ino.id, &name) {
                 Ok(dir) => {
                     let inode = DirInode {
-                        path: path,
                         id: dir.id().clone(),
                         number: new_inode_number,
                         time: TIME,
                         files: HashMap::new(),
+                        perm: 0o755,
                     };
 
                     reply.entry(&TTL, &inode.file_attr(), 0);
@@ -498,18 +519,16 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
         if let Some(Inode::Dir(ref mut parent_ino)) = self.inodes.get_mut(&parent) {
             let name = String::from(name.to_str().unwrap());
-            let mut path = parent_ino.path.clone();
-            path.push(&name);
 
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
             let inode = match &mut guard.create_file(parent_ino.id, &name) {
                 Ok((fh, file)) => {
                     let inode = FileInode {
-                        path: path,
                         id: file.file_id.clone(),
                         number: new_inode_number,
                         time: file.version.write_time().into(),
                         size: 0,
+                        perm: 0o644,
                     };
                     debug!("inode: {}", inode.number);
 
