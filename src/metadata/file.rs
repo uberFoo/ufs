@@ -9,6 +9,7 @@ use failure::format_err;
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::{
     block::{Block, BlockNumber},
     time::UfsTime,
@@ -21,6 +22,7 @@ use super::FileSize;
 ///
 /// The primary purpose if this struct is to store information about the existing versions of a
 /// file.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileMetadata {
     /// The UUID of this file
@@ -108,9 +110,13 @@ impl FileMetadata {
         self.versions.get(&version)
     }
 
-    pub(crate) fn commit_version(&mut self, version: FileVersion) -> Result<(), failure::Error> {
+    pub(crate) fn commit_version(
+        &mut self,
+        mut version: FileVersion,
+    ) -> Result<(), failure::Error> {
         debug!("--------");
         debug!("`commit_version`: {:?}", self);
+        version.dirty = false;
         self.last_version += 1;
         match self.versions.insert(self.last_version, version) {
             None => Ok(()),

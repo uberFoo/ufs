@@ -6,26 +6,21 @@
 //! FIXME: The directory data is not versioned. What happens to deleted files?  What do we do when
 //! a directory goes away?
 use failure::format_err;
-use log::{debug, error, trace, warn};
+use log::debug;
 use serde_derive::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    ffi::OsStr,
-    path::{Component, Components, Path},
-};
+use std::collections::HashMap;
 
-use crate::{
-    block::wrapper::{MetadataDeserialize, MetadataSerialize},
-    time::UfsTime,
-    uuid::UfsUuid,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{time::UfsTime, uuid::UfsUuid};
 
 pub(crate) const WASM_DIR: &'static str = ".wasm";
 pub(crate) const WASM_EXT: &'static str = "wasm";
 pub(crate) const VERS_DIR: &'static str = ".vers";
 
-use super::{Directory, DirectoryEntry, File, FileMetadata, FileVersion};
+#[cfg(not(target_arch = "wasm32"))]
+use super::{DirectoryEntry, FileMetadata};
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DirectoryMetadata {
     /// A flag indicating that the directory's data has been modified and needs to be written.

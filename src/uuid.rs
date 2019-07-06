@@ -64,6 +64,7 @@ impl AsRef<Uuid> for UfsUuid {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for UfsUuid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.inner)

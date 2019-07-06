@@ -1,3 +1,22 @@
+//! The main WASM Runtime implementation
+//!
+//! Besides heading the module, the functions in here are closely related to what one finds in
+//! exports.rs. In that file, functions are exported to WASM. Those functions are defined in this
+//! file. They must unmarshal the WASM data types to Rust data types, and then do whatever it is
+//! that they are meant to do.
+//!
+//! Some of the functions are utility, like `print`, and yet others are meant to effect changes to
+//! the file system, via the code in fsops.rs.
+//!
+//! Overall, when calling into WASM with file system messages, the code in handler.rs is first
+//! invoked.  That code marshals Rust data types to WASM data types, and then invokes code in WASM.
+//! The code it invokes is located in runtime.rs, where it is unmarshaled back into Rust data types,
+//! and the user-defined _handler_ functions are called.
+//!
+//! When calling from WASM into Rust, the wasmi runtime checks the export table in exports.rs. The
+//! functions declared there are defined in runtime.rs. Those functions will eventually be resolved
+//! into something that is defined in this file.
+//!
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod exports;
 #[cfg(not(target_arch = "wasm32"))]
@@ -15,7 +34,9 @@ use crate::{
     metadata::FileHandle,
     runtime::{
         fsops::FileSystemOps,
-        wasm::exports::{CLOSE_FILE_INDEX, CREATE_FILE_INDEX, PRINT_INDEX, WRITE_FILE_INDEX},
+        wasm::exports::{
+            CLOSE_FILE_INDEX, CREATE_DIR_INDEX, CREATE_FILE_INDEX, PRINT_INDEX, WRITE_FILE_INDEX,
+        },
     },
 };
 
@@ -64,6 +85,7 @@ impl WasmRuntime {
             if let Ok((handle, _)) = self.file_system.create_file(&path) {
                 Ok(Some(RuntimeValue::I32(handle as i32)))
             } else {
+                // FIXME: Should we trap here?
                 Ok(None)
             }
         } else {
@@ -88,6 +110,31 @@ impl WasmRuntime {
         if let Ok(bytes) = self.file_system.write_file(handle, data.as_slice()) {
             // Ok(Some(RuntimeValue::I32(bytes as i32)))
             Ok(None)
+        } else {
+            // FIXME: should trap here
+            Ok(None)
+        }
+    }
+
+    fn create_dir(&mut self, path: u32) -> Result<Option<RuntimeValue>, Trap> {
+        // Read the raw (ptr, len) tuple from memory
+        let str_ptr = self.memory.get(path as u32, 8).unwrap();
+        // Extract the pointer
+        let ptr = u32::from_little_endian(&str_ptr).unwrap();
+        // Extract the string length
+        let len = u32::from_little_endian(&str_ptr[4..]).unwrap();
+        // Dereference the pointer, and read `len` bytes.
+        let payload = self.memory.get(ptr, len as usize).unwrap();
+
+        if let Ok(s) = String::from_utf8(payload) {
+            let path = PathBuf::from(s);
+            info!("`create_dir`: {:?}", path);
+            if let Ok(_) = self.file_system.create_dir(&path) {
+                Ok(None)
+            } else {
+                // FIXME: should trap here?
+                Ok(None)
+            }
         } else {
             // FIXME: should trap here
             Ok(None)
@@ -119,6 +166,10 @@ impl Externals for WasmRuntime {
                 let handle: FileHandle = args.nth(0);
                 let data_ptr: u32 = args.nth(1);
                 self.write_file(handle, data_ptr)
+            }
+            CREATE_DIR_INDEX => {
+                let path_ptr: u32 = args.nth(0);
+                self.create_dir(path_ptr)
             }
             _ => panic!("unknown export"),
         }

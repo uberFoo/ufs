@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
-    ffi::OsStr,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread::{spawn, JoinHandle},
 };
 
-use ::time::Timespec;
 use crossbeam::crossbeam_channel;
 use failure::format_err;
 use log::{debug, error, info, trace, warn};
@@ -18,7 +16,7 @@ use crate::block::{
     MemoryStore, NetworkStore,
 };
 use crate::metadata::{
-    DirectoryEntry, DirectoryMetadata, File, FileHandle, FileVersion, WASM_DIR, WASM_EXT,
+    DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, WASM_EXT,
 };
 use crate::runtime::{FileSystemOperator, FileSystemOps, Process, UfsMessage};
 use crate::UfsUuid;
@@ -38,13 +36,28 @@ pub enum OpenFileMode {
     ReadWrite,
 }
 
+/// Runtime Manager Messages
+///
+/// These are used to communicate messages to the Runtime Manager from the file system
+/// implementation.
 enum RuntimeManagerMsg {
+    /// Shutdown WASM Programs
+    ///
+    /// The file system is shutting down, and this allows the WASM programs the same opportunity.
     Shutdown,
+    /// Add a new WASM Program
+    ///
+    /// The file system contains a WASM program, and wishes it to be loaded and run.
     Program(WasmProgram),
 }
 
+/// Information necessary to start running a WASM program
+///
+/// This is the contents of the RuntimeManagerMsg::Program message.
 struct WasmProgram {
+    /// A non-unique identifier for the WASM program.  Uniqueness may be virtuous.
     name: PathBuf,
+    /// The bytes that comprise the program.
     program: Vec<u8>,
 }
 
@@ -137,7 +150,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
                 match msg {
                     RuntimeManagerMsg::Shutdown => break,
                     RuntimeManagerMsg::Program(wasm) => {
-                        info!("Adding WASM program {:?}", wasm.name);
+                        info!("Starting WASM program {:?}", wasm.name);
                         let process = Process::new(wasm.name.clone(), wasm.program);
                         let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
                         ufs.listeners.push(process.get_sender());
@@ -264,17 +277,19 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         // Find .wasm directories
         // FIXME: This needs to recurse the subdirectories.
-        let mut programs = Vec::<(PathBuf, FileVersion)>::new();
+        let mut programs = Vec::<(PathBuf, FileMetadata)>::new();
         for (d_name, d) in self.block_manager.metadata().root_directory().entries() {
             if let DirectoryEntry::Directory(dir) = d {
-                if d_name == WASM_DIR {
+                if dir.is_wasm_dir() {
                     for (f_name, f) in dir.entries() {
                         if let DirectoryEntry::File(file) = f {
                             let path = Path::new(f_name);
                             if let Some(ext) = path.extension() {
                                 if ext == WASM_EXT {
-                                    let program = file.get_latest();
-                                    programs.push(([d_name, f_name].iter().collect(), program));
+                                    programs.push((
+                                        ["/", d_name, f_name].iter().collect(),
+                                        file.clone(),
+                                    ));
                                 }
                             }
                         }
@@ -283,22 +298,24 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
         }
 
-        // if let Some(program_mgr) = self.program_mgr.clone() {
-        //     for (path, file) in programs {
-        //         if let Ok(fh) = self.open_file(&path, OpenFileMode::Read) {
-        //             let size = file.size();
-        //             if let Ok(program) = self.read_file(fh, 0, size as usize) {
-        //                 info!("Adding program {:?} to runtime.", path);
-        //                 program_mgr
-        //                     .send(RuntimeManagerMsg::Program(WasmProgram {
-        //                         name: path.to_path_buf(),
-        //                         program,
-        //                     }))
-        //                     .unwrap()
-        //             }
-        //         }
-        //     }
-        // }
+        // Broken out to make borrowing happy.
+        if let Some(program_mgr) = self.program_mgr.clone() {
+            for (path, file) in programs {
+                if let Ok(fh) = self.open_file(file.id(), OpenFileMode::Read) {
+                    let version = file.get_latest();
+                    let size = version.size();
+                    if let Ok(program) = self.read_file(fh, 0, size as usize) {
+                        info!("Adding existing program {:?} to runtime.", path);
+                        program_mgr
+                            .send(RuntimeManagerMsg::Program(WasmProgram {
+                                name: path,
+                                program,
+                            }))
+                            .unwrap()
+                    }
+                }
+            }
+        }
     }
 
     /// Return a reference to the `BlockManager`
@@ -306,12 +323,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
     pub(crate) fn block_manager(&self) -> &BlockManager<B> {
         &self.block_manager
     }
-
-    // /// Retrieve the root directory
-    // ///
-    // pub(crate) fn get_root_directory(&self) -> DirectoryEntry {
-    //     DirectoryEntry::Directory(self.block_manager.root_dir().clone())
-    // }
 
     /// List the contents of a Directory
     ///
@@ -346,10 +357,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let dir = self
             .block_manager
             .metadata_mut()
-            .new_directory(parent_id, name);
+            .new_directory(parent_id, name)?;
+
+        self.notify_listeners(UfsMessage::DirCreate(
+            self.block_manager.metadata().path_from_dir_id(dir.id()),
+        ));
 
         debug!("end `create_directory`");
-        dir
+        Ok(dir)
     }
 
     /// Create a file
@@ -360,7 +375,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         name: &str,
     ) -> Result<(FileHandle, File), failure::Error> {
         debug!("--------");
-        debug!("`create_file`: {:?}", name);
 
         let file = self.block_manager.metadata_mut().new_file(dir_id, name)?;
 
@@ -368,9 +382,13 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
 
-        // FIXME
-        // self.notify_listeners(UfsMessage::FileCreate(dir_id, name.to_owned()));
+        self.notify_listeners(UfsMessage::FileCreate(
+            self.block_manager
+                .metadata()
+                .path_from_file_id(file.file_id),
+        ));
 
+        debug!("`create_file`: {:?}, handle: {}", name, fh);
         Ok((fh, file))
     }
 
@@ -378,7 +396,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ///
     pub(crate) fn open_directory(&mut self, id: UfsUuid) -> Result<FileHandle, failure::Error> {
         debug!("--------");
-        debug!("`open_directory`: {:?}", id);
         let dir = self.block_manager.metadata().get_directory(id)?;
 
         let fh = self.open_file_counter;
@@ -387,6 +404,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         trace!("\t{:#?}", dir);
         self.open_dirs.insert(fh, dir);
 
+        debug!("`open_directory`: {:?}, handle: {}", id, fh);
         Ok(fh)
     }
 
@@ -416,6 +434,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("--------");
         debug!("`remove_file`: {}, dir: {:?}", name, dir_id);
 
+        // It seems reasonable to allow the WASM program an opportunity to do something with the
+        // soon-to-be-deleted file, prior to it being relegated to the bit-bucket.
+        if let Ok(file) = self
+            .block_manager
+            .metadata()
+            .get_file_metadata_from_dir_and_name(dir_id, name)
+        {
+            self.notify_listeners(UfsMessage::FileRemove(
+                self.block_manager.metadata().path_from_file_id(file.id()),
+            ));
+        }
+
         let free_blocks = self
             .block_manager
             .metadata_mut()
@@ -424,6 +454,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         for b in free_blocks {
             self.block_manager.recycle_block(b)
         }
+
         Ok(())
     }
 
@@ -435,7 +466,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         mode: OpenFileMode,
     ) -> Result<FileHandle, failure::Error> {
         debug!("--------");
-        debug!("`open_file` {:?}, mode: {:?}", id, mode);
         let file = match mode {
             OpenFileMode::Write => self.block_manager.metadata_mut().get_file_write_only(id)?,
             OpenFileMode::Read => self.block_manager.metadata().get_file_read_only(id)?,
@@ -445,13 +475,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
+        self.notify_listeners(UfsMessage::FileOpen(
+            self.block_manager
+                .metadata()
+                .path_from_file_id(file.file_id),
+        ));
+
         self.open_files.insert(fh, file);
 
-        debug!("\thandle: {}", fh);
-
-        // FIXME
-        // self.notify_listeners(UfsMessage::FileOpen(path.to_path_buf()));
-
+        debug!("`open_file` {:?}, mode: {:?}, handle: {}", id, mode, fh);
         Ok(fh)
     }
 
@@ -461,7 +493,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`close_file`: {}", handle);
 
-        // Commit the file
+        // Commit the file first, so that we can read it's contents if it's a program file to run.
         if let Some(file) = self.open_files.get(&handle) {
             debug!("\t{:?}", file);
             self.block_manager.metadata_mut().commit_file(file.clone());
@@ -470,37 +502,46 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Add any .wasm files, located in a .wasm directory, to the runtime.
         if let Some(program_mgr) = &self.program_mgr {
             if let Some(file) = self.open_files.get(&handle) {
-                // Check to see if this file is in the special ".wasm" directory.
-                let file_id = file.file_id;
-                let file_a = self
-                    .block_manager
-                    .metadata()
-                    .get_file_metadata(file_id)
-                    .unwrap();
-                let dir = self
-                    .block_manager
-                    .metadata()
-                    .get_directory(file_a.dir_id())
-                    .unwrap();
-                if dir.is_wasm_dir() {
-                    // Get the file's name and check for the correct extension
-                    for (name, entry) in dir.entries() {
-                        if let DirectoryEntry::File(f) = entry {
-                            if f.id() == file_id {
-                                let path = Path::new(name);
-                                if let Some(ext) = path.extension() {
-                                    if ext == WASM_EXT {
-                                        info!("adding {:?} to runtime", name);
-                                        let size = file.version.size();
-                                        if let Ok(program) =
-                                            self.read_file(handle, 0, size as usize)
-                                        {
-                                            program_mgr
-                                                .send(RuntimeManagerMsg::Program(WasmProgram {
-                                                    name: path.to_path_buf(),
-                                                    program,
-                                                }))
-                                                .unwrap()
+                // This check is a bit of a hack. Basically, we only want to load the program if
+                // it's new. For some reason FUSE will open and close a newly created file after the
+                // new file is closed. So we check to see if the FileVersion is dirty here, since it
+                // will only be so if we haven't already written it.
+                if file.version.is_dirty() {
+                    // Check to see if this file is in the special ".wasm" directory.
+                    let file_id = file.file_id;
+                    let file_a = self
+                        .block_manager
+                        .metadata()
+                        .get_file_metadata(file_id)
+                        .unwrap();
+                    let dir = self
+                        .block_manager
+                        .metadata()
+                        .get_directory(file_a.dir_id())
+                        .unwrap();
+                    if dir.is_wasm_dir() {
+                        // Get the file's name and check for the correct extension
+                        for (name, entry) in dir.entries() {
+                            if let DirectoryEntry::File(f) = entry {
+                                if f.id() == file_id {
+                                    let path = self
+                                        .block_manager
+                                        .metadata()
+                                        .path_from_file_id(file.file_id);
+                                    if let Some(ext) = path.extension() {
+                                        if ext == WASM_EXT {
+                                            info!("Adding program {:?} to runtime", name);
+                                            let size = file.version.size();
+                                            if let Ok(program) =
+                                                self.read_file(handle, 0, size as usize)
+                                            {
+                                                program_mgr
+                                                    .send(RuntimeManagerMsg::Program(WasmProgram {
+                                                        name: path.to_path_buf(),
+                                                        program,
+                                                    }))
+                                                    .unwrap()
+                                            }
                                         }
                                     }
                                 }
@@ -513,8 +554,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         match self.open_files.remove(&handle) {
             Some(file) => {
-                // FIXME
-                // self.notify_listeners(UfsMessage::FileClose(path));
+                self.notify_listeners(UfsMessage::FileClose(
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id),
+                ));
             }
             None => warn!("asked to close a file not in the map {}", handle),
         }
@@ -530,7 +574,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
 
-        match &mut self.open_files.get_mut(&handle) {
+        let result = match &mut self.open_files.get_mut(&handle) {
             Some(file) => {
                 let mut written = 0;
                 while written < bytes.len() {
@@ -546,16 +590,25 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 }
                 debug!("wrote {} bytes", written,);
 
-                // FIXME
-                // self.notify_listeners(UfsMessage::FileWrite(path, bytes.to_vec()));
-
                 Ok(written)
             }
             None => {
                 warn!("asked to write file not in the map {}", handle);
                 Ok(0)
             }
+        };
+
+        // Down here to appease the Borrow Checker Gods
+        if let Some(file) = self.open_files.get(&handle) {
+            self.notify_listeners(UfsMessage::FileWrite(
+                self.block_manager
+                    .metadata()
+                    .path_from_file_id(file.file_id),
+                bytes.to_vec(),
+            ));
         }
+
+        result
     }
 
     /// Read bytes from a file
@@ -614,8 +667,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
 
             if buffer.len() == size {
-                // FIXME
-                // self.notify_listeners(UfsMessage::FileRead(path, buffer.clone()));
+                self.notify_listeners(UfsMessage::FileRead(
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id),
+                    buffer.clone(),
+                ));
 
                 Ok(buffer)
             } else {
@@ -666,6 +723,9 @@ mod test {
         assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
         assert_eq!(test, bytes.as_slice());
+
+        // If we don't remove the file, the test fails on the next run.
+        ufs.remove_file(root_id, "lib.rs");
     }
 
     #[test]

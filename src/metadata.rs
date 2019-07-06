@@ -12,15 +12,16 @@
 //!
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Components, Path, PathBuf};
 
 use failure::format_err;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use serde_derive::{Deserialize, Serialize};
 
 pub(crate) mod dir;
 pub(crate) mod file;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::uuid::UfsUuid;
 
 pub(crate) type FileSize = u64;
@@ -28,10 +29,13 @@ pub(crate) type FileSize = u64;
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use dir::DirectoryMetadata;
-pub(crate) use dir::{WASM_DIR, WASM_EXT};
+pub(crate) use dir::WASM_EXT;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use file::{FileMetadata, FileVersion};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::block::{
     wrapper::{MetadataDeserialize, MetadataSerialize},
     BlockNumber,
@@ -46,9 +50,6 @@ use crate::block::{
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
-    /// Path to file
-    ///
-    // pub path: PathBuf,
     /// UfsUuid of the file
     ///
     pub file_id: UfsUuid,
@@ -66,9 +67,6 @@ pub struct File {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Directory {
-    /// Path to the directory
-    ///
-    // pub path: PathBuf,
     /// UfsUuid of the directory
     ///
     pub id: UfsUuid,
@@ -107,6 +105,7 @@ pub(crate) struct Metadata {
     root_directory: DirectoryMetadata,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Metadata {
     /// Create a new file system metadata instance
     ///
@@ -208,6 +207,27 @@ impl Metadata {
             Ok(file.clone())
         } else {
             Err(format_err!("unable to find file with id {:?}", id))
+        }
+    }
+
+    /// Get FileMetadata given a parent directory, and a name
+    ///
+    pub(crate) fn get_file_metadata_from_dir_and_name(
+        &self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<FileMetadata, failure::Error> {
+        if let Some(dir) = self.lookup_dir(dir_id) {
+            match dir.entries().get(name) {
+                Some(DirectoryEntry::File(f)) => Ok(f.clone()),
+                _ => Err(format_err!(
+                    "unable to find file {} under directory {}",
+                    name,
+                    dir_id
+                )),
+            }
+        } else {
+            Err(format_err!("unable to find directory with id {}", dir_id))
         }
     }
 
@@ -374,6 +394,124 @@ impl Metadata {
 
         self.root_directory.lookup_file_mut(id)
     }
+
+    pub(crate) fn id_from_path<P: AsRef<Path>>(&self, path: P) -> Option<UfsUuid> {
+        fn from_path_r(
+            components: &mut Components,
+            dir: &DirectoryMetadata,
+        ) -> Option<DirectoryEntry> {
+            match components.next() {
+                Some(Component::RootDir) => from_path_r(components, dir),
+                Some(Component::Normal(name)) => match name.to_str() {
+                    Some(name) => match dir.entries().get(name) {
+                        Some(entry) => match entry {
+                            DirectoryEntry::Directory(d) => from_path_r(components, d),
+                            DirectoryEntry::File(f) => Some(DirectoryEntry::File(f.clone())),
+                        },
+                        None => None,
+                    },
+                    None => {
+                        warn!("invalid UTF-8 in path: {:?}", name);
+                        None
+                    }
+                },
+                None => Some(DirectoryEntry::Directory(dir.clone())),
+                _ => {
+                    warn!("malformed path: {:?}", components);
+                    None
+                }
+            }
+        }
+
+        match from_path_r(&mut path.as_ref().components(), &self.root_directory) {
+            Some(DirectoryEntry::File(f)) => Some(f.id()),
+            Some(DirectoryEntry::Directory(d)) => Some(d.id()),
+            None => None,
+        }
+    }
+
+    pub(crate) fn path_from_file_id(&self, id: UfsUuid) -> PathBuf {
+        let mut path = PathBuf::new();
+
+        fn make_path_file(path: &mut PathBuf, f: &FileMetadata, metadata: &Metadata) {
+            make_path_dir(
+                path,
+                metadata.lookup_dir(f.dir_id()).unwrap(),
+                f.id(),
+                metadata,
+            );
+        }
+
+        fn make_path_dir(
+            path: &mut PathBuf,
+            d: &DirectoryMetadata,
+            id: UfsUuid,
+            metadata: &Metadata,
+        ) {
+            if let Some(parent_id) = d.parent_id() {
+                make_path_dir(
+                    path,
+                    metadata.lookup_dir(parent_id).unwrap(),
+                    d.id(),
+                    metadata,
+                );
+            } else {
+                path.push("/");
+            }
+
+            for (name, entry) in d.entries() {
+                if id
+                    == match entry {
+                        DirectoryEntry::Directory(d) => d.id(),
+                        DirectoryEntry::File(f) => f.id(),
+                    }
+                {
+                    path.push(name);
+                    break;
+                }
+            }
+        }
+
+        make_path_file(&mut path, self.lookup_file(id).unwrap(), &self);
+        path
+    }
+
+    pub(crate) fn path_from_dir_id(&self, id: UfsUuid) -> PathBuf {
+        let mut path = PathBuf::new();
+
+        fn make_path_dir(
+            path: &mut PathBuf,
+            d: &DirectoryMetadata,
+            id: UfsUuid,
+            metadata: &Metadata,
+        ) {
+            if let Some(parent_id) = d.parent_id() {
+                make_path_dir(
+                    path,
+                    metadata.lookup_dir(parent_id).unwrap(),
+                    d.id(),
+                    metadata,
+                );
+            } else {
+                path.push("/");
+            }
+
+            for (name, entry) in d.entries() {
+                if id
+                    == match entry {
+                        DirectoryEntry::Directory(d) => d.id(),
+                        DirectoryEntry::File(f) => f.id(),
+                    }
+                {
+                    path.push(name);
+                    break;
+                }
+            }
+        }
+
+        make_path_dir(&mut path, self.lookup_dir(id).unwrap(), id, &self);
+        path
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -412,8 +550,14 @@ impl MetadataDeserialize for Metadata {
 pub mod test {
     use super::*;
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn new_metadata() {
+        init();
+
         let m = Metadata::new(UfsUuid::new_root("test"));
         let root = m.root_directory();
 
@@ -424,6 +568,8 @@ pub mod test {
 
     #[test]
     fn new_directory() {
+        init();
+
         let mut m = Metadata::new(UfsUuid::new_root("test"));
         let root_id = m.root_directory().id();
         let d = m.new_directory(root_id, "test").unwrap();
@@ -431,5 +577,62 @@ pub mod test {
 
         assert_eq!(d.parent_id(), Some(root_id));
         assert_eq!(d2.parent_id(), Some(d.id()));
+    }
+
+    #[test]
+    fn id_for_path() {
+        init();
+
+        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let root_id = m.root_directory().id();
+        let dir = m.new_directory(root_id, "foo").unwrap();
+        let wasm = dir.entries().get(".wasm").unwrap();
+        let wasm_id = if let DirectoryEntry::Directory(d) = wasm {
+            d.id()
+        } else {
+            panic!("got a DirectoryEntry::File");
+        };
+        let file = m.new_file(wasm_id, "test_program.wasm").unwrap();
+
+        assert_eq!(m.id_from_path(Path::new("/")), Some(root_id), "id for /");
+        assert_eq!(
+            m.id_from_path(Path::new("/foo")),
+            Some(dir.id()),
+            "id for /foo"
+        );
+        assert_eq!(
+            m.id_from_path(Path::new("/foo/.wasm")),
+            Some(wasm_id),
+            "id for /foo/.wasm"
+        );
+        assert_eq!(
+            m.id_from_path(Path::new("/foo/.wasm/test_program.wasm")),
+            Some(file.file_id),
+            "id for /foo/.wasm/test_program.wasm"
+        );
+    }
+
+    #[test]
+    fn path_for_id() {
+        init();
+
+        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let root_id = m.root_directory().id();
+        let dir = m.new_directory(root_id, "foo").unwrap();
+        let wasm = dir.entries().get(".wasm").unwrap();
+        let wasm_id = if let DirectoryEntry::Directory(d) = wasm {
+            d.id()
+        } else {
+            panic!("got a DirectoryEntry::File");
+        };
+        let file = m.new_file(wasm_id, "test_program.wasm").unwrap();
+
+        assert_eq!(
+            Path::new("/foo/.wasm/test_program.wasm"),
+            m.path_from_file_id(file.file_id)
+        );
+
+        assert_eq!(Path::new("/"), m.path_from_dir_id(root_id));
+        assert_eq!(Path::new("/foo/.wasm"), m.path_from_dir_id(wasm_id));
     }
 }
