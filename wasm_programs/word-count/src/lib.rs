@@ -80,8 +80,6 @@ pub extern "C" fn handle_file_close(path: &str) {
     dir.push(file_name);
     let words_path = dir.with_extension("word_count");
 
-
-
     // Remove the file from the handles hash, and if it's the one we created, remove it from the
     // word counting hash as well.
     if let Some(_) = wc.handles.remove(&path.to_string()) {
