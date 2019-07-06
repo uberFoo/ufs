@@ -52,6 +52,9 @@ pub struct File {
     /// UfsUuid of the file
     ///
     pub file_id: UfsUuid,
+    /// The unix permissions of the underlying FileMetadata
+    ///
+    pub perms: u16,
     /// The file wrapper, itself
     ///
     pub version: FileVersion,
@@ -103,6 +106,22 @@ impl Permission {
     }
 }
 
+impl From<u16> for Permission {
+    fn from(p: u16) -> Self {
+        match p {
+            0 => Permission::Nada,
+            1 => Permission::Execute,
+            2 => Permission::Write,
+            3 => Permission::WriteExecute,
+            4 => Permission::Read,
+            5 => Permission::ReadExecute,
+            6 => Permission::ReadWrite,
+            7 => Permission::ReadWriteExecute,
+            _ => panic!("invalid permission value"),
+        }
+    }
+}
+
 /// File Permission Groups
 ///
 /// Basic organization of file and directory permissions, that align with unix permissions.
@@ -123,6 +142,16 @@ impl PermissionGroups {
         perms <<= 3;
         perms += self.other.as_u16();
         perms
+    }
+}
+
+impl From<u16> for PermissionGroups {
+    fn from(p: u16) -> Self {
+        PermissionGroups {
+            user: ((p & 0x1c0) >> 6).into(),
+            group: ((p & 0x38) >> 3).into(),
+            other: (p & 0x07).into(),
+        }
     }
 }
 
@@ -246,6 +275,7 @@ impl Metadata {
             self.dirty = true;
             Ok(File {
                 file_id: new_file.id(),
+                perms: new_file.unix_perms(),
                 version: new_file.get_latest(),
             })
         } else {
@@ -293,6 +323,7 @@ impl Metadata {
         if let Some(file) = self.lookup_file(id) {
             Ok(File {
                 file_id: file.id(),
+                perms: file.unix_perms(),
                 version: file.get_latest(),
             })
         } else {
@@ -309,6 +340,7 @@ impl Metadata {
         if let Some(file) = self.lookup_file_mut(id) {
             Ok(File {
                 file_id: file.id(),
+                perms: file.unix_perms(),
                 version: file.get_latest(),
             })
         } else {
@@ -325,6 +357,7 @@ impl Metadata {
         if let Some(file) = self.lookup_file_mut(id) {
             Ok(File {
                 file_id: file.id(),
+                perms: file.unix_perms(),
                 version: file.new_version(),
             })
         } else {
@@ -408,6 +441,20 @@ impl Metadata {
     ///
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Set the permissions on a Metadata node
+    ///
+    pub(crate) fn set_unix_permissions(&mut self, id: UfsUuid, perms: u16) {
+        if let Some(d) = self.lookup_dir_mut(id) {
+            d.set_unix_perms(perms);
+            self.dirty = true;
+        } else {
+            if let Some(f) = self.lookup_file_mut(id) {
+                f.set_unix_perms(perms);
+                self.dirty = true;
+            }
+        }
     }
 
     /// Return the DirectoryMetadata corresponding to the given UfsUuid.
@@ -697,6 +744,7 @@ pub mod test {
             other: Permission::ReadExecute,
         };
         assert_eq!(0o755, p755.as_u16());
+        assert_eq!(PermissionGroups::from(0o755), p755);
 
         let p644 = PermissionGroups {
             user: Permission::ReadWrite,
@@ -704,6 +752,7 @@ pub mod test {
             other: Permission::Read,
         };
         assert_eq!(0o644, p644.as_u16());
+        assert_eq!(PermissionGroups::from(0o644), p644);
 
         let p201 = PermissionGroups {
             user: Permission::Write,
@@ -711,5 +760,6 @@ pub mod test {
             other: Permission::Execute,
         };
         assert_eq!(0o201, p201.as_u16());
+        assert_eq!(PermissionGroups::from(0o201), p201);
     }
 }

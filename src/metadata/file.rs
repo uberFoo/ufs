@@ -98,6 +98,12 @@ impl FileMetadata {
         self.perms.as_u16()
     }
 
+    /// Set the file permissions
+    ///
+    pub(crate) fn set_unix_perms(&mut self, perms: u16) {
+        self.perms = perms.into();
+    }
+
     pub(crate) fn new_version(&mut self) -> FileVersion {
         self.last_version += 1;
         self.versions.insert(

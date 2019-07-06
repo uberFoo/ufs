@@ -684,6 +684,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Err(format_err!("File not open {}", handle))
         }
     }
+
+    pub(crate) fn set_permissions(&mut self, id: UfsUuid, perms: u16) {
+        self.block_manager
+            .metadata_mut()
+            .set_unix_permissions(id, perms);
+    }
 }
 
 #[cfg(test)]

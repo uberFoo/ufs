@@ -64,6 +64,12 @@ pub struct DirectoryMetadata {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
+    /// Create a new directory
+    ///
+    /// Note that every directory has two special subdirectories. One, ".wasm" is meant to contain
+    /// WASM programs to execute in the file system. The other, ".vers", contains older versions
+    /// of files, located in the directory.
+    ///
     pub(crate) fn new(id: UfsUuid, p_id: Option<UfsUuid>) -> Self {
         let time = UfsTime::now();
         let perms = PermissionGroups {
@@ -121,6 +127,8 @@ impl DirectoryMetadata {
         d
     }
 
+    /// Create a new directory as a child of this directory.
+    ///
     pub(crate) fn new_subdirectory(
         &mut self,
         name: String,
@@ -147,6 +155,7 @@ impl DirectoryMetadata {
     }
 
     /// Create a new file in this directory
+    ///
     pub(crate) fn new_file(&mut self, name: String) -> Result<FileMetadata, failure::Error> {
         debug!("--------");
         debug!("`new_file`: {:?}", name);
@@ -170,60 +179,80 @@ impl DirectoryMetadata {
     }
 
     /// Return a reference to the HashMap from entry name to DirectoryEntry structures
+    ///
     pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
         &self.entries
     }
 
     /// Return a mutable reference to the name -> DirectoryEntry HashMap
+    ///
     pub(crate) fn entries_mut(&mut self) -> &mut HashMap<String, DirectoryEntry> {
         &mut self.entries
     }
 
     /// Set the entries
+    ///
     pub(crate) fn set_entries(&mut self, entries: HashMap<String, DirectoryEntry>) {
         self.entries = entries;
     }
 
     /// Return the UUID
+    ///
     pub(crate) fn id(&self) -> UfsUuid {
         self.id
     }
 
     /// Return the parent UUID
+    ///
     pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
         self.parent_id
     }
 
-    // Return the directory permissions, as a unix octal number
+    /// Return the directory permissions, as a unix octal number
+    ///
     pub(crate) fn unix_perms(&self) -> u16 {
         self.perms.as_u16()
     }
 
+    /// Set the directory permissions
+    ///
+    pub(crate) fn set_unix_perms(&mut self, perms: u16) {
+        self.dirty = true;
+        self.perms = perms.into();
+    }
+
     /// Return the `write_time` timestamp
+    ///
     pub(crate) fn write_time(&self) -> UfsTime {
         self.write_time
     }
 
     /// Return if this is a ".wasm" directory
+    ///
     pub(crate) fn is_wasm_dir(&self) -> bool {
         self.wasm_dir
     }
 
     /// Return if this is a ".vers" directory
+    ///
     pub(crate) fn is_vers_dir(&self) -> bool {
         self.vers_dir
     }
 
     /// Return true if the directory needs to be serialized
+    ///
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }
 
     /// Set to serialize directory
+    ///
     pub(crate) fn dirty(&mut self) {
         self.dirty = true;
     }
 
+    /// Lookup a subdirectory by id, and return a reference to it.
+    ///
     pub(in crate::metadata) fn lookup_dir(&self, id: UfsUuid) -> Option<&DirectoryMetadata> {
         debug!("--------");
         debug!("`lookup_dir`: {:#?}, parent {:#?}", self.id, self.parent_id);
@@ -246,6 +275,8 @@ impl DirectoryMetadata {
         None
     }
 
+    /// Lookup a subdirectory by id, and return a mutable reference to it.
+    ///
     pub(in crate::metadata) fn lookup_dir_mut(
         &mut self,
         id: UfsUuid,
@@ -278,6 +309,8 @@ impl DirectoryMetadata {
         None
     }
 
+    /// Lookup a file by id, and return a reference to it.
+    ///
     pub(in crate::metadata) fn lookup_file(&self, id: UfsUuid) -> Option<&FileMetadata> {
         debug!("--------");
         debug!(
@@ -303,6 +336,8 @@ impl DirectoryMetadata {
         None
     }
 
+    /// Lookup a file by id, and return a mutable reference to it.
+    ///
     pub(in crate::metadata) fn lookup_file_mut(
         &mut self,
         id: UfsUuid,

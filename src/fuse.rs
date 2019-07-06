@@ -28,6 +28,13 @@ enum Inode {
 }
 
 impl Inode {
+    fn id(&self) -> UfsUuid {
+        match self {
+            Inode::Dir(i) => i.id,
+            Inode::File(i) => i.id,
+        }
+    }
+
     fn file_attr(&self) -> FileAttr {
         match self {
             Inode::Dir(i) => i.file_attr(),
@@ -253,6 +260,8 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                 // First off, the `perms` field in the `FileAttr` struct is only a u16, so let's
                 // truncate the mode.
                 let mode: u16 = mode as u16;
+                let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+                guard.set_permissions(inode.id(), mode);
                 inode.set_perm(mode);
                 debug!("mode {:#05o}", mode);
             }
@@ -310,7 +319,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                         id: d.id().clone(),
                                         time: d.write_time().into(),
                                         files: HashMap::new(),
-                                        perm: 0o755,
+                                        perm: d.unix_perms(),
                                     };
                                     inodes.push(Inode::Dir(inode));
                                     dir_file_map.insert(name.clone(), number);
@@ -329,7 +338,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                         id: file.file_id().clone(),
                                         time: file.write_time().into(),
                                         size: file.size(),
-                                        perm: 0o644,
+                                        perm: f.unix_perms(),
                                     };
                                     inodes.push(Inode::File(inode));
                                     dir_file_map.insert(name.clone(), number);
@@ -475,7 +484,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                         number: new_inode_number,
                         time: TIME,
                         files: HashMap::new(),
-                        perm: 0o755,
+                        perm: dir.unix_perms(),
                     };
 
                     reply.entry(&TTL, &inode.file_attr(), 0);
@@ -528,7 +537,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                         number: new_inode_number,
                         time: file.version.write_time().into(),
                         size: 0,
-                        perm: 0o644,
+                        perm: file.perms,
                     };
                     debug!("inode: {}", inode.number);
 
