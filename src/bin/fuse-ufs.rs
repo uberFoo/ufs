@@ -39,10 +39,10 @@ fn main() -> Result<(), failure::Error> {
         )
         .arg(
             Arg::with_name("remote")
-                .short("r")
-                .long("remote")
-                .value_name("REMOTE_URL")
-                .help("Remote file system to mount")
+                .short("p")
+                .long("port")
+                .value_name("PORT")
+                .help("Port to listen for remote file system support")
                 .required(false)
                 .takes_value(true),
         )
