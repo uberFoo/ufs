@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use lazy_static::lazy_static;
 use mut_static::MutStatic;
 use ufs::*;
+
 lazy_static! {
     pub static ref PROGRAM: MutStatic<WordCounter> = { MutStatic::from(WordCounter::new()) };
 }
