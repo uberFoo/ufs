@@ -1,15 +1,10 @@
 //! File-based Block Storage
 //!
 //! Blocks are stored as regular files.  The files are nested in directories as the following
-//! example: block `f03da2` would be stored as `root_dir/2/a/d/3/0/f.ufsb`.
-//!
-//! Currently all blocks are created, and filled with zeros when the store is initialized.
-//! Additionally each partial block is padded with zeros before being written.  I was initially
-//! thinking that the inode, knowing the file size, could trim the last block.  At this moment in
-//! time, it seems like a bad idea...
+//! example: block `f03da2` would be stored as `root_dir/f/0/3/d/a/2.ufsb`.
 //!
 //! ## FIXME
-//! * It might be better to build a more shallow directory tree: `root_dir/a2/3d/f0.ufsb`.
+//! * It might be better to build a more shallow directory tree: `root_dir/f0/3d/a2.ufsb`?
 //! * Optionally don't create files for every block.
 
 use failure::format_err;

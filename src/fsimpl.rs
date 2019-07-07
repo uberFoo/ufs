@@ -129,6 +129,14 @@ impl<B: BlockStorage> DerefMut for UfsMounter<B> {
     }
 }
 
+/// WASM Thread Management
+///
+/// The sole purpose of this struct is to provide a means by which the `UberFileSystem` may start
+/// and stop WASM programs. There is a channel that the UFS uses to send start and stop messages to
+/// the `RuntimeManager`. This then handles the work of doing so.
+///
+/// The `UfsMounter` will also send a shutdown message, on the same channel, when the file system is
+/// going away. Here, we use that message to nicely stop the WASM programs before exiting.
 pub struct RuntimeManager<B: BlockStorage + 'static> {
     ufs: Arc<Mutex<UberFileSystem<B>>>,
     receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,

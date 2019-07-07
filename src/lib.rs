@@ -4,22 +4,6 @@
 //!
 //! # File System Structure
 //!
-//! Like every other file system, with some possible few exceptions, fixed-size blocks are the
-//! foundation of *uberFS*. What's different across all file systems is how they are utilized.
-//! Particularly, in how the file system metadata is represented.  We'll touch on blocks, and other
-//! miscellany, but the primary focus of this section will be metadata representation.
-//!
-//! ## Metadata
-//!
-//! All metadata is stored in a dictionary. The dictionary is serialized with to a `Vec<u8>` with
-//! `Serde` and `Bincode`, and written to blocks. If the serialized dictionary does not fit within a
-//! single block, it will contain a pointer to the next block.  The pointer is stored under the key
-//! `@next_block`. Additionally, each block is identified by a `@type` key, where the value may be
-//! something like `directory`, `fs-metadata`, etc.  Additional metadata for each specific block
-//! type may exist under the `@metadata` key.  Data specific to the block type lives under the
-//! `@data` key. Finally, each dictionary contains a `@checksum` key that contains the checksum
-//! for the entire dictionary.
-//!
 //! ## Blocks
 //!
 //! The blocks are fixed-size, and uniform for a given file system.  Blocks contain nothing more
@@ -37,23 +21,16 @@
 //!
 //! ### Block 0
 //!
-//! The first block is the file system is special.  It contains information about the file system
-//! itself, such as the number of blocks, the block size, a free block list, etc.
+//! The first block is the file system is special.  It contains the `BlockMap`, described below.
 //!
-//! The following is currently how block 0 is organized; it's serialized to a `Vec<u8>` using
-//! `Serde` and `Bincode`:
+//! ## Block Map
 //!
-//! ```ignore
-//! pub(crate) struct BlockMetadata {
-//!    pub size: BlockSize,
-//!    pub count: BlockCardinality,
-//!    pub next_free_block: Option<BlockCardinality>,
-//!    pub directory: HashMap<String, Block>,
-//!}
-//! ```
+//! The block map maintains a mapping from a block's number to a block's type. It also contains
+//! metadata about the blocks themselves. It's stored in starting at block 0, and is the first thing
+//! loaded, when a file system is initialized, by the `BlockStorage` implementation.
 //!
-//! Note that the above flies in the face of what was described above -- this is clearly not a
-//! dictionary.  Instead, it's legacy code that needs to be updated.
+//! ## Metadata
+//!
 //!
 //! ## Addressing
 //!
