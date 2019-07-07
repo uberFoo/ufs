@@ -18,7 +18,7 @@ pub(crate) struct WasmMessageHandler {
 }
 
 impl WasmMessageHandler {
-    pub fn new(instance: ModuleRef, fs: Box<dyn FileSystemOps>) -> Self {
+    pub fn new(name: &str, instance: ModuleRef, fs: Box<dyn FileSystemOps>) -> Self {
         let memory = instance
             .export_by_name("memory")
             .expect("`memory` export not found")
@@ -26,7 +26,7 @@ impl WasmMessageHandler {
             .expect("export name `memory` is not of memory type")
             .clone();
 
-        let runtime = WasmRuntime::new(memory.clone(), fs);
+        let runtime = WasmRuntime::new(name, memory.clone(), fs);
 
         WasmMessageHandler {
             instance,

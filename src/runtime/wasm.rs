@@ -26,6 +26,7 @@ pub mod runtime;
 
 use std::path::PathBuf;
 
+use colored::*;
 use log::info;
 use wasmi::{Externals, LittleEndianConvert, MemoryRef, RuntimeArgs, RuntimeValue, Trap};
 
@@ -42,14 +43,20 @@ use crate::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct WasmRuntime {
+    name: String,
     memory: MemoryRef,
     file_system: Box<dyn FileSystemOps>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl WasmRuntime {
-    pub fn new(memory: MemoryRef, file_system: Box<dyn FileSystemOps>) -> Self {
+    pub fn new<S: AsRef<str>>(
+        name: S,
+        memory: MemoryRef,
+        file_system: Box<dyn FileSystemOps>,
+    ) -> Self {
         WasmRuntime {
+            name: name.as_ref().to_owned(),
             memory,
             file_system,
         }
@@ -65,7 +72,12 @@ impl WasmRuntime {
         // Dereference the pointer, and read `len` bytes.
         let payload = self.memory.get(ptr, len as usize).unwrap();
         // Tada!
-        println!("WASM: {}", String::from_utf8_lossy(payload.as_slice()));
+        println!(
+            " {}  {} 🔎  {}",
+            "WASM".yellow(),
+            self.name.cyan().underline(),
+            String::from_utf8_lossy(payload.as_slice())
+        );
         Ok(None)
     }
 

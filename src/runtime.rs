@@ -66,7 +66,7 @@ impl Process {
                 .expect("failed to instantiate WASM module")
                 .assert_no_start();
 
-            let mut handler = WasmMessageHandler::new(instance, fs_ops);
+            let mut handler = WasmMessageHandler::new(p.name.to_str().unwrap(), instance, fs_ops);
             info!("WASM program {:?} started", p.name);
 
             loop {
