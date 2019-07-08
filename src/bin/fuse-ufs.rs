@@ -50,11 +50,16 @@ fn main() -> Result<(), failure::Error> {
 
     pretty_env_logger::init();
 
+    let port = if let Some(port) = opts.value_of("remote") {
+        port.parse::<u16>().ok()
+    } else {
+        None
+    };
     match opts.value_of("bundle") {
         Some(path) => match fs::read_dir(&path) {
             Ok(_) => {
                 let ufs = UberFileSystem::load_file_backed(&path)?;
-                let mounter = UfsMounter::new(ufs);
+                let mounter = UfsMounter::new(ufs, port);
                 let ufs_fuse = UberFSFuse::new(mounter);
                 mount(ufs_fuse, &opts.value_of("mnt").unwrap(), &[])?;
             }
@@ -68,7 +73,7 @@ fn main() -> Result<(), failure::Error> {
             match Url::parse(opts.value_of("network").unwrap()) {
                 Ok(url) => {
                     let ufs = UberFileSystem::new_networked(url)?;
-                    let mounter = UfsMounter::new(ufs);
+                    let mounter = UfsMounter::new(ufs, port);
                     let ufs_fuse = UberFSFuse::new(mounter);
                     mount(ufs_fuse, &opts.value_of("mnt").unwrap(), &[])?;
                 }
