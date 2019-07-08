@@ -15,10 +15,12 @@ use crate::block::{
     manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
     MemoryStore, NetworkStore,
 };
+use crate::fsops::FileSystemOps;
 use crate::metadata::{
     DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, Metadata, WASM_EXT,
 };
-use crate::runtime::{FileSystemOperator, FileSystemOps, Process, UfsMessage};
+use crate::runtime::{FileSystemOperator, Process, UfsMessage};
+use crate::server::UfsRemoteServer;
 use crate::UfsUuid;
 
 /// File mode for `open` call.
@@ -76,6 +78,7 @@ struct WasmProgram {
 pub struct UfsMounter<B: BlockStorage + 'static> {
     // FIXME: I think that the Mutex can be an RwLock...
     inner: Arc<Mutex<UberFileSystem<B>>>,
+    remote: Option<JoinHandle<Result<(), failure::Error>>>,
     runtime_mgr_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
     runtime_mgr_thread: Option<JoinHandle<Result<(), failure::Error>>>,
 }
@@ -83,17 +86,36 @@ pub struct UfsMounter<B: BlockStorage + 'static> {
 impl<B: BlockStorage> UfsMounter<B> {
     /// Constructor
     ///
-    pub fn new(mut ufs: UberFileSystem<B>) -> Self {
+    pub fn new(mut ufs: UberFileSystem<B>, remote_port: Option<u16>) -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded::<RuntimeManagerMsg>();
 
+        // Initialize the UFS
+        info!("Initializing file system");
         ufs.init_runtime(sender.clone());
         let inner = Arc::new(Mutex::new(ufs));
 
+        // Start the Runtime
+        info!("Initializing WASM runtime");
         let runtime_mgr = RuntimeManager::new(inner.clone(), receiver);
         let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
 
+        // Start the remote FS listener
+        let remote = if let Some(port) = remote_port {
+            info!("Initializing remote file system listener");
+            match UfsRemoteServer::new(inner.clone(), port) {
+                Ok(listener) => Some(UfsRemoteServer::start(listener)),
+                Err(e) => {
+                    error!("Error starting remote listener: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let mounter = UfsMounter {
             inner,
+            remote,
             runtime_mgr_channel: sender,
             runtime_mgr_thread: Some(runtime_mgr_thread),
         };
@@ -111,6 +133,7 @@ impl<B: BlockStorage> UfsMounter<B> {
             info!("Waiting for RuntimeManager to shutdown.");
             thread.join().unwrap().unwrap();
         }
+
         Ok(())
     }
 }
@@ -181,7 +204,6 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         info!("Starting WASM program {:?}", wasm.name);
                         let process = Process::new(wasm.name.clone(), wasm.program);
                         let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
-                        // ufs.listeners.push(process.get_sender());
                         ufs.listeners
                             .insert(wasm.name.clone(), process.get_sender());
                         runtime.threads.insert(
