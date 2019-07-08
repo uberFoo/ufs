@@ -15,26 +15,10 @@ use failure::format_err;
 
 use crate::{
     block::BlockStorage,
+    fsops::FileSystemOps,
     metadata::{DirectoryEntry, File, FileHandle},
     OpenFileMode, UberFileSystem,
 };
-
-pub trait FileSystemOps: Send {
-    fn list_files(&self, handle: FileHandle) -> HashMap<String, DirectoryEntry>;
-    fn create_file(&mut self, path: &Path) -> Result<(FileHandle, File), failure::Error>;
-    // fn remove_file(&mut self, path: &Path);
-    fn open_file(&mut self, path: &Path, mode: OpenFileMode) -> Result<FileHandle, failure::Error>;
-    fn close_file(&mut self, handle: FileHandle);
-    fn read_file(
-        &mut self,
-        handle: FileHandle,
-        offset: i64,
-        size: usize,
-    ) -> Result<Vec<u8>, failure::Error>;
-    fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error>;
-    fn create_dir(&mut self, path: &Path) -> Result<(), failure::Error>;
-    // fn remove_dir(&mut self, path: &Path);
-}
 
 pub(crate) struct FileSystemOperator<B: BlockStorage> {
     inner: Arc<Mutex<UberFileSystem<B>>>,

@@ -97,9 +97,11 @@
 mod block;
 #[cfg(not(target_arch = "wasm32"))]
 mod fsimpl;
+mod fsops;
 mod fuse;
 mod metadata;
 mod runtime;
+mod server;
 mod time;
 mod uuid;
 

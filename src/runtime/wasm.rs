@@ -32,12 +32,10 @@ use wasmi::{Externals, LittleEndianConvert, MemoryRef, RuntimeArgs, RuntimeValue
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
+    fsops::FileSystemOps,
     metadata::FileHandle,
-    runtime::{
-        fsops::FileSystemOps,
-        wasm::exports::{
-            CLOSE_FILE_INDEX, CREATE_DIR_INDEX, CREATE_FILE_INDEX, PRINT_INDEX, WRITE_FILE_INDEX,
-        },
+    runtime::wasm::exports::{
+        CLOSE_FILE_INDEX, CREATE_DIR_INDEX, CREATE_FILE_INDEX, PRINT_INDEX, WRITE_FILE_INDEX,
     },
 };
 

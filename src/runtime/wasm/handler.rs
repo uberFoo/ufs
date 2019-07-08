@@ -9,7 +9,8 @@
 use log::{error, info};
 use wasmi::{MemoryRef, ModuleRef, RuntimeValue};
 
-use crate::runtime::{fsops::FileSystemOps, message::UfsMessageHandler, wasm::WasmRuntime};
+use crate::fsops::FileSystemOps;
+use crate::runtime::{message::UfsMessageHandler, wasm::WasmRuntime};
 
 pub(crate) struct WasmMessageHandler {
     instance: ModuleRef,

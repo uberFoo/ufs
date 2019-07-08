@@ -12,8 +12,7 @@ use failure;
 use log::{debug, info};
 use wasmi::{ImportsBuilder, ModuleInstance};
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod fsops;
+mod fsops;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod message;
 pub mod wasm;
@@ -25,9 +24,9 @@ pub(crate) use self::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use self::fsops::FileSystemOps;
-#[cfg(not(target_arch = "wasm32"))]
 pub use self::message::{UfsMessage, UfsMessageHandler};
+
+use crate::fsops::FileSystemOps;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Process {
