@@ -174,7 +174,7 @@ fn main() -> Result<(), failure::Error> {
         .expect("BS_PORT must specify the incoming connection port.")
         .parse::<u16>()
         .expect("BS_PORT must be a number.");
-    let addr = ([127, 0, 0, 1], port).into();
+    let addr = ([0, 0, 0, 0], port).into();
 
     let bundle_root =
         env::var("BUNDLE_DIR").expect("BUNDLE_DIR must point to the file system bundle directory");
