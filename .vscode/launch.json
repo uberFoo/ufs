@@ -20,7 +20,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug Remote FUSE",
+            "name": "Debug FUSE Remote Block Server",
             "program": "${workspaceFolder}/target/debug/fuse-ufs",
             "args": ["--url", "http://localhost:8888/demo", "mnt"],
             "env": [
@@ -37,6 +37,26 @@
             "name": "Debug FUSE",
             "program": "${workspaceFolder}/target/debug/fuse-ufs",
             "args": ["--bundle", "bundles/demo", "mnt"],
+            "env": [
+                {
+                    "name": "RUST_LOG",
+                    "value": "debug,ufs::runtime=info"
+                }
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug FUSE Server",
+            "program": "${workspaceFolder}/target/debug/fuse-ufs",
+            "args": [
+                "--port",
+                "8888"
+                "--bundle",
+                "bundles/demo",
+                "mnt"
+            ],
             "env": [
                 {
                     "name": "RUST_LOG",
