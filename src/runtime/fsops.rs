@@ -83,7 +83,7 @@ impl<'a, B: BlockStorage> FileSystemOps for FileSystemOperator<B> {
         let name = path.file_name().unwrap().to_str().unwrap();
         match metadata.id_from_path(dir) {
             Some(dir_id) => {
-                guard.create_directory(dir_id, name);
+                guard.create_directory(dir_id, name)?;
                 Ok(())
             }
             None => Err(format_err!("unable to find directory {:?}", dir)),
