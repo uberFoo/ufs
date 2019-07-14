@@ -3,23 +3,32 @@
 //! A mounted UFS may also act as a block server for remote connections. That is implemented herein.
 //!
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::io::prelude::*;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{spawn, JoinHandle};
 
 use failure::format_err;
 use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
 
 use crate::fsops::FileSystemOps;
 use crate::metadata::{DirectoryEntry, File, FileHandle};
 use crate::{BlockStorage, OpenFileMode, UberFileSystem};
 
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) enum UfsRemoteServerMessage {
     ListFiles,
     CreateFile(PathBuf),
     OpenFile(PathBuf),
-    Shutdown,
+    ReplyOk,
+}
+
+impl UfsRemoteServerMessage {
+    fn handle_message(msg: &UfsRemoteServerMessage) -> Result<(), failure::Error> {
+        Ok(())
+    }
 }
 
 pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
@@ -38,11 +47,20 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
         Ok(UfsRemoteServer { ufs, listener })
     }
 
-    pub(crate) fn start(mut server: UfsRemoteServer<B>) -> JoinHandle<Result<(), failure::Error>> {
+    pub(crate) fn start(server: UfsRemoteServer<B>) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
             for stream in server.listener.incoming() {
-                let stream = stream?;
+                let mut stream = stream?;
                 info!("Got a connection from {:?}", stream.peer_addr().unwrap());
+
+                let mut buffer = [0; 256];
+                stream.read(&mut buffer);
+                let msg = bincode::deserialize::<UfsRemoteServerMessage>(&buffer);
+                if let Ok(msg) = msg {
+                    info!("message {:?}", msg);
+                    let ok = bincode::serialize(&UfsRemoteServerMessage::ReplyOk).unwrap();
+                    stream.write(&ok.as_slice());
+                }
             }
             info!("Shutting down UfsRemoteServer");
             Ok(())
@@ -103,10 +121,41 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
         let name = path.file_name().unwrap().to_str().unwrap();
         match metadata.id_from_path(dir) {
             Some(dir_id) => {
-                guard.create_directory(dir_id, name);
+                guard.create_directory(dir_id, name)?;
                 Ok(())
             }
             None => Err(format_err!("unable to find directory {:?}", dir)),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{BlockSize, UfsMounter};
+
+    use super::*;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    fn connect() -> Box<TcpStream> {
+        init();
+
+        let ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
+        let mounter = UfsMounter::new(ufs, Some(8888));
+        let mut stream = TcpStream::connect("127.0.0.1:8888").unwrap();
+        Box::new(stream)
+    }
+
+    #[test]
+    fn list_files() {
+        let mut connection = connect();
+        let msg = UfsRemoteServerMessage::ListFiles;
+        connection.write(bincode::serialize(&msg).unwrap().as_slice());
+        let mut buffer = [0; 256];
+        connection.read(&mut buffer);
+        let response = bincode::deserialize::<UfsRemoteServerMessage>(&buffer).unwrap();
+        assert_eq!(UfsRemoteServerMessage::ReplyOk, response);
     }
 }
