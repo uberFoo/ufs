@@ -190,6 +190,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // programs (via our UberFileSystem reference) before joining the threads,
                     // see below.
                     RuntimeManagerMsg::Shutdown => break,
+                    // Stop the WASM program and remove it from the listeners map.
                     RuntimeManagerMsg::Stop(name) => {
                         info!("Stopping WASM program {:?}", name);
                         let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
@@ -200,6 +201,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
                             }
                         }
                     }
+                    // Start the WASM program and add it to the listeners map.
                     RuntimeManagerMsg::Start(wasm) => {
                         info!("Starting WASM program {:?}", wasm.name);
                         let process = Process::new(wasm.name.clone(), wasm.program);
@@ -241,7 +243,6 @@ pub struct UberFileSystem<B: BlockStorage> {
     open_files: HashMap<FileHandle, File>,
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
     open_file_counter: FileHandle,
-    // listeners: Vec<crossbeam_channel::Sender<UfsMessage>>,
     listeners: HashMap<PathBuf, crossbeam_channel::Sender<UfsMessage>>,
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
 }
