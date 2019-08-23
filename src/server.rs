@@ -54,12 +54,12 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 info!("Got a connection from {:?}", stream.peer_addr().unwrap());
 
                 let mut buffer = [0; 256];
-                stream.read(&mut buffer);
+                let num = stream.read(&mut buffer)?;
                 let msg = bincode::deserialize::<UfsRemoteServerMessage>(&buffer);
                 if let Ok(msg) = msg {
                     info!("message {:?}", msg);
                     let ok = bincode::serialize(&UfsRemoteServerMessage::ReplyOk).unwrap();
-                    stream.write(&ok.as_slice());
+                    stream.write_all(&ok.as_slice())?;
                 }
             }
             info!("Shutting down UfsRemoteServer");
