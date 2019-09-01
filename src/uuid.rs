@@ -48,6 +48,11 @@ impl UfsUuid {
         }
     }
 
+    /// Pass through function to return UUID as an array of bytes
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        self.inner.as_bytes()
+    }
+
     /// Create a new random UfsUuid, under a namespace
     pub fn random(&self) -> Self {
         let rando_calrissian: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();

@@ -29,6 +29,11 @@ structopt = "0.2.16"
 time = "0.1.42"
 wasmi = "0.4.5"
 colored = "1.8.0"
+rpassword = "4.0.1"
+c2-chacha = "0.2.2"
+hmac = "0.7.1"
+sha2 = "0.8.0"
+pbkdf2 = "0.3.0"
 
 [dependencies.chrono]
 version = "0.4.6"

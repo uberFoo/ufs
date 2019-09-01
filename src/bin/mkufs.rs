@@ -9,7 +9,8 @@ use ufs::{BlockCardinality, BlockManager, BlockMap, BlockSize, FileStore, UfsUui
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "mkufs",
-    about = "Create an on-disk ufs file system.  The file system UUID is the same as the on-disk bundle location."
+    about = "Create an on-disk ufs file system.  The file system UUID is the same as the on-disk bundle location.",
+    raw(global_settings = "&[structopt::clap::AppSettings::ColoredHelp]")
 )]
 struct Opt {
     /// File system bundle directory
@@ -21,6 +22,9 @@ struct Opt {
     /// Number of blocks
     #[structopt(short = "c", long = "block-count", default_value = "256")]
     block_count: BlockCardinality,
+    /// Master file system password
+    #[structopt(short = "p", long = "password")]
+    password: Option<String>,
 }
 
 fn main() -> Result<(), failure::Error> {
@@ -28,6 +32,12 @@ fn main() -> Result<(), failure::Error> {
 
     let opt = Opt::from_args();
     debug!("running with options {:?}", opt);
+
+    let password = if let Some(password) = opt.password {
+        password
+    } else {
+        rpassword::read_password_from_tty(Some("password: ")).unwrap()
+    };
 
     let map = BlockMap::new(
         UfsUuid::new_root(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
@@ -37,7 +47,7 @@ fn main() -> Result<(), failure::Error> {
 
     match FileStore::new(&opt.bundle_path, map) {
         Ok(store) => {
-            BlockManager::new(store);
+            BlockManager::new(password, store);
             println!(
                 "Created new ufs file system with {} {} blocks at {:?}.",
                 opt.block_count, opt.block_size, opt.bundle_path

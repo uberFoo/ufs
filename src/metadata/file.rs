@@ -67,6 +67,7 @@ impl FileMetadata {
     fn new_with_version(v: FileVersion) -> Self {
         let mut versions = HashMap::new();
         let id = v.file_id.clone();
+        // FIXME
         let parent = UfsUuid::new_root("fix me");
         versions.insert(0, v);
         FileMetadata {
@@ -219,6 +220,21 @@ impl FileVersion {
         }
     }
 
+    /// Return the nonce used to encrypt this version
+    ///
+    /// The nonce consists of the first four bytes of the version's UUID, followed by all 16 bytes
+    /// of the file's UUID, ending with the last 4 bytes of the version's UUID.
+    pub(crate) fn nonce(&self) -> Vec<u8> {
+        let mut nonce = Vec::with_capacity(24);
+        let ver_uuid = self.id.as_bytes();
+        let file_uuid = self.file_id.as_bytes();
+
+        nonce.extend_from_slice(&ver_uuid[0..4]);
+        nonce.extend_from_slice(&file_uuid[..]);
+        nonce.extend_from_slice(&ver_uuid[12..16]);
+        nonce
+    }
+
     /// Create a new sibling version -- this is jacked
     pub(crate) fn new_sibling(&self) -> Self {
         let id = self.id.random();
@@ -286,5 +302,30 @@ impl FileVersion {
     /// Return the `write_time` timestamp
     pub(crate) fn write_time(&self) -> UfsTime {
         self.write_time
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn nonce() {
+        let root = UfsUuid::new_root("test");
+        let id = root.new("test_file"); // a506eaa8-7236-53f9-a7ed-9002fdc6a5b9
+        let did = root.new("test_dir");
+        let vid = root.new("test_version"); // 2397b0a7-2f31-5d27-9a37-795d05d1ab8b
+
+        let version = FileVersion::new(vid, &id);
+
+        // First 4 bytes of the file version UUID, followed by all 16 bytes of file UUID,
+        // ending with last 4 bytes of file version UUID
+        let mut expected: [u8; 24] = [
+            0x23, 0x97, 0xb0, 0xa7, 0xa5, 0x06, 0xea, 0xa8, 0x72, 0x36, 0x53, 0xf9, 0xa7, 0xed,
+            0x90, 0x02, 0xfd, 0xc6, 0xa5, 0xb9, 0x05, 0xd1, 0xab, 0x8b,
+        ];
+
+        assert_eq!(expected.to_vec(), version.nonce(), "incorrect nonce");
     }
 }
