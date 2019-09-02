@@ -51,9 +51,9 @@ pub struct BlockMap {
     /// The number of blocks in the file system
     ///
     count: BlockCardinality,
-    /// A list of blocks that contain metadata
+    /// A list of blocks that contain the block map (as `BlockMapWrapper`s)
     ///
-    block_map_metadata_blocks: Vec<BlockNumber>,
+    block_map_blocks: Vec<BlockNumber>,
     /// The list of free blocks
     ///
     free_blocks: VecDeque<BlockNumber>,
@@ -72,13 +72,13 @@ impl BlockMap {
     pub fn new(id: UfsUuid, size: BlockSize, count: BlockCardinality) -> Self {
         // Mark the 0 block as metadata
         let mut map = (0..count).map(|b| Block::new(b)).collect::<Vec<_>>();
-        map[0].tag_metadata();
+        map[0].tag_map();
 
         BlockMap {
             id,
             size,
             count,
-            block_map_metadata_blocks: vec![0],
+            block_map_blocks: vec![0],
             free_blocks: (1..count).collect(),
             root_block: None,
             map,
@@ -160,15 +160,15 @@ impl BlockMap {
         );
 
         // Collect a list of block numbers we'll use to write the block map.
-        while block_count > self.block_map_metadata_blocks.len() as u64 {
-            while block_count > self.block_map_metadata_blocks.len() as u64 {
+        while block_count > self.block_map_blocks.len() as u64 {
+            while block_count > self.block_map_blocks.len() as u64 {
                 let meta_block = match self.free_blocks.pop_front() {
                     Some(b) => b,
                     None => return Err(format_err!("No free blocks.")),
                 };
                 debug!("Allocating new blockmap wrapper block {}", meta_block);
-                self.map[meta_block as usize].tag_metadata();
-                self.block_map_metadata_blocks.push(meta_block);
+                self.map[meta_block as usize].tag_map();
+                self.block_map_blocks.push(meta_block);
             }
 
             // Grab a fresh version of ourself to serialize since we converted free blocks to
@@ -188,9 +188,9 @@ impl BlockMap {
             .chunks(chunk_size as usize)
             .enumerate()
             .map(|(count, chunk)| {
-                let block = self.block_map_metadata_blocks[count];
+                let block = self.block_map_blocks[count];
                 let next_block = if count < block_count as usize - 1 {
-                    Some(self.block_map_metadata_blocks[count + 1])
+                    Some(self.block_map_blocks[count + 1])
                 } else {
                     None
                 };
@@ -237,10 +237,15 @@ impl BlockMap {
 
         match bincode::deserialize::<BlockMap>(&map) {
             Ok(map) => {
-                info!("Loaded BlockMap");
-                info!("id: {}", map.id);
-                info!("block count: {}", map.count);
-                info!("free blocks: {}", map.free_blocks.len());
+                info!("Loaded BlockMap:");
+                info!("\tid: {}", map.id);
+                info!("\tblock size: {}", map.size);
+                info!("\tblock count: {}", map.count);
+                info!("\tfree blocks: {}", map.free_blocks.len());
+                match map.root_block {
+                    Some(b) => info!("\troot block: {}", b),
+                    None => (),
+                };
                 Ok(map)
             }
             Err(e) => {
@@ -274,6 +279,7 @@ fn read_wrapper_block<BS: BlockReader>(
 pub(in crate::block) enum BlockType {
     Free,
     Data,
+    Map,
     Metadata,
 }
 
@@ -284,6 +290,10 @@ impl BlockType {
 
     pub(in crate::block) fn new_data() -> Self {
         BlockType::Data
+    }
+
+    pub(in crate::block) fn new_map() -> Self {
+        BlockType::Map
     }
 
     pub(in crate::block) fn new_metadata() -> Self {
@@ -300,6 +310,13 @@ impl BlockType {
     pub(in crate::block) fn is_data(&self) -> bool {
         match self {
             BlockType::Data => true,
+            _ => false,
+        }
+    }
+
+    pub(in crate::block) fn is_map(&self) -> bool {
+        match self {
+            BlockType::Map => true,
             _ => false,
         }
     }
@@ -330,9 +347,6 @@ mod test {
         let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
 
-        // This tests that we pickup a metadata block.
-        map.get_mut(0).unwrap().tag_metadata();
-
         // This is ugly, but ok for testing I think.
         let mut ms = MemoryStore::new(map.clone());
         assert!(map.serialize(&mut ms).is_ok());
@@ -340,8 +354,8 @@ mod test {
         let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(
-            map_2.get(0).unwrap().is_metadata(),
-            "block 0 should be BlockType::Metadata"
+            map_2.get(0).unwrap().is_map(),
+            "block 0 should be BlockType::Map"
         );
 
         for x in 1..10 {
@@ -373,9 +387,6 @@ mod test {
         let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
 
-        // This tests that we pickup a metadata block.
-        map.get_mut(0).unwrap().tag_metadata();
-
         // This tests that we skip data blocks.
         for x in 1..8 {
             map.free_blocks.pop_front();
@@ -389,12 +400,12 @@ mod test {
 
         // Two, 2048-byte blocks are needed for 100 blocks.
         assert!(
-            map_2.get(0).unwrap().is_metadata(),
-            "block 0 should be BlockType::Metadata"
+            map_2.get(0).unwrap().is_map(),
+            "block 0 should be BlockType::Map"
         );
         assert!(
-            map_2.get(8).unwrap().is_metadata(),
-            "block 8 should be BlockType::Metadata",
+            map_2.get(8).unwrap().is_map(),
+            "block 8 should be BlockType::Map",
         );
 
         for x in 1..8 {
@@ -419,9 +430,6 @@ mod test {
         let id = UfsUuid::new_root("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
-        // This tests that we pickup a metadata block.
-        map.get_mut(0).unwrap().tag_metadata();
-
         // This tests that we skip data blocks.
         for x in 1..8 {
             map.free_blocks.pop_front();
@@ -434,8 +442,8 @@ mod test {
         let map_2 = BlockMap::deserialize(&ms).unwrap();
 
         assert!(
-            map_2.get(0).unwrap().is_metadata(),
-            "block 0 should be BlockType::Metadata"
+            map_2.get(0).unwrap().is_map(),
+            "block 0 should be BlockType::Map"
         );
 
         for x in 1..8 {
@@ -449,8 +457,8 @@ mod test {
         // Four, 512-byte blocks are needed for 100 blocks.
         for x in 8..12 {
             assert!(
-                map_2.get(x).unwrap().is_metadata(),
-                "block {} should be BlockType::Metadata",
+                map_2.get(x).unwrap().is_map(),
+                "block {} should be BlockType::Map",
                 x
             );
         }

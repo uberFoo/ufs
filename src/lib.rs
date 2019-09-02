@@ -23,14 +23,32 @@
 //!
 //! The first block is the file system is special.  It contains the `BlockMap`, described below.
 //!
-//! ## Block Map
+//! ## `BlockMap`
 //!
 //! The block map maintains a mapping from a block's number to a block's type. It also contains
 //! metadata about the blocks themselves. It's stored in starting at block 0, and is the first thing
-//! loaded, when a file system is initialized, by the `BlockStorage` implementation.
+//! loaded, when a file system is initialized, by the `BlockStorage` implementation. Additionally
+//! the block map stores the block size, free block list, and something called the "root block".
+//! This is a pointer to the block that contains the file system metadata, described in the next
+//! section.
+//!
+//! The block map itself is stored as as a `bincode` byte-stream, spread across blocks in the file
+//! system. This is accomplished by chunking the serialized bytes and storing them in a
+//! `BlockMapWrapper` structure. This struct is sized so that it fit's into a single disk block, and
+//! in addition to some piece of the `BlockMap`'s data, it contains a hash of the data, and a
+//! pointer to the block number that contains the next chunk of serialized data.
+//!
+//! Thus when deserializing the `BlockMap`, we begin at block 0, which is a `BlockMapWrapper`, read
+//! it's data, and follow it's pointer to our next chunk of data. Reading data, validating it's
+//! hash, and appending it to a buffer continues until all of the  data bits are read, and then the
+//! `BlockMap` is deserialized with `bincode`.
 //!
 //! ## Metadata
 //!
+//! The file system metadata is similar to the block map, but instead of keeping track of file
+//! system blocks, it knows about files and directories. Once the block map is constructed in
+//! memory, it is possible to do the same for the metadata. Like the block map, the metadata is
+//! spread across the filesystem using wrapper blocks.
 //!
 //! ## Addressing
 //!
