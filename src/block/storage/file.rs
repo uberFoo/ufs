@@ -72,7 +72,13 @@ impl BlockReader for FileReader {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
-        let data = fs::read(path)?;
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => {
+                error!("error reading file {:?}", path);
+                panic!();
+            }
+        };
         debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
         trace!("{:?}", data);
 
@@ -307,7 +313,14 @@ impl BlockReader for FileStore {
         } else {
             let path = path_for_block(&self.root_path, bn);
             debug!("reading block from {:?}", path);
-            let data = fs::read(path)?;
+            let data = match fs::read(&path) {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("error reading file {:?}", path);
+                    panic!();
+                }
+            };
+
             debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
 
