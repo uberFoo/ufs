@@ -150,9 +150,9 @@ where
         if self.metadata.is_dirty() {
             match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
-                    debug!("Stored new root block {}", block);
                     self.store.map_mut().set_root_block(block);
                     self.store.commit_map();
+                    debug!("Stored new root block {}", block);
                 }
                 Err(e) => {
                     error!("error writing metadata: {}", e);
