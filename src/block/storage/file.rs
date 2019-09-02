@@ -152,7 +152,7 @@ impl FileStore {
     /// Consistency Check
     ///
     /// FIXME: Actually check consistency?
-    pub fn check<P>(path: P) -> Result<(), failure::Error>
+    pub fn check<P>(path: P, show_map: bool) -> Result<(), failure::Error>
     where
         P: AsRef<Path>,
     {
@@ -160,8 +160,19 @@ impl FileStore {
 
         let fs = FileStore::load(path)?;
         println!("File-based Block Storage:");
+        println!("\tID: {}", fs.id);
         println!("\tblock count: {}", fs.block_count);
         println!("\tblock size: {}", fs.block_size);
+        println!("\tfree blocks: {}", fs.map.free_blocks().len());
+        match fs.map.root_block() {
+            Some(block) => println!("\troot block number: {}", block),
+            None => (),
+        };
+
+        if (show_map) {
+            println!("\nBlockMap Metadata:");
+            println!("{:#?}", fs.map);
+        }
 
         Ok(())
     }

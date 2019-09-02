@@ -7,11 +7,18 @@ use structopt::StructOpt;
 use ufs::FileStore;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "ckufs", about = "check an on-disk ufs file system")]
+#[structopt(
+    name = "ckufs",
+    about = "check an on-disk ufs file system",
+    global_settings(&[structopt::clap::AppSettings::ColoredHelp])
+)]
 struct Opt {
     /// File system bundle
     #[structopt(parse(from_os_str))]
     bundle_path: PathBuf,
+    /// Display verbose BlockMap information
+    #[structopt(short = "v", long = "verbose")]
+    show_map: bool,
 }
 
 fn main() -> Result<(), failure::Error> {
@@ -20,5 +27,5 @@ fn main() -> Result<(), failure::Error> {
     let opt = Opt::from_args();
     debug!("running with options {:?}", opt);
 
-    FileStore::check(&opt.bundle_path)
+    FileStore::check(&opt.bundle_path, opt.show_map)
 }
