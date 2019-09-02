@@ -1,6 +1,6 @@
 //! Block Map
 //!
-//! Mapping from block number to black type.
+//! Mapping from block number to block type.
 //!
 //! At this time block 0 is reserved as the starting place for the block map.  Blocks are then
 //! dynamically allocated, and written with the Block Map as necessary.
