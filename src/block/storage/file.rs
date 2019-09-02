@@ -66,9 +66,9 @@ struct FileReader {
 }
 
 impl BlockReader for FileReader {
-    /// This exists because we need a means of loading metadata from a file-based block storage. We
-    /// aren't doing any sanity checking on the block number, or block size, since we don't yet have
-    ///  that information.
+    /// This exists because we need a means of bootstrapping metadata from a file-based block
+    /// storage. We aren't doing any sanity checking on the block number, or block size, since we
+    /// don't yet have that information -- it's stored in the file system we are bootstrapping.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
