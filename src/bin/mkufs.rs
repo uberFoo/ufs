@@ -10,7 +10,7 @@ use ufs::{BlockCardinality, BlockManager, BlockMap, BlockSize, FileStore, UfsUui
 #[structopt(
     name = "mkufs",
     about = "Create an on-disk ufs file system.  The file system UUID is the same as the on-disk bundle location.",
-    raw(global_settings = "&[structopt::clap::AppSettings::ColoredHelp]")
+    global_settings(&[structopt::clap::AppSettings::ColoredHelp])
 )]
 struct Opt {
     /// File system bundle directory
