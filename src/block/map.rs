@@ -70,6 +70,10 @@ impl BlockMap {
     ///
     /// The resultant block map will contain a metadata block at block 0.
     pub fn new(id: UfsUuid, size: BlockSize, count: BlockCardinality) -> Self {
+        // Mark the 0 block as metadata
+        let mut map = (0..count).map(|b| Block::new(b)).collect::<Vec<_>>();
+        map[0].tag_metadata();
+
         BlockMap {
             id,
             size,
@@ -77,7 +81,7 @@ impl BlockMap {
             block_map_metadata_blocks: vec![0],
             free_blocks: (1..count).collect(),
             root_block: None,
-            map: (0..count).map(|b| Block::new(b)).collect::<Vec<_>>(),
+            map,
         }
     }
 
