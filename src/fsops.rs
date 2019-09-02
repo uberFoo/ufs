@@ -19,7 +19,7 @@ pub(crate) trait FileSystemOps: Send {
     fn read_file(
         &mut self,
         handle: FileHandle,
-        offset: i64,
+        offset: u64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error>;
     fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error>;

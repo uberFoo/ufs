@@ -169,11 +169,13 @@ where
     pub(crate) fn write<T: AsRef<[u8]>>(
         &mut self,
         nonce: Vec<u8>,
+        offset: u64,
         data: T,
     ) -> Result<&Block, failure::Error> {
         let data = data.as_ref();
         if let Some(number) = self.get_free_block() {
             let mut cipher = XChaCha20::new_var(&self.key, &nonce).unwrap();
+            cipher.seek(offset);
 
             let end = data.len().min(self.store.block_size() as usize);
             let mut bytes = data[..end].to_vec();
@@ -202,7 +204,12 @@ where
     /// see it anyway) is to avoid copying memory.  At this point, we can't know how the memory
     /// is going to be used.  By returning a `Vec<u8>` the caller is forced to use the vector --
     /// even if they have their own buffer allocated to take the bytes.
-    pub(crate) fn read(&self, nonce: Vec<u8>, block: &Block) -> Result<Vec<u8>, failure::Error> {
+    pub(crate) fn read(
+        &self,
+        nonce: Vec<u8>,
+        offset: u64,
+        block: &Block,
+    ) -> Result<Vec<u8>, failure::Error> {
         if let Block {
             number: block_number,
             hash: Some(block_hash),
@@ -211,6 +218,7 @@ where
         } = block
         {
             let mut cipher = XChaCha20::new_var(&self.key, &nonce).unwrap();
+            cipher.seek(offset);
 
             let mut bytes = self.store.read_block(*block_number)?;
 
@@ -250,7 +258,7 @@ mod test {
 
     use super::*;
     use crate::{
-        block::{map::BlockMap, BlockSize, MemoryStore},
+        block::{map::BlockMap, storage::BlockReader, BlockSize, MemoryStore},
         UfsUuid,
     };
 
@@ -274,7 +282,7 @@ mod test {
             )),
         );
 
-        let blocks = bm.write(NONCE.to_vec(), &vec![0x0; 513][..]);
+        let blocks = bm.write(NONCE.to_vec(), 0, &vec![0x0; 513][..]);
         assert_eq!(
             blocks.is_err(),
             true,
@@ -293,7 +301,7 @@ mod test {
             )),
         );
 
-        let block = bm.write(NONCE.to_vec(), b"abc").unwrap().clone();
+        let block = bm.write(NONCE.to_vec(), 0, b"abc").unwrap().clone();
         println!("{:#?}", block);
 
         assert_eq!(bm.free_block_count(), 0);
@@ -305,7 +313,7 @@ mod test {
         );
 
         assert_eq!(
-            bm.read(NONCE.to_vec(), &block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             b"abc",
             "compare stored data with expected values"
         );
@@ -323,12 +331,12 @@ mod test {
         );
 
         let block = bm
-            .write(NONCE.to_vec(), &vec![0x38; 511][..])
+            .write(NONCE.to_vec(), 0, &vec![0x38; 511][..])
             .unwrap()
             .clone();
         assert_eq!(bm.free_block_count(), 0);
         assert_eq!(
-            bm.read(NONCE.to_vec(), &block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             &vec![0x38; 511][..],
             "compare stored data with expected values"
         );
@@ -347,12 +355,12 @@ mod test {
         );
 
         let block = bm
-            .write(NONCE.to_vec(), &vec![0x38; 513][..])
+            .write(NONCE.to_vec(), 0, &vec![0x38; 513][..])
             .unwrap()
             .clone();
         assert_eq!(bm.free_block_count(), 1);
         assert_eq!(
-            bm.read(NONCE.to_vec(), &block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             &vec![0x38; 512][..],
             "compare stored data with expected values"
         );
@@ -370,13 +378,13 @@ mod test {
             )),
         );
 
-        let mut block = bm.write(NONCE.to_vec(), b"abc").unwrap().clone();
+        let mut block = bm.write(NONCE.to_vec(), 0, b"abc").unwrap().clone();
 
         // Replace the hash of the block with something else.
         block.hash.replace(BlockHash::new("abcd"));
 
         assert!(
-            bm.read(NONCE.to_vec(), &block).is_err(),
+            bm.read(NONCE.to_vec(), 0, &block).is_err(),
             "hash validation failure"
         );
     }
@@ -396,7 +404,7 @@ mod test {
         assert_eq!(bm.free_block_count(), 9);
 
         let block = bm
-            .write(NONCE.to_vec(), &vec![0x38; 511][..])
+            .write(NONCE.to_vec(), 0, &vec![0x38; 512][..])
             .unwrap()
             .clone();
         assert_eq!(bm.free_block_count(), 8);
@@ -407,5 +415,37 @@ mod test {
         bm.recycle_block(block.number);
         assert_eq!(bm.free_block_count(), 9);
         assert!(bm.store.map().get(block.number).unwrap().is_free());
+    }
+
+    #[test]
+    fn encrypt_and_decrypt_two_blocks_with_different_stream_positions() {
+        let mut bm = BlockManager::new(
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root("test"),
+                BlockSize::FiveTwelve,
+                10,
+            )),
+        );
+
+        let block1 = bm
+            .write(NONCE.to_vec(), 0, &vec![0x38; 512][..])
+            .unwrap()
+            .clone();
+        let block2 = bm
+            .write(NONCE.to_vec(), 512, &vec![0x38; 512][..])
+            .unwrap()
+            .clone();
+
+        let c_data_1 = bm.store.read_block(block1.number).unwrap();
+        let c_data_2 = bm.store.read_block(block2.number).unwrap();
+
+        assert_ne!(c_data_1, c_data_2, "encrypted blocks should differ");
+        assert_ne!(c_data_1[511], c_data_2[0], "no overlap");
+
+        let data_1 = bm.read(NONCE.to_vec(), 0, &block1).unwrap();
+        let data_2 = bm.read(NONCE.to_vec(), 512, &block2).unwrap();
+
+        assert_eq!(data_1, data_2, "decrypted blocks should be identical");
     }
 }

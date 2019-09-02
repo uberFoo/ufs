@@ -658,6 +658,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         &mut self,
         handle: FileHandle,
         bytes: &[u8],
+        offset: u64,
     ) -> Result<usize, failure::Error> {
         debug!("-------");
         debug!("`write_file`: handle: {}", handle);
@@ -666,10 +667,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Some(file) => {
                 let mut written = 0;
                 while written < bytes.len() {
-                    match self
-                        .block_manager
-                        .write(file.version.nonce(), &bytes[written..])
-                    {
+                    match self.block_manager.write(
+                        file.version.nonce(),
+                        offset + written as u64,
+                        &bytes[written..],
+                    ) {
                         Ok(block) => {
                             written += block.size() as usize;
                             file.version.append_block(&block);
@@ -708,7 +710,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
     pub(crate) fn read_file(
         &self,
         handle: FileHandle,
-        offset: i64,
+        offset: u64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
         debug!("-------");
@@ -720,8 +722,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
         if let Some(file) = self.open_files.get(&handle) {
             let block_size = self.block_manager.block_size();
 
-            let start_block = (offset / block_size as i64) as usize;
-            let mut start_offset = (offset % block_size as i64) as usize;
+            let start_block = (offset / block_size as u64) as usize;
+            let mut start_offset = (offset % block_size as u64) as usize;
 
             let mut blocks = file.version.blocks().clone();
             trace!("reading from blocks {:?}", &blocks);
@@ -730,11 +732,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
             let mut read = 0;
             let mut buffer = vec![0; size];
+            let mut blocks_read = 0;
             while read < size {
                 if let Some(block_number) = block_iter.next() {
                     if let Some(block) = self.block_manager.get_block(*block_number) {
                         trace!("reading block {:?}", &block);
-                        if let Ok(bytes) = self.block_manager.read(file.version.nonce(), block) {
+                        if let Ok(bytes) = self.block_manager.read(
+                            file.version.nonce(),
+                            ((start_block + blocks_read) * block_size as usize) as u64,
+                            block,
+                        ) {
+                            blocks_read += 1;
+
                             trace!("read bytes\n{:?}", &bytes);
                             let block_len = bytes.len();
                             let width = std::cmp::min(size - read, block_len - start_offset);
@@ -818,7 +827,7 @@ mod test {
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
-        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
         assert_eq!(test, bytes.as_slice());
 
@@ -836,7 +845,7 @@ mod test {
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
-        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
         let bytes = ufs.read_file(h, 0, test.len()).unwrap();
         assert_eq!(test, bytes.as_slice());
     }
@@ -851,7 +860,7 @@ mod test {
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
-        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
 
         let mut offset = 0;
         test.chunks(chunk_size).for_each(|test_bytes| {
@@ -863,7 +872,7 @@ mod test {
                 "failed at offset {}",
                 offset
             );
-            offset += len as i64;
+            offset += len as u64;
         });
     }
 
@@ -877,7 +886,7 @@ mod test {
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
-        assert_eq!(test.len(), ufs.write_file(h, test).unwrap());
+        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
 
         let mut offset = 0;
         test.chunks(chunk_size).for_each(|test_bytes| {
@@ -889,7 +898,7 @@ mod test {
                 "failed at offset {}",
                 offset
             );
-            offset += len as i64;
+            offset += len as u64;
         });
     }
 }

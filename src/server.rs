@@ -102,7 +102,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
     fn read_file(
         &mut self,
         handle: FileHandle,
-        offset: i64,
+        offset: u64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.ufs.lock().expect("poisoned ufs lock");
@@ -111,7 +111,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
 
     fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error> {
         let mut guard = self.ufs.lock().expect("poisoned ufs lock");
-        guard.write_file(handle, bytes)
+        guard.write_file(handle, bytes, 0)
     }
 
     fn create_dir(&mut self, path: &Path) -> Result<(), failure::Error> {
