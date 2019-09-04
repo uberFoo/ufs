@@ -113,6 +113,17 @@ impl From<u32> for BlockSize {
     }
 }
 
+impl From<u64> for BlockSize {
+    fn from(n: u64) -> Self {
+        match n {
+            512 => BlockSize::FiveTwelve,
+            1024 => BlockSize::TenTwentyFour,
+            2048 => BlockSize::TwentyFortyEight,
+            _ => panic!("Invalid Block Size"),
+        }
+    }
+}
+
 impl From<BlockSize> for BlockSizeType {
     fn from(n: BlockSize) -> Self {
         match n {
