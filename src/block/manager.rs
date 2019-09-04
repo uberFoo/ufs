@@ -146,7 +146,7 @@ where
             match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
                     self.store.map_mut().set_root_block(block);
-                    self.store.commit_map(self.key);
+                    self.store.commit_map();
                     debug!("Stored new root block {}", block);
                 }
                 Err(e) => {

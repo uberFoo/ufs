@@ -153,8 +153,12 @@ where
     R: BlockReader,
     M: MetadataDeserialize,
 {
+    debug!("");
+    debug!("*******");
+    debug!("read_metadata");
     let mut bytes = Vec::<u8>::new();
     let mut block = read_wrapper_block(store, start_block)?;
+
     bytes.append(&mut block.data);
 
     while let Some(next) = block.next_block {

@@ -24,6 +24,8 @@ use crate::{
 ///
 pub struct NetworkStore {
     id: UfsUuid,
+    key: [u8; 32],
+    nonce: Vec<u8>,
     url: Url,
     client: Client,
     block_size: BlockSize,
@@ -49,6 +51,8 @@ impl NetworkStore {
                 nonce.extend_from_slice(&id.as_bytes()[..]);
                 nonce.extend_from_slice(&id.as_bytes()[0..8]);
 
+                println!("key: {:?}\nnonce: {:?}", key, nonce);
+
                 let mut reader = NetworkReader {
                     key,
                     nonce,
@@ -56,10 +60,14 @@ impl NetworkStore {
                     client: client.clone(),
                 };
 
+                println!("foo");
                 let metadata = BlockMap::deserialize(&mut reader)?;
+                println!("bar");
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
+                    key,
+                    nonce: reader.nonce,
                     url,
                     client,
                     block_size: metadata.block_size(),
@@ -77,17 +85,12 @@ impl BlockStorage for NetworkStore {
         &self.id
     }
 
-    fn commit_map(&mut self, key: [u8; 32]) {
+    fn commit_map(&mut self) {
         debug!("writing BlockMap");
 
-        let mut nonce = Vec::with_capacity(24);
-        /// FIXME: Is this nonce sufficient?
-        nonce.extend_from_slice(&self.id().as_bytes()[..]);
-        nonce.extend_from_slice(&self.id().as_bytes()[0..8]);
-
         let mut writer = NetworkWriter {
-            key,
-            nonce,
+            key: self.key,
+            nonce: self.nonce.clone(),
             url: self.url.clone(),
             client: self.client.clone(),
         };
@@ -121,7 +124,12 @@ impl BlockWriter for NetworkStore {
     where
         T: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        cipher.seek(bn * self.block_size as u64);
+
+        let mut data = data.as_ref().to_vec();
+        // cipher.apply_keystream(&mut data);
+
         trace!(
             "Writing {} bytes to block number {} at {}.",
             data.len(),
@@ -152,12 +160,19 @@ impl BlockReader for NetworkStore {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
+        println!("key: {:?}\nnonce: {:?}", self.key, self.nonce);
+
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        cipher.seek(bn * self.block_size as u64);
+
         let mut url = self.url.clone();
         url.set_query(Some(&bn.to_string()));
 
         let mut resp = self.client.get(url.as_str()).send()?;
         let mut data: Vec<u8> = vec![];
         resp.copy_to(&mut data)?;
+
+        // cipher.apply_keystream(&mut data);
 
         Ok(data)
     }
@@ -181,7 +196,8 @@ impl BlockWriter for NetworkWriter {
         cipher.seek(bn * 2048);
 
         let mut data = data.as_ref().to_vec();
-        cipher.apply_keystream(&mut data);
+        // cipher.apply_keystream(&mut data);
+
         trace!(
             "Writing {} bytes to block number {} at {}.",
             data.len(),
@@ -217,6 +233,8 @@ impl BlockReader for NetworkReader {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
+        println!("key: {:?}\nnonce: {:?}", self.key, self.nonce);
+
         let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
         /// FIXME: This should be pulled from the server, but I don't want to implement it, because
         /// I think the server needs to be reimplemented differently.
@@ -228,7 +246,7 @@ impl BlockReader for NetworkReader {
         let mut resp = self.client.get(url.as_str()).send()?;
         let mut data: Vec<u8> = vec![];
         resp.copy_to(&mut data)?;
-        cipher.apply_keystream(&mut data);
+        // cipher.apply_keystream(&mut data);
 
         Ok(data)
     }

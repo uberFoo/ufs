@@ -21,7 +21,7 @@ pub trait BlockStorage: BlockWriter + BlockReader + Send {
 
     /// Commit the block map to storage
     ///
-    fn commit_map(&mut self, key: [u8; 32]);
+    fn commit_map(&mut self);
 
     /// Get an immutable reference to the block map.
     ///

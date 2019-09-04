@@ -165,6 +165,8 @@ fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileStore {
     id: UfsUuid,
+    key: [u8; 32],
+    nonce: Vec<u8>,
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -201,6 +203,8 @@ impl FileStore {
 
         Ok(FileStore {
             id: map.id().clone(),
+            key,
+            nonce: writer.nonce,
             block_size: map.block_size(),
             block_count: map.block_count(),
             root_path,
@@ -264,6 +268,8 @@ impl FileStore {
 
         Ok(FileStore {
             id: metadata.id().clone(),
+            key: reader.key,
+            nonce: reader.nonce,
             block_size: metadata.block_size(),
             block_count: metadata.block_count(),
             root_path,
@@ -334,17 +340,12 @@ impl BlockStorage for FileStore {
         &self.id
     }
 
-    fn commit_map(&mut self, key: [u8; 32]) {
+    fn commit_map(&mut self) {
         debug!("writing BlockMap");
 
-        let mut nonce = Vec::with_capacity(24);
-        /// FIXME: Is this nonce sufficient?
-        nonce.extend_from_slice(&self.id().as_bytes()[..]);
-        nonce.extend_from_slice(&self.id().as_bytes()[0..8]);
-
         let mut writer = FileWriter {
-            key,
-            nonce,
+            key: self.key,
+            nonce: self.nonce.clone(),
             block_size: self.block_size,
             block_count: self.block_count,
             root_path: self.root_path.clone(),
@@ -379,7 +380,11 @@ impl BlockWriter for FileStore {
     where
         D: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        cipher.seek(bn * self.block_size as u64);
+
+        let mut data = data.as_ref().to_vec();
+        cipher.apply_keystream(&mut data);
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -389,7 +394,7 @@ impl BlockWriter for FileStore {
             }
 
             let path = path_for_block(&self.root_path, bn);
-            fs::write(path, data)?;
+            fs::write(path, &data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
@@ -403,10 +408,16 @@ impl BlockReader for FileStore {
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {
+            let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+            cipher.seek(bn * self.block_size as u64);
+
             let path = path_for_block(&self.root_path, bn);
             debug!("reading block from {:?}", path);
             let data = match fs::read(&path) {
-                Ok(data) => data,
+                Ok(mut data) => {
+                    cipher.apply_keystream(&mut data);
+                    data
+                }
                 Err(e) => {
                     error!("error reading file {:?}", path);
                     panic!();
@@ -476,6 +487,12 @@ mod test {
             7a13479a462d71b56c19a74a40b655c58edfe0a188ad2cf46cbf30524f65d423c837dd1ff2bf462ac4198007
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
+        let enciphered = hex!(
+            "6a1a099ad6c2d71922c32c892fe694e47dd60dadde08e5f9393e41f1aa57534f39b72c0d5e08af1c3155564
+            b247499a0327773baa0a4515ee18996b660c7d84b36aaf4d6b585cd0da20e1a383588d8e9040d8748746f121
+            0a73c71107033efab4d23ebc841f3f738dfeaa1192d97ca2b8f7f49d100b8c785d3adb2c1a45d00c7b335c4c
+            6d8296ca9550fe0c01254599bc499b1890cbd63462647bbc1075547011b3bf7"
+        );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
@@ -493,7 +510,7 @@ mod test {
         path.set_extension(BLOCK_EXT);
         assert_eq!(
             fs::read(path).unwrap(),
-            &data[..],
+            &enciphered[..],
             "API write to block, and compare directly"
         );
     }
@@ -507,6 +524,12 @@ mod test {
             7a13479a462d71b56c19a74a40b655c58edfe0a188ad2cf46cbf30524f65d423c837dd1ff2bf462ac4198007
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
+        let enciphered = hex!(
+            "6a1a099ad6c2d71922c32c892fe694e47dd60dadde08e5f9393e41f1aa57534f39b72c0d5e08af1c3155564
+            b247499a0327773baa0a4515ee18996b660c7d84b36aaf4d6b585cd0da20e1a383588d8e9040d8748746f121
+            0a73c71107033efab4d23ebc841f3f738dfeaa1192d97ca2b8f7f49d100b8c785d3adb2c1a45d00c7b335c4c
+            6d8296ca9550fe0c01254599bc499b1890cbd63462647bbc1075547011b3bf7"
+        );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let fs = FileStore::new(
@@ -516,18 +539,16 @@ mod test {
         )
         .unwrap();
 
-        let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
-        expected_block[..data.len()].copy_from_slice(&data[..]);
-
+        // Manually write the block to the file system
         let mut path = PathBuf::from(&test_dir);
         path.push("0");
-        path.push("0");
+        path.push("7");
         path.set_extension(BLOCK_EXT);
-        fs::write(path, &expected_block).unwrap();
+        fs::write(path, &enciphered[..]).unwrap();
 
         assert_eq!(
-            fs.read_block(0).unwrap(),
-            expected_block,
+            fs.read_block(7).unwrap(),
+            &data[..],
             "write directly to block, and compare via the API"
         );
     }
