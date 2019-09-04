@@ -54,7 +54,8 @@ impl BlockStorage for MemoryStore {
     fn id(&self) -> &UfsUuid {
         &self.id
     }
-    fn commit_map(&mut self) {}
+
+    fn commit_map(&mut self, _key: [u8; 32]) {}
 
     fn map(&self) -> &BlockMap {
         &self.map

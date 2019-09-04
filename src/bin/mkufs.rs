@@ -40,12 +40,12 @@ fn main() -> Result<(), failure::Error> {
     };
 
     let map = BlockMap::new(
-        UfsUuid::new_root(opt.bundle_path.as_path().to_str().unwrap().as_bytes()),
+        UfsUuid::new_root(opt.bundle_path.file_name().unwrap().to_str().unwrap()),
         opt.block_size,
         opt.block_count,
     );
 
-    match FileStore::new(&opt.bundle_path, map) {
+    match FileStore::new(&password, &opt.bundle_path, map) {
         Ok(store) => {
             BlockManager::new(password, store);
             println!(

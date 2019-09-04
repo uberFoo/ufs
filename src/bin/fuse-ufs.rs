@@ -88,7 +88,8 @@ fn main() -> Result<(), failure::Error> {
             // We know it's one or the other, so unwrap is ok here.
             match Url::parse(opts.value_of("network").unwrap()) {
                 Ok(url) => {
-                    let ufs = UberFileSystem::new_networked(password, url)?;
+                    let fs_name = url.path_segments().unwrap().last().unwrap();
+                    let ufs = UberFileSystem::new_networked(password, fs_name.to_string(), url)?;
                     let mounter = UfsMounter::new(ufs, port);
                     let ufs_fuse = UberFSFuse::new(mounter);
                     mount(ufs_fuse, &opts.value_of("mnt").unwrap(), &[])?;

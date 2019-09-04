@@ -6,28 +6,39 @@
 //! ## FIXME
 //! * It might be better to build a more shallow directory tree: `root_dir/f0/3d/a2.ufsb`?
 //! * Optionally don't create files for every block.
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
-use failure::format_err;
-use log::{debug, error, trace};
+use {
+    c2_chacha::{
+        stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek},
+        XChaCha20,
+    },
+    failure::format_err,
+    log::{debug, error, trace},
+};
 
 use crate::{
     block::{
         map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
         BlockStorage, BlockWriter,
     },
+    crypto::make_fs_key,
     uuid::UfsUuid,
-};
-
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
 };
 
 const BLOCK_EXT: &str = "ufsb";
 
 /// Internal-only block writing implementation.
 ///
+/// During bootstrapping we do metadata encryption at this level, rather than in the BlockManager.
+/// This is primarily because we don't yet have a BlockManager!
+///
 struct FileWriter {
+    key: [u8; 32],
+    nonce: Vec<u8>,
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -40,7 +51,11 @@ impl BlockWriter for FileWriter {
     where
         T: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        cipher.seek(bn * self.block_size as u64);
+
+        let mut data = data.as_ref().to_vec();
+        cipher.apply_keystream(&mut data);
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -50,7 +65,7 @@ impl BlockWriter for FileWriter {
             }
 
             let path = path_for_block(&self.root_path, bn);
-            fs::write(path, data)?;
+            fs::write(path, &data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
@@ -61,8 +76,37 @@ impl BlockWriter for FileWriter {
 
 /// Internal-only block reading implementation.
 ///
+/// During bootstrapping we do metadata decryption at this level, rather than in the BlockManager.
+/// This is primarily because we don't yet have a BlockManager!
+///
 struct FileReader {
+    key: [u8; 32],
+    nonce: Vec<u8>,
+    block_size: BlockSize,
     root_path: PathBuf,
+}
+
+impl FileReader {
+    pub(crate) fn new<P: AsRef<Path>>(key: [u8; 32], path: P) -> Self {
+        let root_path: PathBuf = path.as_ref().into();
+
+        // Note that the id of the file system is the last element in the path
+        let id = UfsUuid::new_root(root_path.file_name().unwrap().to_str().unwrap());
+        let mut nonce = Vec::with_capacity(24);
+        /// FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&id.as_bytes()[..]);
+        nonce.extend_from_slice(&id.as_bytes()[0..8]);
+
+        // Infer the block size from the size of the 0-block file.
+        let metadata = fs::metadata(path_for_block(&root_path, 0)).unwrap();
+
+        FileReader {
+            key,
+            nonce,
+            block_size: metadata.len().into(),
+            root_path,
+        }
+    }
 }
 
 impl BlockReader for FileReader {
@@ -70,10 +114,16 @@ impl BlockReader for FileReader {
     /// storage. We aren't doing any sanity checking on the block number, or block size, since we
     /// don't yet have that information -- it's stored in the file system we are bootstrapping.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        cipher.seek(bn * self.block_size as u64);
+
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
         let data = match fs::read(&path) {
-            Ok(data) => data,
+            Ok(mut data) => {
+                cipher.apply_keystream(&mut data);
+                data
+            }
             Err(e) => {
                 error!("error reading file {:?}", path);
                 panic!();
@@ -125,14 +175,23 @@ impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub fn new<P>(path: P, mut map: BlockMap) -> Result<Self, failure::Error>
+    pub fn new<S, P>(password: S, path: P, mut map: BlockMap) -> Result<Self, failure::Error>
     where
+        S: AsRef<str>,
         P: AsRef<Path>,
     {
         let root_path: PathBuf = path.as_ref().into();
         FileStore::init(&root_path, map.block_size(), map.block_count())?;
 
+        let key = make_fs_key(password.as_ref(), &map.id());
+        let mut nonce = Vec::with_capacity(24);
+        /// FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&map.id().as_bytes()[..]);
+        nonce.extend_from_slice(&map.id().as_bytes()[0..8]);
+
         let mut writer = FileWriter {
+            key,
+            nonce,
             block_size: map.block_size(),
             block_count: map.block_count(),
             root_path: root_path.clone(),
@@ -152,13 +211,26 @@ impl FileStore {
     /// Consistency Check
     ///
     /// FIXME: Actually check consistency?
-    pub fn check<P>(path: P, show_map: bool) -> Result<(), failure::Error>
+    pub fn check<S, P>(password: S, path: P, show_map: bool) -> Result<(), failure::Error>
     where
+        S: AsRef<str>,
         P: AsRef<Path>,
     {
         println!("Running consistency check on {:?}", path.as_ref());
 
-        let fs = FileStore::load(path)?;
+        let key = make_fs_key(
+            password.as_ref(),
+            &UfsUuid::new_root(
+                path.as_ref()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .as_bytes(),
+            ),
+        );
+
+        let fs = FileStore::load(key, path)?;
         println!("File-based Block Storage:");
         println!("\tID: {}", fs.id);
         println!("\tblock count: {}", fs.block_count);
@@ -180,12 +252,13 @@ impl FileStore {
     /// Construct Existing
     ///
     /// Load an existing file store from disk.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, failure::Error> {
+    pub fn load<P>(key: [u8; 32], path: P) -> Result<Self, failure::Error>
+    where
+        P: AsRef<Path>,
+    {
         let root_path: PathBuf = path.as_ref().into();
 
-        let reader = FileReader {
-            root_path: root_path.clone(),
-        };
+        let reader = FileReader::new(key, &path);
 
         let metadata = BlockMap::deserialize(&reader)?;
 
@@ -261,9 +334,17 @@ impl BlockStorage for FileStore {
         &self.id
     }
 
-    fn commit_map(&mut self) {
+    fn commit_map(&mut self, key: [u8; 32]) {
         debug!("writing BlockMap");
+
+        let mut nonce = Vec::with_capacity(24);
+        /// FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&self.id().as_bytes()[..]);
+        nonce.extend_from_slice(&self.id().as_bytes()[0..8]);
+
         let mut writer = FileWriter {
+            key,
+            nonce,
             block_size: self.block_size,
             block_count: self.block_count,
             root_path: self.root_path.clone(),
@@ -356,6 +437,7 @@ mod test {
         let data = [0x0; BlockSize::FiveTwelve as usize];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3),
         )
@@ -377,6 +459,7 @@ mod test {
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
@@ -396,6 +479,7 @@ mod test {
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
@@ -426,6 +510,7 @@ mod test {
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let fs = FileStore::new(
+            "foobar",
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
         )
@@ -452,6 +537,7 @@ mod test {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let fs = FileStore::new(
+            "foobar",
             &test_dir,
             BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4),
         )

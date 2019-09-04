@@ -142,7 +142,7 @@ mod test {
     fn connect() -> Box<TcpStream> {
         init();
 
-        let ufs = UberFileSystem::new_memory("foobar", BlockSize::TwentyFortyEight, 100);
+        let ufs = UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
         let mounter = UfsMounter::new(ufs, Some(8787));
         let mut stream = TcpStream::connect("127.0.0.1:8787").unwrap();
         Box::new(stream)

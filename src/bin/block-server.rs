@@ -18,7 +18,7 @@ use hyper::{
 use log::{debug, error, info, trace};
 use pretty_env_logger;
 
-use ufs::{BlockNumber, BlockReader, BlockWriter, FileStore};
+use ufs::{make_fs_key, BlockNumber, BlockReader, BlockWriter, FileStore, UfsUuid};
 
 // Just a simple type alias
 type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
@@ -37,8 +37,18 @@ fn get_store(
         let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
         let bundle_path = bundle_root.join(bundle);
 
+        /// FIXME: This doesn't allow for running the server as a daemon, i.e., it requires a TTY,
+        /// and someone to type the password.
+        let password = rpassword::read_password_from_tty(Some(&format!(
+            "password for {}: ",
+            path.to_str().unwrap()
+        )))
+        .unwrap();
+
+        let key = make_fs_key(&password, &UfsUuid::new_root(bundle));
+
         let store = store_map.entry(bundle.to_string()).or_insert_with(|| {
-            match FileStore::load(bundle_path.clone()) {
+            match FileStore::load(key, bundle_path.clone()) {
                 Ok(bs) => {
                     debug!("loaded file store {:?}", bundle_path);
                     Some(bs)

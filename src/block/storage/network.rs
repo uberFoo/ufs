@@ -2,9 +2,15 @@
 //!
 //! This is how we fetch blocks from the network.
 //!
-use failure::format_err;
-use log::{debug, error, trace};
-use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
+use {
+    c2_chacha::{
+        stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek},
+        XChaCha20,
+    },
+    failure::format_err,
+    log::{debug, error, trace},
+    reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url},
+};
 
 use crate::{
     block::{
@@ -26,16 +32,31 @@ pub struct NetworkStore {
 }
 
 impl NetworkStore {
-    pub fn new<U: IntoUrl>(url: U) -> Result<Self, failure::Error> {
+    pub fn new<S, U>(key: [u8; 32], name: S, url: U) -> Result<Self, failure::Error>
+    where
+        S: AsRef<str>,
+        U: IntoUrl,
+    {
         match url.into_url() {
-            Ok(url) => {
+            Ok(u) => {
+                let url = u.join(name.as_ref())?;
                 let client = Client::builder().gzip(true).build()?;
 
-                let reader = NetworkReader {
+                // Note that the id of the file system is the last element in the path
+                let id = UfsUuid::new_root(name.as_ref());
+                let mut nonce = Vec::with_capacity(24);
+                /// FIXME: Is this nonce sufficient?
+                nonce.extend_from_slice(&id.as_bytes()[..]);
+                nonce.extend_from_slice(&id.as_bytes()[0..8]);
+
+                let mut reader = NetworkReader {
+                    key,
+                    nonce,
                     url: url.clone(),
                     client: client.clone(),
                 };
-                let metadata = BlockMap::deserialize(&reader)?;
+
+                let metadata = BlockMap::deserialize(&mut reader)?;
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
@@ -55,9 +76,18 @@ impl BlockStorage for NetworkStore {
     fn id(&self) -> &UfsUuid {
         &self.id
     }
-    fn commit_map(&mut self) {
+
+    fn commit_map(&mut self, key: [u8; 32]) {
         debug!("writing BlockMap");
+
+        let mut nonce = Vec::with_capacity(24);
+        /// FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&self.id().as_bytes()[..]);
+        nonce.extend_from_slice(&self.id().as_bytes()[0..8]);
+
         let mut writer = NetworkWriter {
+            key,
+            nonce,
             url: self.url.clone(),
             client: self.client.clone(),
         };
@@ -134,6 +164,8 @@ impl BlockReader for NetworkStore {
 }
 
 struct NetworkWriter {
+    key: [u8; 32],
+    nonce: Vec<u8>,
     url: Url,
     client: Client,
 }
@@ -143,7 +175,13 @@ impl BlockWriter for NetworkWriter {
     where
         T: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        /// FIXME: This should be pulled from the server, but I don't want to implement it, because
+        /// I think the server needs to be reimplemented differently.
+        cipher.seek(bn * 2048);
+
+        let mut data = data.as_ref().to_vec();
+        cipher.apply_keystream(&mut data);
         trace!(
             "Writing {} bytes to block number {} at {}.",
             data.len(),
@@ -161,8 +199,6 @@ impl BlockWriter for NetworkWriter {
             .body(data.to_vec())
             .send()?;
 
-        // debug!("block: {}, bytes:\n{:?}", bn, data);
-
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
             Err(e) => Err(format_err!("Could not parse result as BlockSize: {}", e)),
@@ -171,6 +207,8 @@ impl BlockWriter for NetworkWriter {
 }
 
 struct NetworkReader {
+    key: [u8; 32],
+    nonce: Vec<u8>,
     url: Url,
     client: Client,
 }
@@ -179,12 +217,18 @@ impl BlockReader for NetworkReader {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
+        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
+        /// FIXME: This should be pulled from the server, but I don't want to implement it, because
+        /// I think the server needs to be reimplemented differently.
+        cipher.seek(bn * 2048);
+
         let mut url = self.url.clone();
         url.set_query(Some(&bn.to_string()));
 
         let mut resp = self.client.get(url.as_str()).send()?;
         let mut data: Vec<u8> = vec![];
         resp.copy_to(&mut data)?;
+        cipher.apply_keystream(&mut data);
 
         Ok(data)
     }
@@ -194,9 +238,12 @@ impl BlockReader for NetworkReader {
 mod test {
     use super::*;
 
+    use crate::crypto::make_fs_key;
+
     #[test]
     fn read_and_write_block() {
-        let mut bs = NetworkStore::new("http://localhost:8888/test").unwrap();
+        let key = make_fs_key("", &UfsUuid::new_root("test"));
+        let mut bs = NetworkStore::new(key, "test", "http://localhost:8888").unwrap();
         let block_number = 88;
         let expected = r#"ion<BlockCardinality>,
    pub directory: HashMap<String, Block>,

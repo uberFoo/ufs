@@ -113,6 +113,7 @@
 //!
 
 mod block;
+mod crypto;
 #[cfg(not(target_arch = "wasm32"))]
 mod fsimpl;
 mod fsops;
@@ -132,6 +133,7 @@ pub use block::{
     manager::BlockManager, map::BlockMap, BlockAddress, BlockCardinality, BlockNumber, BlockReader,
     BlockSize, BlockStorage, BlockWriter, FileStore,
 };
+pub use crypto::make_fs_key;
 #[cfg(not(target_arch = "wasm32"))]
 pub use fsimpl::{OpenFileMode, UberFileSystem, UfsMounter};
 

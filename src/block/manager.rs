@@ -17,6 +17,7 @@ use crate::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
+    crypto::make_fs_key,
     metadata::Metadata,
     uuid::UfsUuid,
 };
@@ -48,12 +49,6 @@ where
     key: [u8; 32],
 }
 
-fn make_fs_key(password: &str, id: &UfsUuid) -> [u8; 32] {
-    let mut key = [0; 32];
-    pbkdf2::pbkdf2::<Hmac<Sha256>>(password.as_bytes(), id.as_bytes(), 88, &mut key);
-    key
-}
-
 impl<'a, BS> BlockManager<BS>
 where
     BS: BlockStorage,
@@ -71,7 +66,7 @@ where
     /// Load an existing BlockManager, using metadata from an existing BlockStorage
     ///
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load<S: AsRef<str>>(password: S, mut store: BS) -> Result<Self, failure::Error> {
+    pub(crate) fn load(key: [u8; 32], mut store: BS) -> Result<Self, failure::Error> {
         match store.map().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
@@ -82,7 +77,7 @@ where
                         Ok(BlockManager {
                             id: store.id().clone(),
                             metadata,
-                            key: make_fs_key(password.as_ref(), &store.id()),
+                            key,
                             store,
                         })
                     }
@@ -151,7 +146,7 @@ where
             match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
                     self.store.map_mut().set_root_block(block);
-                    self.store.commit_map();
+                    self.store.commit_map(self.key);
                     debug!("Stored new root block {}", block);
                 }
                 Err(e) => {
@@ -308,7 +303,7 @@ mod test {
         let hash = block.hash.unwrap();
         assert_eq!(
             hash.as_ref(),
-            hex!("fb070c9a1aae25f61f93d7b158962852565620d3c97ec0f8c1a69286fd617496"),
+            hex!("c9775b434c391333e0c86eb0842fe3a85826983dace40ca589e44113784b0889"),
             "validate hash"
         );
 
