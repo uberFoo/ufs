@@ -22,7 +22,7 @@ struct Opt {
     /// Number of blocks
     #[structopt(short = "c", long = "block-count", default_value = "256")]
     block_count: BlockCardinality,
-    /// Master file system password
+    /// File system master password
     #[structopt(short = "p", long = "password")]
     password: Option<String>,
 }
@@ -36,7 +36,13 @@ fn main() -> Result<(), failure::Error> {
     let password = if let Some(password) = opt.password {
         password
     } else {
-        rpassword::read_password_from_tty(Some("password: ")).unwrap()
+        let p = rpassword::read_password_from_tty(Some("master password: ")).unwrap();
+        let c = rpassword::read_password_from_tty(Some("reenter master password: ")).unwrap();
+        if p == c {
+            p
+        } else {
+            panic!("passwords do not match");
+        }
     };
 
     let map = BlockMap::new(

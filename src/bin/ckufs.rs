@@ -19,7 +19,7 @@ struct Opt {
     /// Display verbose BlockMap information
     #[structopt(short = "v", long = "verbose")]
     show_map: bool,
-    /// Master file system password
+    /// File system master password
     #[structopt(short = "p", long = "password")]
     password: Option<String>,
 }
@@ -33,7 +33,7 @@ fn main() -> Result<(), failure::Error> {
     let password = if let Some(password) = opt.password {
         password
     } else {
-        rpassword::read_password_from_tty(Some("password: ")).unwrap()
+        rpassword::read_password_from_tty(Some("master password: ")).unwrap()
     };
 
     FileStore::check(password, &opt.bundle_path, opt.show_map)

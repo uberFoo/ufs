@@ -68,7 +68,7 @@ fn main() -> Result<(), failure::Error> {
     let password = if let Some(password) = opts.value_of("password") {
         password.to_owned()
     } else {
-        rpassword::read_password_from_tty(Some("password: ")).unwrap()
+        rpassword::read_password_from_tty(Some("master password: ")).unwrap()
     };
 
     match opts.value_of("bundle") {

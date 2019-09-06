@@ -58,7 +58,7 @@ impl BlockStores {
                 // FIXME: This doesn't allow for running the server as a daemon, i.e., it requires a
                 // TTY, and someone to type the password.
                 let password = rpassword::read_password_from_tty(Some(&format!(
-                    "password for {}: ",
+                    "master password for {}: ",
                     path.to_str().unwrap()
                 )))
                 .unwrap();
