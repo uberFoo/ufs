@@ -37,7 +37,7 @@ fn main() -> Result<(), failure::Error> {
         password
     } else {
         let p = rpassword::read_password_from_tty(Some("master password: ")).unwrap();
-        let c = rpassword::read_password_from_tty(Some("reenter master password: ")).unwrap();
+        let c = rpassword::read_password_from_tty(Some("re-enter master password: ")).unwrap();
         if p == c {
             p
         } else {
