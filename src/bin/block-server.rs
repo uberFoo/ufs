@@ -31,7 +31,7 @@ use ufs::{make_fs_key, BlockNumber, BlockReader, BlockWriter, FileStore, UfsUuid
 type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
 struct BlockStores {
-    inner: HashMap<String, Option<FileStore>>,
+    inner: HashMap<String, FileStore>,
     bundle_root: PathBuf,
 }
 
@@ -40,6 +40,32 @@ impl BlockStores {
         BlockStores {
             inner: HashMap::new(),
             bundle_root,
+        }
+    }
+
+    fn open_store(bundle_path: PathBuf) -> Option<FileStore> {
+        let fs_name = bundle_path.file_name().unwrap().to_str().unwrap();
+
+        // FIXME: This doesn't allow for running the server as a daemon, i.e., it requires a
+        // TTY, and someone to type the password.
+        let password =
+            rpassword::read_password_from_tty(Some(&format!("master password for {}: ", fs_name)))
+                .unwrap();
+
+        let key = make_fs_key(&password, &UfsUuid::new_root(fs_name));
+
+        match FileStore::load(key, bundle_path.clone()) {
+            Ok(bs) => {
+                debug!("loaded file store {:?}", bundle_path);
+                Some(bs)
+            }
+            Err(e) => {
+                error!(
+                    "Unable to open File Store {}. Possibly invalid password.",
+                    bundle_path.to_str().unwrap(),
+                );
+                None
+            }
         }
     }
 
@@ -54,35 +80,15 @@ impl BlockStores {
             let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
             let bundle_path = self.bundle_root.join(bundle);
 
-            let store = self.inner.entry(bundle.to_string()).or_insert_with(|| {
-                // FIXME: This doesn't allow for running the server as a daemon, i.e., it requires a
-                // TTY, and someone to type the password.
-                let password = rpassword::read_password_from_tty(Some(&format!(
-                    "master password for {}: ",
-                    path.to_str().unwrap()
-                )))
-                .unwrap();
-
-                let key = make_fs_key(&password, &UfsUuid::new_root(bundle));
-                match FileStore::load(key, bundle_path.clone()) {
-                    Ok(bs) => {
-                        debug!("loaded file store {:?}", bundle_path);
-                        Some(bs)
-                    }
-                    Err(e) => {
-                        error!(
-                            "Unable to open File Store {}: {}",
-                            bundle_path.to_str().unwrap(),
-                            e
-                        );
-                        None
-                    }
-                }
-            });
-
-            match store {
+            match self.inner.get(bundle) {
                 Some(store) => Some((bundle.to_string(), store.clone())),
-                None => None,
+                None => match BlockStores::open_store(bundle_path) {
+                    Some(store) => {
+                        let store = self.inner.entry(bundle.to_owned()).or_insert(store);
+                        Some((bundle.to_string(), store.clone()))
+                    }
+                    None => None,
+                },
             }
         }
     }
@@ -113,9 +119,9 @@ fn block_manager(req: Request<Body>, store_map: &Arc<RwLock<BlockStores>>) -> Bo
                             CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        response
-                            .headers_mut()
-                            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+                        // response
+                        //     .headers_mut()
+                        //     .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                         *response.body_mut() = Body::from(data);
                         *response.status_mut() = StatusCode::OK;
                     } else {
