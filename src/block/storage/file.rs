@@ -235,6 +235,7 @@ impl FileStore {
         );
 
         let fs = FileStore::load(key, path)?;
+
         println!("File-based Block Storage:");
         println!("\tID: {}", fs.id);
         println!("\tblock count: {}", fs.block_count);
