@@ -264,7 +264,13 @@ impl FileStore {
 
         let reader = FileReader::new(key, &path);
 
-        let metadata = BlockMap::deserialize(&reader)?;
+        let metadata = match BlockMap::deserialize(&reader) {
+            Ok(metadata) => metadata,
+            Err(e) => panic!(
+                "Unable to load metadata -- possibly incorrect password?\nError: {}",
+                e
+            ),
+        };
 
         Ok(FileStore {
             id: metadata.id().clone(),
