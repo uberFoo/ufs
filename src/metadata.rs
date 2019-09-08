@@ -20,6 +20,7 @@ use serde_derive::{Deserialize, Serialize};
 
 pub(crate) mod dir;
 pub(crate) mod file;
+pub(crate) mod user;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::uuid::UfsUuid;
@@ -34,6 +35,8 @@ pub(crate) use dir::DirectoryMetadata;
 pub(crate) use dir::WASM_EXT;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use file::{FileMetadata, FileVersion};
+
+pub(crate) use user::UserMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::block::{
@@ -185,6 +188,9 @@ pub(crate) struct Metadata {
     /// The Root Directory
     ///
     root_directory: DirectoryMetadata,
+    /// File system user information
+    ///
+    users: UserMetadata,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -198,7 +204,24 @@ impl Metadata {
             dirty: true,
             id: file_system_id.clone(),
             root_directory: DirectoryMetadata::new(file_system_id.new("/"), None),
+            users: UserMetadata::new(),
         }
+    }
+
+    /// Create a new user
+    ///
+    pub(crate) fn add_user(&mut self, user: String, password: String) {
+        debug!("-------");
+        debug!("`new_user`: {}", user);
+
+        self.dirty = true;
+        self.users.new_user(user, password);
+    }
+
+    /// Return a list of existing users
+    ///
+    pub(crate) fn get_users(&self) -> Vec<String> {
+        self.users.get_users()
     }
 
     /// Create a new directory
@@ -658,7 +681,7 @@ pub mod test {
     fn new_metadata() {
         init();
 
-        let m = Metadata::new(UfsUuid::new_root("test"));
+        let m = Metadata::new(UfsUuid::new_root_fs("test"));
         let root = m.root_directory();
 
         assert_eq!(m.is_dirty(), true);
@@ -670,7 +693,7 @@ pub mod test {
     fn new_directory() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"));
         let root_id = m.root_directory().id();
         let d = m.new_directory(root_id, "test").unwrap();
         let d2 = m.new_directory(d.id(), "test2").unwrap();
@@ -683,7 +706,7 @@ pub mod test {
     fn id_for_path() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"));
         let root_id = m.root_directory().id();
         let dir = m.new_directory(root_id, "foo").unwrap();
         let wasm = dir.entries().get(".wasm").unwrap();
@@ -716,7 +739,7 @@ pub mod test {
     fn path_for_id() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"));
         let root_id = m.root_directory().id();
         let dir = m.new_directory(root_id, "foo").unwrap();
         let wasm = dir.entries().get(".wasm").unwrap();

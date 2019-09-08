@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    io::{self, Write},
+};
 
 use ::fuse::mount;
 use clap::{App, AppSettings, Arg};
@@ -65,16 +68,22 @@ fn main() -> Result<(), failure::Error> {
         None
     };
 
-    let password = if let Some(password) = opts.value_of("password") {
-        password.to_owned()
-    } else {
-        rpassword::read_password_from_tty(Some("master password: ")).unwrap()
-    };
-
     match opts.value_of("bundle") {
         Some(path) => match fs::read_dir(&path) {
             Ok(_) => {
-                let ufs = UberFileSystem::load_file_backed(password, &path)?;
+                let master_password = if let Some(password) = opts.value_of("password") {
+                    password.to_owned()
+                } else {
+                    rpassword::read_password_from_tty(Some("master password: ")).unwrap()
+                };
+
+                io::stdout().write_all(b"user: ");
+                io::stdout().flush();
+                let mut user = String::new();
+                io::stdin().read_line(&mut user);
+                let password = rpassword::read_password_from_tty(Some("password: ")).unwrap();
+
+                let ufs = UberFileSystem::load_file_backed(master_password, &path)?;
                 let mounter = UfsMounter::new(ufs, port);
                 let ufs_fuse = UberFSFuse::new(mounter);
                 mount(ufs_fuse, &opts.value_of("mnt").unwrap(), &[])?;
@@ -88,6 +97,12 @@ fn main() -> Result<(), failure::Error> {
             // We know it's one or the other, so unwrap is ok here.
             match Url::parse(opts.value_of("network").unwrap()) {
                 Ok(url) => {
+                    io::stdout().write_all(b"user: ");
+                    io::stdout().flush();
+                    let mut user = String::new();
+                    io::stdin().read_line(&mut user);
+                    let password = rpassword::read_password_from_tty(Some("password: ")).unwrap();
+
                     let fs_name = url.path_segments().unwrap().last().unwrap();
                     let ufs = UberFileSystem::new_networked(password, fs_name.to_string(), url)?;
                     let mounter = UfsMounter::new(ufs, port);

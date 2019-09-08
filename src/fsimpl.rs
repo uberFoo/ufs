@@ -262,7 +262,7 @@ impl UberFileSystem<MemoryStore> {
         size: BlockSize,
         count: BlockCardinality,
     ) -> Self {
-        let id = UfsUuid::new_root(name.as_ref());
+        let id = UfsUuid::new_root_fs(name.as_ref());
 
         let mem_store = MemoryStore::new(BlockMap::new(id, size, count));
         let block_manager = BlockManager::new(password.as_ref(), mem_store);
@@ -289,7 +289,7 @@ impl UberFileSystem<FileStore> {
     {
         let key = make_fs_key(
             password.as_ref(),
-            &UfsUuid::new_root(
+            &UfsUuid::new_root_fs(
                 path.as_ref()
                     .file_name()
                     .unwrap()
@@ -319,7 +319,7 @@ impl UberFileSystem<NetworkStore> {
         S: AsRef<str>,
         U: IntoUrl,
     {
-        let key = make_fs_key(password.as_ref(), &UfsUuid::new_root(name.as_ref()));
+        let key = make_fs_key(password.as_ref(), &UfsUuid::new_root_fs(name.as_ref()));
         let net_store = NetworkStore::new(key, name, url)?;
         let block_manager = BlockManager::load(key, net_store)?;
 
@@ -336,10 +336,22 @@ impl UberFileSystem<NetworkStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
+    /// Add a user to the file system
+    pub fn add_user(&mut self, user: String, password: String) {
+        self.block_manager.metadata_mut().add_user(user, password);
+    }
+
+    /// Get a list of existing users
+    pub fn get_users(&self) -> Vec<String> {
+        self.block_manager.metadata().get_users()
+    }
+
+    /// This is used by the fuse implementation as an inode ID.
     pub(crate) fn get_root_directory_id(&self) -> UfsUuid {
         self.block_manager.metadata().root_directory().id()
     }
 
+    /// Send a message to all listening WASM programs.
     fn notify_listeners(&self, msg: UfsMessage) {
         for (_, listener) in &self.listeners {
             match listener.send(msg.clone()) {
