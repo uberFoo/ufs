@@ -145,7 +145,7 @@ impl<B: BlockStorage> UberFSFuse<B> {
                 0,
                 Inode::Dir(DirInode {
                     number: 0,
-                    id: UfsUuid::new_root("hack"),
+                    id: UfsUuid::new_root_fs("hack"),
                     time: TIME,
                     files: HashMap::new(),
                     perm: 0o755,

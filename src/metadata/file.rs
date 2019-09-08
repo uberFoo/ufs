@@ -68,7 +68,7 @@ impl FileMetadata {
         let mut versions = HashMap::new();
         let id = v.file_id.clone();
         // FIXME
-        let parent = UfsUuid::new_root("fix me");
+        let parent = UfsUuid::new_root_fs("fix me");
         versions.insert(0, v);
         FileMetadata {
             id,
@@ -312,7 +312,7 @@ mod test {
 
     #[test]
     fn nonce() {
-        let root = UfsUuid::new_root("test");
+        let root = UfsUuid::new_root_fs("test");
         let id = root.new("test_file"); // a506eaa8-7236-53f9-a7ed-9002fdc6a5b9
         let did = root.new("test_dir");
         let vid = root.new("test_version"); // 2397b0a7-2f31-5d27-9a37-795d05d1ab8b

@@ -45,13 +45,11 @@ impl NetworkStore {
                 let client = Client::builder().gzip(true).build()?;
 
                 // Note that the id of the file system is the last element in the path
-                let id = UfsUuid::new_root(name.as_ref());
+                let id = UfsUuid::new_root_fs(name.as_ref());
                 let mut nonce = Vec::with_capacity(24);
                 /// FIXME: Is this nonce sufficient?
                 nonce.extend_from_slice(&id.as_bytes()[..]);
                 nonce.extend_from_slice(&id.as_bytes()[0..8]);
-
-                println!("key: {:?}\nnonce: {:?}", key, nonce);
 
                 let mut reader = NetworkReader {
                     key,
@@ -60,9 +58,7 @@ impl NetworkStore {
                     client: client.clone(),
                 };
 
-                println!("foo");
                 let metadata = BlockMap::deserialize(&mut reader)?;
-                println!("bar");
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
@@ -124,11 +120,7 @@ impl BlockWriter for NetworkStore {
     where
         T: AsRef<[u8]>,
     {
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        cipher.seek(bn * self.block_size as u64);
-
         let mut data = data.as_ref().to_vec();
-        // cipher.apply_keystream(&mut data);
 
         trace!(
             "Writing {} bytes to block number {} at {}.",
@@ -147,8 +139,6 @@ impl BlockWriter for NetworkStore {
             .body(data.to_vec())
             .send()?;
 
-        // debug!("block: {}, bytes:\n{:?}", bn, data);
-
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
             Err(e) => Err(format_err!("Could not parse result as BlockSize: {}", e)),
@@ -160,19 +150,12 @@ impl BlockReader for NetworkStore {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
-        println!("key: {:?}\nnonce: {:?}", self.key, self.nonce);
-
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        cipher.seek(bn * self.block_size as u64);
-
         let mut url = self.url.clone();
         url.set_query(Some(&bn.to_string()));
 
         let mut resp = self.client.get(url.as_str()).send()?;
         let mut data: Vec<u8> = vec![];
         resp.copy_to(&mut data)?;
-
-        // cipher.apply_keystream(&mut data);
 
         Ok(data)
     }
@@ -190,13 +173,7 @@ impl BlockWriter for NetworkWriter {
     where
         T: AsRef<[u8]>,
     {
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        /// FIXME: This should be pulled from the server, but I don't want to implement it, because
-        /// I think the server needs to be reimplemented differently.
-        cipher.seek(bn * 2048);
-
         let mut data = data.as_ref().to_vec();
-        // cipher.apply_keystream(&mut data);
 
         trace!(
             "Writing {} bytes to block number {} at {}.",
@@ -233,20 +210,12 @@ impl BlockReader for NetworkReader {
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         trace!("Reading block number {} from {}.", bn, &self.url.as_str());
 
-        println!("key: {:?}\nnonce: {:?}", self.key, self.nonce);
-
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        /// FIXME: This should be pulled from the server, but I don't want to implement it, because
-        /// I think the server needs to be reimplemented differently.
-        cipher.seek(bn * 2048);
-
         let mut url = self.url.clone();
         url.set_query(Some(&bn.to_string()));
 
         let mut resp = self.client.get(url.as_str()).send()?;
         let mut data: Vec<u8> = vec![];
         resp.copy_to(&mut data)?;
-        // cipher.apply_keystream(&mut data);
 
         Ok(data)
     }
@@ -260,7 +229,7 @@ mod test {
 
     #[test]
     fn read_and_write_block() {
-        let key = make_fs_key("", &UfsUuid::new_root("test"));
+        let key = make_fs_key("", &UfsUuid::new_root_fs("test"));
         let mut bs = NetworkStore::new(key, "test", "http://localhost:8888").unwrap();
         let block_number = 88;
         let expected = r#"ion<BlockCardinality>,

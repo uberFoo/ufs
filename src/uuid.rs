@@ -11,7 +11,8 @@ lazy_static! {
 /// The UUID to rule them all
 ///
 /// This is the main V5 uuid namespace from which all UUIDs in ufs are derived.
-static ref ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"uberfoo.com");
+static ref FS_ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"uberfoo.com");
+static ref USER_ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"user.uberfoo.com");
 }
 
 /// uberFS unique ID
@@ -26,15 +27,27 @@ pub struct UfsUuid {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl UfsUuid {
-    /// Create a new UfsUuid
+    /// Create a new file system UfsUuid
     ///
-    /// The UUID is generated based on the UFS UUID ROOT, and the supplied name.
-    pub fn new_root<N>(name: N) -> Self
+    /// The UUID is generated based on the UFS FS ROOT UUID, and the supplied name.
+    pub fn new_root_fs<N>(name: N) -> Self
     where
         N: AsRef<[u8]>,
     {
         UfsUuid {
-            inner: Uuid::new_v5(&ROOT_UUID, name.as_ref()),
+            inner: Uuid::new_v5(&FS_ROOT_UUID, name.as_ref()),
+        }
+    }
+
+    /// Create a new user UfsUuid
+    ///
+    /// The UUID is generated based on the UFS USER ROOT UUID, and the supplied name.
+    pub fn new_user<N>(name: N) -> Self
+    where
+        N: AsRef<[u8]>,
+    {
+        UfsUuid {
+            inner: Uuid::new_v5(&USER_ROOT_UUID, name.as_ref()),
         }
     }
 

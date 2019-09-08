@@ -37,7 +37,7 @@ fn main() -> Result<(), failure::Error> {
         password
     } else {
         let p = rpassword::read_password_from_tty(Some("master password: ")).unwrap();
-        let c = rpassword::read_password_from_tty(Some("re-enter master password: ")).unwrap();
+        let c = rpassword::read_password_from_tty(Some("confirm master password: ")).unwrap();
         if p == c {
             p
         } else {
@@ -46,7 +46,7 @@ fn main() -> Result<(), failure::Error> {
     };
 
     let map = BlockMap::new(
-        UfsUuid::new_root(opt.bundle_path.file_name().unwrap().to_str().unwrap()),
+        UfsUuid::new_root_fs(opt.bundle_path.file_name().unwrap().to_str().unwrap()),
         opt.block_size,
         opt.block_count,
     );

@@ -52,7 +52,7 @@ impl BlockStores {
             rpassword::read_password_from_tty(Some(&format!("master password for {}: ", fs_name)))
                 .unwrap();
 
-        let key = make_fs_key(&password, &UfsUuid::new_root(fs_name));
+        let key = make_fs_key(&password, &UfsUuid::new_root_fs(fs_name));
 
         match FileStore::load(key, bundle_path.clone()) {
             Ok(bs) => {

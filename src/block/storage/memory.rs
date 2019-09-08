@@ -125,7 +125,7 @@ mod test {
 
     #[test]
     fn bad_block_number() {
-        let map = BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3);
+        let map = BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3);
         let mut ms = MemoryStore::new(map);
         let data = [0x0; BlockSize::FiveTwelve as usize];
 
@@ -141,7 +141,7 @@ mod test {
 
     #[test]
     fn block_too_bukoo() {
-        let map = BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3);
+        let map = BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3);
         let mut ms = MemoryStore::new(map);
         let data = [0x0; BlockSize::FiveTwelve as usize + 1];
         assert_eq!(ms.write_block(1, &data[..]).is_err(), true);
@@ -149,7 +149,7 @@ mod test {
 
     #[test]
     fn write_block() {
-        let map = BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3);
+        let map = BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3);
         let mut ms = MemoryStore::new(map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
@@ -172,7 +172,7 @@ mod test {
 
     #[test]
     fn read_block() {
-        let map = BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3);
+        let map = BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3);
         let mut ms = MemoryStore::new(map);
         let data = hex!(
             "451101250ec6f26652249d59dc974b7361d571a8101cdfd36aba3b5854d3ae086b5fdd4597721b66e3c0dc5
@@ -195,7 +195,7 @@ mod test {
 
     #[test]
     fn construction_sanity() {
-        let map = BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4);
+        let map = BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 4);
         let ms = MemoryStore::new(map);
         assert_eq!(
             ms.block_size() as usize,

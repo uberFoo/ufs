@@ -344,7 +344,7 @@ mod test {
     #[test]
     fn one_block_simple() {
         init();
-        let id = UfsUuid::new_root("test");
+        let id = UfsUuid::new_root_fs("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 10);
 
         // This is ugly, but ok for testing I think.
@@ -370,7 +370,7 @@ mod test {
     #[test]
     fn not_enough_blocks() {
         init();
-        let id = UfsUuid::new_root("test");
+        let id = UfsUuid::new_root_fs("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
         for _ in 1..100 {
@@ -384,7 +384,7 @@ mod test {
     #[test]
     fn test_large_blocks() {
         init();
-        let id = UfsUuid::new_root("test");
+        let id = UfsUuid::new_root_fs("test");
         let mut map = BlockMap::new(id, BlockSize::TwentyFortyEight, 100);
 
         // This tests that we skip data blocks.
@@ -427,7 +427,7 @@ mod test {
     #[test]
     fn test_allocate_more_blocks_complex() {
         init();
-        let id = UfsUuid::new_root("test");
+        let id = UfsUuid::new_root_fs("test");
         let mut map = BlockMap::new(id, BlockSize::FiveTwelve, 100);
 
         // This tests that we skip data blocks.
