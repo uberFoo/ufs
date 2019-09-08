@@ -3,21 +3,19 @@
 //! High level access to block storage.  The block manager checks block hash consistency, handles
 //! encryption, etc.  It also contains the `BlockMap` and handles directory and file metadata.
 
-use c2_chacha::{
-    stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek},
-    XChaCha20,
+use {
+    failure::format_err,
+    hmac::Hmac,
+    log::{debug, error},
+    sha2::Sha256,
 };
-use failure::format_err;
-use hmac::Hmac;
-use log::{debug, error};
-use sha2::Sha256;
 
 use crate::{
     block::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
-    crypto::make_fs_key,
+    crypto::{decrypt, encrypt, make_fs_key},
     metadata::Metadata,
     uuid::UfsUuid,
 };
@@ -169,12 +167,9 @@ where
     ) -> Result<&Block, failure::Error> {
         let data = data.as_ref();
         if let Some(number) = self.get_free_block() {
-            let mut cipher = XChaCha20::new_var(&self.key, &nonce).unwrap();
-            cipher.seek(offset);
-
             let end = data.len().min(self.store.block_size() as usize);
             let mut bytes = data[..end].to_vec();
-            cipher.apply_keystream(&mut bytes);
+            encrypt(&self.key, &nonce, offset, &mut bytes);
 
             let byte_count = self.store.write_block(number, &bytes)?;
             debug!("wrote block 0x{:x?}", number);
@@ -212,15 +207,12 @@ where
             block_type: _,
         } = block
         {
-            let mut cipher = XChaCha20::new_var(&self.key, &nonce).unwrap();
-            cipher.seek(offset);
-
             let mut bytes = self.store.read_block(*block_number)?;
 
             let hash = BlockHash::new(&bytes);
             if hash == *block_hash {
                 debug!("read block 0x{:x?}", *block_number);
-                cipher.apply_keystream(&mut bytes);
+                decrypt(&self.key, &nonce, offset, &mut bytes);
                 Ok(bytes)
             } else {
                 Err(format_err!(
@@ -271,7 +263,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 1,
             )),
@@ -290,7 +282,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 2,
             )),
@@ -319,7 +311,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 2,
             )),
@@ -343,7 +335,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 3,
             )),
@@ -367,7 +359,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 2,
             )),
@@ -389,7 +381,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 10,
             )),
@@ -417,7 +409,7 @@ mod test {
         let mut bm = BlockManager::new(
             "foobar",
             MemoryStore::new(BlockMap::new(
-                UfsUuid::new_root("test"),
+                UfsUuid::new_root_fs("test"),
                 BlockSize::FiveTwelve,
                 10,
             )),

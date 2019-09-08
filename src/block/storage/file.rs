@@ -12,10 +12,6 @@ use std::{
 };
 
 use {
-    c2_chacha::{
-        stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek},
-        XChaCha20,
-    },
     failure::format_err,
     log::{debug, error, trace},
 };
@@ -25,7 +21,7 @@ use crate::{
         map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
         BlockStorage, BlockWriter,
     },
-    crypto::make_fs_key,
+    crypto::{decrypt, encrypt, make_fs_key},
     uuid::UfsUuid,
 };
 
@@ -51,11 +47,13 @@ impl BlockWriter for FileWriter {
     where
         T: AsRef<[u8]>,
     {
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        cipher.seek(bn * self.block_size as u64);
-
         let mut data = data.as_ref().to_vec();
-        cipher.apply_keystream(&mut data);
+        encrypt(
+            &self.key,
+            &self.nonce,
+            bn * self.block_size as u64,
+            &mut data,
+        );
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -91,7 +89,7 @@ impl FileReader {
         let root_path: PathBuf = path.as_ref().into();
 
         // Note that the id of the file system is the last element in the path
-        let id = UfsUuid::new_root(root_path.file_name().unwrap().to_str().unwrap());
+        let id = UfsUuid::new_root_fs(root_path.file_name().unwrap().to_str().unwrap());
         let mut nonce = Vec::with_capacity(24);
         /// FIXME: Is this nonce sufficient?
         nonce.extend_from_slice(&id.as_bytes()[..]);
@@ -114,14 +112,16 @@ impl BlockReader for FileReader {
     /// storage. We aren't doing any sanity checking on the block number, or block size, since we
     /// don't yet have that information -- it's stored in the file system we are bootstrapping.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        cipher.seek(bn * self.block_size as u64);
-
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
         let data = match fs::read(&path) {
             Ok(mut data) => {
-                cipher.apply_keystream(&mut data);
+                decrypt(
+                    &self.key,
+                    &self.nonce,
+                    bn * self.block_size as u64,
+                    &mut data,
+                );
                 data
             }
             Err(e) => {
@@ -224,7 +224,7 @@ impl FileStore {
 
         let key = make_fs_key(
             password.as_ref(),
-            &UfsUuid::new_root(
+            &UfsUuid::new_root_fs(
                 path.as_ref()
                     .file_name()
                     .unwrap()
@@ -387,11 +387,13 @@ impl BlockWriter for FileStore {
     where
         D: AsRef<[u8]>,
     {
-        let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-        cipher.seek(bn * self.block_size as u64);
-
         let mut data = data.as_ref().to_vec();
-        cipher.apply_keystream(&mut data);
+        encrypt(
+            &self.key,
+            &self.nonce,
+            bn * self.block_size as u64,
+            &mut data,
+        );
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -415,14 +417,16 @@ impl BlockReader for FileStore {
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
         } else {
-            let mut cipher = XChaCha20::new_var(&self.key, &self.nonce).unwrap();
-            cipher.seek(bn * self.block_size as u64);
-
             let path = path_for_block(&self.root_path, bn);
             debug!("reading block from {:?}", path);
             let data = match fs::read(&path) {
                 Ok(mut data) => {
-                    cipher.apply_keystream(&mut data);
+                    decrypt(
+                        &self.key,
+                        &self.nonce,
+                        bn * self.block_size as u64,
+                        &mut data,
+                    );
                     data
                 }
                 Err(e) => {
@@ -457,7 +461,7 @@ mod test {
         let mut fs = FileStore::new(
             "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3),
         )
         .unwrap();
 
@@ -479,7 +483,7 @@ mod test {
         let mut fs = FileStore::new(
             "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
         assert!(fs.write_block(1, &data[..]).is_err());
@@ -505,7 +509,7 @@ mod test {
         let mut fs = FileStore::new(
             "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
@@ -542,7 +546,7 @@ mod test {
         let fs = FileStore::new(
             "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
@@ -567,7 +571,7 @@ mod test {
         let fs = FileStore::new(
             "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 4),
         )
         .unwrap();
 
