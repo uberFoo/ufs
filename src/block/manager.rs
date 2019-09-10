@@ -5,9 +5,7 @@
 
 use {
     failure::format_err,
-    hmac::Hmac,
     log::{debug, error},
-    sha2::Sha256,
 };
 
 use crate::{
@@ -43,7 +41,9 @@ where
     store: BS,
     /// File and Directory metadata
     metadata: Metadata,
-    /// Master file system key
+    /// Current user of the file system
+    user: UfsUuid,
+    /// File system key for the current user
     key: [u8; 32],
 }
 
@@ -52,10 +52,15 @@ where
     BS: BlockStorage,
 {
     /// Layer metadata atop a block storage
-    pub fn new<S: AsRef<str>>(password: S, store: BS) -> Self {
+    pub fn new<S: AsRef<str>>(user: S, password: S, store: BS) -> Self {
+        let user_id = UfsUuid::new_user(user.as_ref());
+        let mut metadata = Metadata::new(*store.id(), user_id);
+        metadata.add_user(user.as_ref().to_owned(), password.as_ref().to_owned());
+
         BlockManager {
             id: store.id().clone(),
-            metadata: Metadata::new(*store.id()),
+            metadata,
+            user: user_id,
             key: make_fs_key(password.as_ref(), &store.id()),
             store,
         }
@@ -64,20 +69,29 @@ where
     /// Load an existing BlockManager, using metadata from an existing BlockStorage
     ///
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load(key: [u8; 32], mut store: BS) -> Result<Self, failure::Error> {
+    pub(crate) fn load<S: AsRef<str>>(
+        user: S,
+        password: S,
+        mut store: BS,
+    ) -> Result<Self, failure::Error> {
         match store.map().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
                 match read_metadata(&mut store, root_block) {
                     Ok(metadata) => {
                         debug!("loaded metadata");
-
-                        Ok(BlockManager {
-                            id: store.id().clone(),
-                            metadata,
-                            key,
-                            store,
-                        })
+                        let md: &Metadata = &metadata;
+                        if let Some((user_id, key)) = md.validate_user(&user, &password) {
+                            Ok(BlockManager {
+                                id: store.id().clone(),
+                                metadata,
+                                user: user_id,
+                                key,
+                                store,
+                            })
+                        } else {
+                            Err(format_err!("Invalid user id, and/or password."))
+                        }
                     }
                     Err(e) => Err(format_err!("Problem loading file system metadata: {}", e)),
                 }
@@ -261,6 +275,7 @@ mod test {
     #[test]
     fn not_enough_free_blocks_error() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -280,6 +295,7 @@ mod test {
     #[test]
     fn tiny_test() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -309,6 +325,7 @@ mod test {
     #[test]
     fn write_data_smaller_than_blocksize() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -333,6 +350,7 @@ mod test {
     #[test]
     fn write_data_larger_than_blocksize() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -357,6 +375,7 @@ mod test {
     #[test]
     fn read_block_bad_hash() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -379,6 +398,7 @@ mod test {
     #[test]
     fn recycle_blocks() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),
@@ -407,6 +427,7 @@ mod test {
     #[test]
     fn encrypt_and_decrypt_two_blocks_with_different_stream_positions() {
         let mut bm = BlockManager::new(
+            "test",
             "foobar",
             MemoryStore::new(BlockMap::new(
                 UfsUuid::new_root_fs("test"),

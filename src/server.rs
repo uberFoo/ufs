@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{spawn, JoinHandle};
 
 use failure::format_err;
-use log::{debug, error, info};
+use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::fsops::FileSystemOps;
@@ -26,7 +26,7 @@ pub(crate) enum UfsRemoteServerMessage {
 }
 
 impl UfsRemoteServerMessage {
-    fn handle_message(msg: &UfsRemoteServerMessage) -> Result<(), failure::Error> {
+    fn handle_message(_msg: &UfsRemoteServerMessage) -> Result<(), failure::Error> {
         Ok(())
     }
 }
@@ -142,7 +142,8 @@ mod test {
     fn connect() -> Box<TcpStream> {
         init();
 
-        let ufs = UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
+        let ufs =
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
         let mounter = UfsMounter::new(ufs, Some(8787));
         let mut stream = TcpStream::connect("127.0.0.1:8787").unwrap();
         Box::new(stream)

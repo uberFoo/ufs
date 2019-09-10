@@ -3,10 +3,6 @@
 //! This is how we fetch blocks from the network.
 //!
 use {
-    c2_chacha::{
-        stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek},
-        XChaCha20,
-    },
     failure::format_err,
     log::{debug, error, trace},
     reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url},
@@ -24,7 +20,6 @@ use crate::{
 ///
 pub struct NetworkStore {
     id: UfsUuid,
-    key: [u8; 32],
     nonce: Vec<u8>,
     url: Url,
     client: Client,
@@ -34,7 +29,7 @@ pub struct NetworkStore {
 }
 
 impl NetworkStore {
-    pub fn new<S, U>(key: [u8; 32], name: S, url: U) -> Result<Self, failure::Error>
+    pub fn new<S, U>(name: S, url: U) -> Result<Self, failure::Error>
     where
         S: AsRef<str>,
         U: IntoUrl,
@@ -47,12 +42,11 @@ impl NetworkStore {
                 // Note that the id of the file system is the last element in the path
                 let id = UfsUuid::new_root_fs(name.as_ref());
                 let mut nonce = Vec::with_capacity(24);
-                /// FIXME: Is this nonce sufficient?
+                // FIXME: Is this nonce sufficient?
                 nonce.extend_from_slice(&id.as_bytes()[..]);
                 nonce.extend_from_slice(&id.as_bytes()[0..8]);
 
                 let mut reader = NetworkReader {
-                    key,
                     nonce,
                     url: url.clone(),
                     client: client.clone(),
@@ -62,7 +56,6 @@ impl NetworkStore {
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
-                    key,
                     nonce: reader.nonce,
                     url,
                     client,
@@ -85,7 +78,6 @@ impl BlockStorage for NetworkStore {
         debug!("writing BlockMap");
 
         let mut writer = NetworkWriter {
-            key: self.key,
             nonce: self.nonce.clone(),
             url: self.url.clone(),
             client: self.client.clone(),
@@ -120,7 +112,7 @@ impl BlockWriter for NetworkStore {
     where
         T: AsRef<[u8]>,
     {
-        let mut data = data.as_ref().to_vec();
+        let data = data.as_ref();
 
         trace!(
             "Writing {} bytes to block number {} at {}.",
@@ -162,7 +154,6 @@ impl BlockReader for NetworkStore {
 }
 
 struct NetworkWriter {
-    key: [u8; 32],
     nonce: Vec<u8>,
     url: Url,
     client: Client,
@@ -173,7 +164,7 @@ impl BlockWriter for NetworkWriter {
     where
         T: AsRef<[u8]>,
     {
-        let mut data = data.as_ref().to_vec();
+        let data = data.as_ref();
 
         trace!(
             "Writing {} bytes to block number {} at {}.",
@@ -200,7 +191,6 @@ impl BlockWriter for NetworkWriter {
 }
 
 struct NetworkReader {
-    key: [u8; 32],
     nonce: Vec<u8>,
     url: Url,
     client: Client,
@@ -225,12 +215,9 @@ impl BlockReader for NetworkReader {
 mod test {
     use super::*;
 
-    use crate::crypto::make_fs_key;
-
     #[test]
     fn read_and_write_block() {
-        let key = make_fs_key("", &UfsUuid::new_root_fs("test"));
-        let mut bs = NetworkStore::new(key, "test", "http://localhost:8888").unwrap();
+        let mut bs = NetworkStore::new("test", "http://localhost:8888").unwrap();
         let block_number = 88;
         let expected = r#"ion<BlockCardinality>,
    pub directory: HashMap<String, Block>,

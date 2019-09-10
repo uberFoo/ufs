@@ -239,9 +239,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
 /// Main File System Implementation
 ///
 pub struct UberFileSystem<B: BlockStorage> {
-    /// Where we store blocks.
-    ///
     id: UfsUuid,
+    user: UfsUuid,
     block_manager: BlockManager<B>,
     open_files: HashMap<FileHandle, File>,
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
@@ -257,6 +256,7 @@ impl UberFileSystem<MemoryStore> {
     /// warranted.
     ///
     pub fn new_memory<S: AsRef<str>>(
+        user: S,
         password: S,
         name: S,
         size: BlockSize,
@@ -265,10 +265,11 @@ impl UberFileSystem<MemoryStore> {
         let id = UfsUuid::new_root_fs(name.as_ref());
 
         let mem_store = MemoryStore::new(BlockMap::new(id, size, count));
-        let block_manager = BlockManager::new(password.as_ref(), mem_store);
+        let block_manager = BlockManager::new(&user, &password, mem_store);
 
         UberFileSystem {
             id: block_manager.id().clone(),
+            user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -282,13 +283,18 @@ impl UberFileSystem<MemoryStore> {
 impl UberFileSystem<FileStore> {
     /// Load an existing file-backed File System
     ///
-    pub fn load_file_backed<S, P>(password: S, path: P) -> Result<Self, failure::Error>
+    pub fn load_file_backed<S, P>(
+        master_password: S,
+        user: S,
+        password: S,
+        path: P,
+    ) -> Result<Self, failure::Error>
     where
         S: AsRef<str>,
         P: AsRef<Path>,
     {
         let key = make_fs_key(
-            password.as_ref(),
+            master_password.as_ref(),
             &UfsUuid::new_root_fs(
                 path.as_ref()
                     .file_name()
@@ -299,10 +305,11 @@ impl UberFileSystem<FileStore> {
             ),
         );
         let file_store = FileStore::load(key.clone(), path.as_ref())?;
-        let block_manager = BlockManager::load(key, file_store)?;
+        let block_manager = BlockManager::load(user.as_ref(), password.as_ref(), file_store)?;
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -314,17 +321,22 @@ impl UberFileSystem<FileStore> {
 }
 
 impl UberFileSystem<NetworkStore> {
-    pub fn new_networked<S, U>(password: S, name: S, url: U) -> Result<Self, failure::Error>
+    pub fn new_networked<S, U>(
+        user: S,
+        password: S,
+        name: S,
+        url: U,
+    ) -> Result<Self, failure::Error>
     where
         S: AsRef<str>,
         U: IntoUrl,
     {
-        let key = make_fs_key(password.as_ref(), &UfsUuid::new_root_fs(name.as_ref()));
-        let net_store = NetworkStore::new(key, name, url)?;
-        let block_manager = BlockManager::load(key, net_store)?;
+        let net_store = NetworkStore::new(name, url)?;
+        let block_manager = BlockManager::load(&user, &password, net_store)?;
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
@@ -374,7 +386,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             dir: &DirectoryMetadata,
         ) {
             // Find .wasm directories
-            for (d_name, d) in dir.entries() {
+            for (_, d) in dir.entries() {
                 if let DirectoryEntry::Directory(dir) = d {
                     if dir.is_wasm_dir() {
                         for (f_name, e) in dir.entries() {
@@ -463,7 +475,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let dir = self
             .block_manager
             .metadata_mut()
-            .new_directory(parent_id, name)?;
+            .new_directory(parent_id, name, self.user)?;
 
         self.notify_listeners(UfsMessage::DirCreate(
             self.block_manager.metadata().path_from_dir_id(dir.id()),
@@ -822,8 +834,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
 #[cfg(test)]
 mod test {
-    use std::path::PathBuf;
-
     use super::*;
 
     fn init() {
@@ -835,7 +845,7 @@ mod test {
         init();
 
         let mut ufs =
-            UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h0, file) = ufs.create_file(root_id, "test_open_file").unwrap();
@@ -851,7 +861,8 @@ mod test {
     fn read_and_write_file_networked() {
         init();
 
-        let mut ufs = UberFileSystem::new_networked("", "test", "http://localhost:8888").unwrap();
+        let mut ufs =
+            UberFileSystem::new_networked("test", "test", "test", "http://localhost:8888").unwrap();
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
@@ -870,7 +881,7 @@ mod test {
         init();
 
         let mut ufs =
-            UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
@@ -887,7 +898,7 @@ mod test {
 
         let chunk_size = 88;
         let mut ufs =
-            UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
@@ -914,7 +925,7 @@ mod test {
 
         let chunk_size = 8888;
         let mut ufs =
-            UberFileSystem::new_memory("foobar", "test", BlockSize::TwentyFortyEight, 100);
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
         let test = include_str!("lib.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();

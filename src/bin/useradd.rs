@@ -5,7 +5,7 @@ use std::{
 
 use {log::debug, pretty_env_logger, structopt::StructOpt};
 
-use ufs::UberFileSystem;
+use ufs::{UberFileSystem, UfsUuid};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -37,15 +37,27 @@ fn main() -> Result<(), failure::Error> {
         rpassword::read_password_from_tty(Some("master password: ")).unwrap()
     };
 
-    let mut ufs = UberFileSystem::load_file_backed(master_password, &opt.bundle_path)?;
+    io::stdout().write_all(b"user: ")?;
+    io::stdout().flush()?;
+    let mut user = String::new();
+    io::stdin().read_line(&mut user)?;
+    let user = user.trim();
+    let password = rpassword::read_password_from_tty(Some("password: ")).unwrap();
+
+    let mut ufs = UberFileSystem::load_file_backed(
+        master_password,
+        user.to_string(),
+        password,
+        &opt.bundle_path,
+    )?;
 
     if opt.list {
         for user in ufs.get_users() {
             println!(" - '{}'", user);
         }
     } else {
-        io::stdout().write_all(b"user: ");
-        io::stdout().flush();
+        io::stdout().write_all(b"user: ")?;
+        io::stdout().flush()?;
         let mut user = String::new();
         io::stdin().read_line(&mut user)?;
         let user = user.trim();

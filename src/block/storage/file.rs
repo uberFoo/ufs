@@ -91,7 +91,7 @@ impl FileReader {
         // Note that the id of the file system is the last element in the path
         let id = UfsUuid::new_root_fs(root_path.file_name().unwrap().to_str().unwrap());
         let mut nonce = Vec::with_capacity(24);
-        /// FIXME: Is this nonce sufficient?
+        // FIXME: Is this nonce sufficient?
         nonce.extend_from_slice(&id.as_bytes()[..]);
         nonce.extend_from_slice(&id.as_bytes()[0..8]);
 
@@ -124,7 +124,7 @@ impl BlockReader for FileReader {
                 );
                 data
             }
-            Err(e) => {
+            Err(_) => {
                 error!("error reading file {:?}", path);
                 panic!();
             }
@@ -187,7 +187,7 @@ impl FileStore {
 
         let key = make_fs_key(password.as_ref(), &map.id());
         let mut nonce = Vec::with_capacity(24);
-        /// FIXME: Is this nonce sufficient?
+        // FIXME: Is this nonce sufficient?
         nonce.extend_from_slice(&map.id().as_bytes()[..]);
         nonce.extend_from_slice(&map.id().as_bytes()[0..8]);
 
@@ -246,7 +246,7 @@ impl FileStore {
             None => (),
         };
 
-        if (show_map) {
+        if show_map {
             println!("\nBlockMap Metadata:");
             println!("{:#?}", fs.map);
         }
@@ -267,10 +267,15 @@ impl FileStore {
 
         let metadata = match BlockMap::deserialize(&reader) {
             Ok(metadata) => metadata,
-            Err(e) => panic!(
-                "Unable to load metadata -- possibly incorrect password?\nError: {}",
-                e
-            ),
+            Err(e) => {
+                error!(
+                    "Unable to load metadata -- possibly incorrect password?\nError: {}",
+                    e
+                );
+                return Err(format_err!(
+                    "Unable to load metadata -- possibly incorrect password?"
+                ));
+            }
         };
 
         Ok(FileStore {
@@ -429,7 +434,7 @@ impl BlockReader for FileStore {
                     );
                     data
                 }
-                Err(e) => {
+                Err(_) => {
                     error!("error reading file {:?}", path);
                     panic!();
                 }

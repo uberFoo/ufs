@@ -16,7 +16,7 @@ use crate::{
     uuid::UfsUuid,
 };
 
-use super::{FileSize, Permission, PermissionGroups};
+use super::{user::User, FileSize, Permission, PermissionGroups};
 
 /// Data about Files
 ///
@@ -31,6 +31,9 @@ pub struct FileMetadata {
     /// The UUID of the parent directory
     ///
     dir_id: UfsUuid,
+    /// Owner of this file
+    ///
+    owner: UfsUuid,
     /// Permission Groups for this file
     ///
     perms: PermissionGroups,
@@ -48,12 +51,13 @@ impl FileMetadata {
     ///
     /// When a new file is created, a default, empty, [`FileVersion`] is created. This is mostly so
     /// that we capture a time stamp of when the file was created.
-    pub(crate) fn new(id: UfsUuid, p_id: UfsUuid) -> Self {
+    pub(crate) fn new(id: UfsUuid, p_id: UfsUuid, owner: UfsUuid) -> Self {
         let mut versions = HashMap::new();
         versions.insert(0, FileVersion::new(id.random(), &id));
         FileMetadata {
             id,
             dir_id: p_id,
+            owner,
             perms: PermissionGroups {
                 user: Permission::ReadWrite,
                 group: Permission::Read,
@@ -64,20 +68,15 @@ impl FileMetadata {
         }
     }
 
-    fn new_with_version(v: FileVersion) -> Self {
+    fn new_with_version(file: &FileMetadata, v: FileVersion) -> Self {
         let mut versions = HashMap::new();
         let id = v.file_id.clone();
-        // FIXME
-        let parent = UfsUuid::new_root_fs("fix me");
         versions.insert(0, v);
         FileMetadata {
             id,
-            dir_id: parent,
-            perms: PermissionGroups {
-                user: Permission::ReadWrite,
-                group: Permission::Read,
-                other: Permission::Read,
-            },
+            dir_id: file.dir_id,
+            owner: file.owner,
+            perms: file.perms.clone(),
             last_version: 0,
             versions,
         }
@@ -235,21 +234,10 @@ impl FileVersion {
         nonce
     }
 
-    /// Create a new sibling version -- this is jacked
-    pub(crate) fn new_sibling(&self) -> Self {
-        let id = self.id.random();
-        FileVersion::new(id, &self.file_id)
-    }
-
     /// Check the dirty flag
     ///
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
-    }
-
-    /// Return the UUID of this file version
-    pub(crate) fn version_id(&self) -> &UfsUuid {
-        &self.id
     }
 
     /// Return the UUID of this file version's file
@@ -262,11 +250,6 @@ impl FileVersion {
         self.size
     }
 
-    /// Return the size of the file, in whole blocks
-    pub(crate) fn block_count(&self) -> usize {
-        self.blocks.len()
-    }
-
     /// Return a reference to the list of blocks that comprise the file
     pub(crate) fn blocks(&self) -> &Vec<BlockNumber> {
         &self.blocks
@@ -275,15 +258,8 @@ impl FileVersion {
     /// Convert a copy of this FileVersion into a FileMetadata
     ///
     /// Note that the returned FileMetadata will contain only this version of the file
-    pub(crate) fn as_file_metadata(&self) -> FileMetadata {
-        FileMetadata::new_with_version(self.clone())
-    }
-
-    /// Transform this FileVersion into a FileMetadata
-    ///
-    /// Note that the returned FileMetadata will contain only this version of the file
-    pub(crate) fn into_file_metadata(self) -> FileMetadata {
-        FileMetadata::new_with_version(self)
+    pub(crate) fn as_file_metadata(&self, file: &FileMetadata) -> FileMetadata {
+        FileMetadata::new_with_version(file, self.clone())
     }
 
     /// Append a block
@@ -308,7 +284,6 @@ impl FileVersion {
 #[cfg(test)]
 mod test {
     use super::*;
-    use uuid::Uuid;
 
     #[test]
     fn nonce() {

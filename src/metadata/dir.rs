@@ -33,6 +33,9 @@ pub struct DirectoryMetadata {
     /// The UUID of this directory's parent
     ///
     parent_id: Option<UfsUuid>,
+    /// The owner of this directory
+    ///
+    owner: UfsUuid,
     /// Permission Groups for this directory
     ///
     perms: PermissionGroups,
@@ -70,7 +73,7 @@ impl DirectoryMetadata {
     /// WASM programs to execute in the file system. The other, ".vers", contains older versions
     /// of files, located in the directory.
     ///
-    pub(crate) fn new(id: UfsUuid, p_id: Option<UfsUuid>) -> Self {
+    pub(crate) fn new(id: UfsUuid, p_id: Option<UfsUuid>, owner: UfsUuid) -> Self {
         let time = UfsTime::now();
         let perms = PermissionGroups {
             user: Permission::ReadWriteExecute,
@@ -81,6 +84,7 @@ impl DirectoryMetadata {
             dirty: false,
             id: id,
             parent_id: p_id,
+            owner,
             perms: perms.clone(),
             wasm_dir: false,
             vers_dir: false,
@@ -97,6 +101,7 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(WASM_DIR),
                 parent_id: Some(id),
+                owner,
                 perms: perms.clone(),
                 wasm_dir: true,
                 vers_dir: false,
@@ -114,6 +119,7 @@ impl DirectoryMetadata {
                 dirty: false,
                 id: id.new(VERS_DIR),
                 parent_id: Some(id),
+                owner,
                 perms,
                 wasm_dir: false,
                 vers_dir: true,
@@ -132,6 +138,7 @@ impl DirectoryMetadata {
     pub(crate) fn new_subdirectory(
         &mut self,
         name: String,
+        owner: UfsUuid,
     ) -> Result<DirectoryMetadata, failure::Error> {
         debug!("--------");
         debug!("`new_subdirectory`: {:?}", name);
@@ -140,7 +147,7 @@ impl DirectoryMetadata {
             Err(format_err!("directory already exists"))
         } else {
             let new_id = self.id.new(&name);
-            let dir = DirectoryMetadata::new(new_id, Some(self.id));
+            let dir = DirectoryMetadata::new(new_id, Some(self.id), owner);
             match self
                 .entries
                 .insert(name, DirectoryEntry::Directory(dir.clone()))
@@ -164,7 +171,7 @@ impl DirectoryMetadata {
             Err(format_err!("file already exists"))
         } else {
             let new_id = self.id.new(&name);
-            let file = FileMetadata::new(new_id, self.id);
+            let file = FileMetadata::new(new_id, self.id, self.owner);
             match self
                 .entries
                 .insert(name, DirectoryEntry::File(file.clone()))
