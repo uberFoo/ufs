@@ -59,7 +59,7 @@ impl BlockStores {
                 debug!("loaded file store {:?}", bundle_path);
                 Some(bs)
             }
-            Err(e) => {
+            Err(_) => {
                 error!(
                     "Unable to open File Store {}. Possibly invalid password.",
                     bundle_path.to_str().unwrap(),
