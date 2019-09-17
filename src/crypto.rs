@@ -16,13 +16,13 @@ pub fn make_fs_key(password: &str, id: &UfsUuid) -> [u8; 32] {
     key
 }
 
-pub fn encrypt(key: &[u8; 32], nonce: &Vec<u8>, offset: u64, mut data: &mut [u8]) {
+pub fn encrypt(key: &[u8], nonce: &Vec<u8>, offset: u64, mut data: &mut [u8]) {
     let mut cipher = XChaCha20::new_var(key, nonce).unwrap();
     cipher.seek(offset);
     cipher.apply_keystream(&mut data);
 }
 
-pub fn decrypt(key: &[u8; 32], nonce: &Vec<u8>, offset: u64, mut data: &mut [u8]) {
+pub fn decrypt(key: &[u8], nonce: &Vec<u8>, offset: u64, mut data: &mut [u8]) {
     let mut cipher = XChaCha20::new_var(key, nonce).unwrap();
     cipher.seek(offset);
     cipher.apply_keystream(&mut data);
