@@ -10,17 +10,14 @@ use log::debug;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{time::UfsTime, uuid::UfsUuid};
 
 pub(crate) const WASM_DIR: &'static str = ".wasm";
 pub(crate) const WASM_EXT: &'static str = "wasm";
 pub(crate) const VERS_DIR: &'static str = ".vers";
 
-#[cfg(not(target_arch = "wasm32"))]
 use super::{DirectoryEntry, FileMetadata, Permission, PermissionGroups};
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DirectoryMetadata {
     /// A flag indicating that the directory's data has been modified and needs to be written.
@@ -65,7 +62,6 @@ pub struct DirectoryMetadata {
     entries: HashMap<String, DirectoryEntry>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
     /// Create a new directory
     ///

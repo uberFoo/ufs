@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 //! Logical File Blocks
 //!
 //! This file system is comprised of blocks; file contents and metadata are stored in blocks.  The

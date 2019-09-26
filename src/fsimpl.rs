@@ -21,7 +21,6 @@ use crate::{
     metadata::{
         DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, Metadata, WASM_EXT,
     },
-    runtime::{FileSystemOperator, Process, UfsMessage},
     server::UfsRemoteServer,
     UfsUuid,
 };
@@ -198,34 +197,34 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         info!("Stopping WASM program {:?}", name);
                         let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
                         if let Some(thread) = runtime.threads.remove(&name) {
-                            if let Some(sender) = ufs.listeners.remove(&name) {
-                                sender.send(UfsMessage::Shutdown);
-                                thread.join().unwrap().unwrap();
-                            }
+                            // if let Some(sender) = ufs.listeners.remove(&name) {
+                            //     sender.send(UfsMessage::Shutdown);
+                            //     thread.join().unwrap().unwrap();
+                            // }
                         }
                     }
                     // Start the WASM program and add it to the listeners map.
                     RuntimeManagerMsg::Start(wasm) => {
                         info!("Starting WASM program {:?}", wasm.name);
-                        let process = Process::new(wasm.name.clone(), wasm.program);
-                        let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
-                        ufs.listeners
-                            .insert(wasm.name.clone(), process.get_sender());
-                        runtime.threads.insert(
-                            wasm.name,
-                            Process::start(
-                                process,
-                                Box::new(FileSystemOperator::new(runtime.ufs.clone()))
-                                    as Box<dyn FileSystemOps>,
-                            ),
-                        );
+                        // let process = Process::new(wasm.name.clone(), wasm.program);
+                        // let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
+                        // ufs.listeners
+                        //     .insert(wasm.name.clone(), process.get_sender());
+                        // runtime.threads.insert(
+                        //     wasm.name,
+                        //     Process::start(
+                        //         process,
+                        //         Box::new(FileSystemOperator::new(runtime.ufs.clone()))
+                        //             as Box<dyn FileSystemOps>,
+                        //     ),
+                        // );
                     }
                 }
             }
 
             let ufs = runtime.ufs.lock().expect("poisoned ufs lock");
             info!("Shutting down WASM programs");
-            ufs.notify_listeners(UfsMessage::Shutdown);
+            // ufs.notify_listeners(UfsMessage::Shutdown);
 
             for (_, thread) in runtime.threads {
                 thread.join().unwrap().unwrap();
@@ -245,7 +244,7 @@ pub struct UberFileSystem<B: BlockStorage> {
     open_files: HashMap<FileHandle, File>,
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
     open_file_counter: FileHandle,
-    listeners: HashMap<PathBuf, crossbeam_channel::Sender<UfsMessage>>,
+    // listeners: HashMap<PathBuf, crossbeam_channel::Sender<UfsMessage>>,
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
 }
 
@@ -274,7 +273,7 @@ impl UberFileSystem<MemoryStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            listeners: HashMap::new(),
+            // listeners: HashMap::new(),
             program_mgr: None,
         }
     }
@@ -314,7 +313,7 @@ impl UberFileSystem<FileStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            listeners: HashMap::new(),
+            // listeners: HashMap::new(),
             program_mgr: None,
         })
     }
@@ -343,7 +342,7 @@ impl UberFileSystem<NetworkStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            listeners: HashMap::new(),
+            // listeners: HashMap::new(),
             program_mgr: None,
         })
     }
@@ -366,14 +365,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
     }
 
     /// Send a message to all listening WASM programs.
-    fn notify_listeners(&self, msg: UfsMessage) {
-        for (_, listener) in &self.listeners {
-            match listener.send(msg.clone()) {
-                Ok(_) => (),
-                Err(e) => error!("unable to send on channel {}", e),
-            }
-        }
-    }
+    // fn notify_listeners(&self, msg: UfsMessage) {
+    //     for (_, listener) in &self.listeners {
+    //         match listener.send(msg.clone()) {
+    //             Ok(_) => (),
+    //             Err(e) => error!("unable to send on channel {}", e),
+    //         }
+    //     }
+    // }
 
     /// Initialize for the Runtime
     ///
@@ -479,9 +478,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .metadata_mut()
             .new_directory(parent_id, name, self.user)?;
 
-        self.notify_listeners(UfsMessage::DirCreate(
-            self.block_manager.metadata().path_from_dir_id(dir.id()),
-        ));
+        // self.notify_listeners(UfsMessage::DirCreate(
+        //     self.block_manager.metadata().path_from_dir_id(dir.id()),
+        // ));
 
         debug!("end `create_directory`");
         Ok(dir)
@@ -502,11 +501,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
 
-        self.notify_listeners(UfsMessage::FileCreate(
-            self.block_manager
-                .metadata()
-                .path_from_file_id(file.file_id),
-        ));
+        // self.notify_listeners(UfsMessage::FileCreate(
+        //     self.block_manager
+        //         .metadata()
+        //         .path_from_file_id(file.file_id),
+        // ));
 
         debug!("`create_file`: {:?}, handle: {}", name, fh);
         Ok((fh, file))
@@ -561,9 +560,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .metadata()
             .get_file_metadata_from_dir_and_name(dir_id, name)
         {
-            self.notify_listeners(UfsMessage::FileRemove(
-                self.block_manager.metadata().path_from_file_id(file.id()),
-            ));
+            // self.notify_listeners(UfsMessage::FileRemove(
+            //     self.block_manager.metadata().path_from_file_id(file.id()),
+            // ));
 
             if let Some(program_mgr) = &self.program_mgr {
                 if let Ok(dir) = self.block_manager.metadata().get_directory(dir_id) {
@@ -605,11 +604,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
-        self.notify_listeners(UfsMessage::FileOpen(
-            self.block_manager
-                .metadata()
-                .path_from_file_id(file.file_id),
-        ));
+        // self.notify_listeners(UfsMessage::FileOpen(
+        //     self.block_manager
+        //         .metadata()
+        //         .path_from_file_id(file.file_id),
+        // ));
 
         self.open_files.insert(fh, file);
 
@@ -686,11 +685,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         match self.open_files.remove(&handle) {
             Some(file) => {
-                self.notify_listeners(UfsMessage::FileClose(
-                    self.block_manager
-                        .metadata()
-                        .path_from_file_id(file.file_id),
-                ));
+                // self.notify_listeners(UfsMessage::FileClose(
+                //     self.block_manager
+                //         .metadata()
+                //         .path_from_file_id(file.file_id),
+                // ));
             }
             None => warn!("asked to close a file not in the map {}", handle),
         }
@@ -737,12 +736,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         // Down here to appease the Borrow Checker Gods
         if let Some(file) = self.open_files.get(&handle) {
-            self.notify_listeners(UfsMessage::FileWrite(
-                self.block_manager
-                    .metadata()
-                    .path_from_file_id(file.file_id),
-                bytes.to_vec(),
-            ));
+            // self.notify_listeners(UfsMessage::FileWrite(
+            //     self.block_manager
+            //         .metadata()
+            //         .path_from_file_id(file.file_id),
+            //     bytes.to_vec(),
+            // ));
         }
 
         result
@@ -811,12 +810,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
 
             if buffer.len() == size {
-                self.notify_listeners(UfsMessage::FileRead(
-                    self.block_manager
-                        .metadata()
-                        .path_from_file_id(file.file_id),
-                    buffer.clone(),
-                ));
+                // self.notify_listeners(UfsMessage::FileRead(
+                //     self.block_manager
+                //         .metadata()
+                //         .path_from_file_id(file.file_id),
+                //     buffer.clone(),
+                // ));
 
                 Ok(buffer)
             } else {

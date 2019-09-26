@@ -17,9 +17,7 @@
 //! functions declared there are defined in runtime.rs. Those functions will eventually be resolved
 //! into something that is defined in this file.
 //!
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod exports;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod handler;
 
 pub mod runtime;
@@ -30,7 +28,6 @@ use colored::*;
 use log::info;
 use wasmi::{Externals, LittleEndianConvert, MemoryRef, RuntimeArgs, RuntimeValue, Trap};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{
     fsops::FileSystemOps,
     metadata::FileHandle,
@@ -39,14 +36,12 @@ use crate::{
     },
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct WasmRuntime {
     name: String,
     memory: MemoryRef,
     file_system: Box<dyn FileSystemOps>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl WasmRuntime {
     pub fn new<S: AsRef<str>>(
         name: S,
@@ -152,7 +147,6 @@ impl WasmRuntime {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Externals for WasmRuntime {
     fn invoke_index(
         &mut self,

@@ -22,7 +22,6 @@ pub(crate) mod dir;
 pub(crate) mod file;
 pub(crate) mod user;
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::uuid::UfsUuid;
 
 pub(crate) type FileSize = u64;
@@ -30,15 +29,12 @@ pub(crate) type FileSize = u64;
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use dir::DirectoryMetadata;
 pub(crate) use dir::WASM_EXT;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use file::{FileMetadata, FileVersion};
 
 pub(crate) use user::UserMetadata;
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::block::{
     wrapper::{MetadataDeserialize, MetadataSerialize},
     BlockNumber,
@@ -49,7 +45,6 @@ use crate::block::{
 /// This structure is used by the file system implementation as a file handle. It is a watered-down
 /// FileMetadata that is cheaply cloneable. It contains the metadata id of the parent FileMetadata,
 /// and a single, usually the latest, FileVersion of the file.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
     /// UfsUuid of the file
@@ -161,7 +156,6 @@ impl From<u16> for PermissionGroups {
 /// Entries in [`DirectoryMetadata`] structures
 ///
 /// A directory may contain files, or other directories. Here we capture that dualism.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum DirectoryEntry {
     /// A directory
@@ -172,9 +166,6 @@ pub enum DirectoryEntry {
     File(FileMetadata),
 }
 
-///
-
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Metadata {
     /// The dirty flag
@@ -193,7 +184,6 @@ pub(crate) struct Metadata {
     users: UserMetadata,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Metadata {
     /// Create a new file system metadata instance
     ///
@@ -647,7 +637,6 @@ impl Metadata {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl MetadataSerialize for Metadata {
     fn serialize(&mut self) -> Result<Vec<u8>, failure::Error> {
         match bincode::serialize(&self) {
@@ -662,7 +651,6 @@ impl MetadataSerialize for Metadata {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl MetadataDeserialize for Metadata {
     fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
         match bincode::deserialize(&bytes) {

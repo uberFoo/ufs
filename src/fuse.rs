@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 //! FUSE Interface for uberFS
 //!
 use std::{collections::HashMap, ffi::OsStr};

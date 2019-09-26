@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-// #![cfg(not(target_arch = "wasm32"))]
 //! A different sort of file system: *uberFS*
 //!
 //! # File System Structure
@@ -114,28 +113,19 @@
 
 mod block;
 mod crypto;
-#[cfg(not(target_arch = "wasm32"))]
 mod fsimpl;
 mod fsops;
 mod fuse;
 mod metadata;
-mod runtime;
 mod server;
 mod time;
 mod uuid;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use crate::fuse::UberFSFuse;
-#[cfg(not(target_arch = "wasm32"))]
 pub use crate::uuid::UfsUuid;
-#[cfg(not(target_arch = "wasm32"))]
 pub use block::{
     manager::BlockManager, map::BlockMap, BlockAddress, BlockCardinality, BlockNumber, BlockReader,
     BlockSize, BlockStorage, BlockWriter, FileStore,
 };
 pub use crypto::make_fs_key;
-#[cfg(not(target_arch = "wasm32"))]
 pub use fsimpl::{OpenFileMode, UberFileSystem, UfsMounter};
-
-#[cfg(target_arch = "wasm32")]
-pub use runtime::wasm::runtime::*;
