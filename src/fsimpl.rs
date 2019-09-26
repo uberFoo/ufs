@@ -17,7 +17,6 @@ use crate::{
         MemoryStore, NetworkStore,
     },
     crypto::make_fs_key,
-    fsops::FileSystemOps,
     metadata::{
         DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, Metadata, WASM_EXT,
     },
@@ -569,7 +568,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     if dir.is_wasm_dir() {
                         program_mgr.send(RuntimeManagerMsg::Stop(
                             self.block_manager.metadata().path_from_file_id(file.id()),
-                        ));
+                        )).expect("unable to send message to Runtime Manager");
                     }
                 }
             }

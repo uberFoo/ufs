@@ -20,7 +20,6 @@ use crate::{
 ///
 pub struct NetworkStore {
     id: UfsUuid,
-    nonce: Vec<u8>,
     url: Url,
     client: Client,
     block_size: BlockSize,
@@ -56,7 +55,6 @@ impl NetworkStore {
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
-                    nonce: reader.nonce,
                     url,
                     client,
                     block_size: metadata.block_size(),

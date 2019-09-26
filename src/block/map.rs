@@ -300,6 +300,7 @@ impl BlockType {
         BlockType::Metadata
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_free(&self) -> bool {
         match self {
             BlockType::Free => true,
@@ -307,6 +308,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_data(&self) -> bool {
         match self {
             BlockType::Data => true,
@@ -314,6 +316,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_map(&self) -> bool {
         match self {
             BlockType::Map => true,
@@ -321,6 +324,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_metadata(&self) -> bool {
         match self {
             BlockType::Metadata => true,

@@ -244,6 +244,7 @@ impl DirectoryMetadata {
 
     /// Return true if the directory needs to be serialized
     ///
+    #[allow(dead_code)]
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }
