@@ -5,7 +5,7 @@ use std::{
 
 use {log::debug, pretty_env_logger, structopt::StructOpt};
 
-use ufs::{UberFileSystem, UfsUuid};
+use ufs::UberFileSystem;
 
 #[derive(Debug, StructOpt)]
 #[structopt(

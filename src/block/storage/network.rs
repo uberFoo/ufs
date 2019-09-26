@@ -78,7 +78,6 @@ impl BlockStorage for NetworkStore {
         debug!("writing BlockMap");
 
         let mut writer = NetworkWriter {
-            nonce: self.nonce.clone(),
             url: self.url.clone(),
             client: self.client.clone(),
         };
@@ -154,7 +153,6 @@ impl BlockReader for NetworkStore {
 }
 
 struct NetworkWriter {
-    nonce: Vec<u8>,
     url: Url,
     client: Client,
 }

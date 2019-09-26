@@ -4,7 +4,7 @@
 //!
 use std::collections::HashMap;
 use std::io::prelude::*;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{spawn, JoinHandle};
@@ -54,12 +54,16 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 info!("Got a connection from {:?}", stream.peer_addr().unwrap());
 
                 let mut buffer = [0; 256];
-                stream.read(&mut buffer);
+                stream
+                    .read(&mut buffer)
+                    .expect("unable to read server message");
                 let msg = bincode::deserialize::<UfsRemoteServerMessage>(&buffer);
                 if let Ok(msg) = msg {
                     info!("message {:?}", msg);
                     let ok = bincode::serialize(&UfsRemoteServerMessage::ReplyOk).unwrap();
-                    stream.write(&ok.as_slice());
+                    stream
+                        .write(&ok.as_slice())
+                        .expect("unable to write server message");
                 }
             }
             info!("Shutting down UfsRemoteServer");
@@ -131,9 +135,11 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
 
 #[cfg(test)]
 mod test {
-    use crate::{BlockSize, UfsMounter};
-
-    use super::*;
+    use {
+        super::*,
+        crate::{BlockSize, UfsMounter},
+        std::net::TcpStream,
+    };
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -144,8 +150,8 @@ mod test {
 
         let ufs =
             UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
-        let mounter = UfsMounter::new(ufs, Some(8787));
-        let mut stream = TcpStream::connect("127.0.0.1:8787").unwrap();
+        let _mounter = UfsMounter::new(ufs, Some(8787));
+        let stream = TcpStream::connect("127.0.0.1:8787").unwrap();
         Box::new(stream)
     }
 
@@ -153,9 +159,9 @@ mod test {
     fn list_files() {
         let mut connection = connect();
         let msg = UfsRemoteServerMessage::ListFiles;
-        connection.write(bincode::serialize(&msg).unwrap().as_slice());
+        connection.write(bincode::serialize(&msg).unwrap().as_slice()).unwrap();
         let mut buffer = [0; 256];
-        connection.read(&mut buffer);
+        connection.read(&mut buffer).unwrap();
         let response = bincode::deserialize::<UfsRemoteServerMessage>(&buffer).unwrap();
         assert_eq!(UfsRemoteServerMessage::ReplyOk, response);
     }

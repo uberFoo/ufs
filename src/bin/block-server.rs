@@ -15,7 +15,7 @@ use {
     dotenv::dotenv,
     futures::future,
     hyper::{
-        header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE},
+        header::{HeaderValue, CONTENT_TYPE},
         rt::{Future, Stream},
         service::service_fn,
         Body, Method, Request, Response, Server, StatusCode,

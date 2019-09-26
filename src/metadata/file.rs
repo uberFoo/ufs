@@ -16,7 +16,7 @@ use crate::{
     uuid::UfsUuid,
 };
 
-use super::{user::User, FileSize, Permission, PermissionGroups};
+use super::{FileSize, Permission, PermissionGroups};
 
 /// Data about Files
 ///
@@ -118,27 +118,9 @@ impl FileMetadata {
         version.clone()
     }
 
-    pub(crate) fn version_at(&self, v: usize) -> Option<FileVersion> {
-        if let Some(version) = self.versions.get(&v) {
-            Some(version.clone())
-        } else {
-            None
-        }
-    }
-
-    /// Return the number of versions of the file
-    pub(crate) fn version_count(&self) -> usize {
-        self.versions.len()
-    }
-
     /// Return a list of all of the versions of the file
     pub(crate) fn get_versions(&self) -> &HashMap<usize, FileVersion> {
         &self.versions
-    }
-
-    /// Returns a specific version of the file
-    pub(in crate::metadata) fn get_version(&self, version: usize) -> Option<&FileVersion> {
-        self.versions.get(&version)
     }
 
     pub(crate) fn commit_version(
@@ -289,14 +271,13 @@ mod test {
     fn nonce() {
         let root = UfsUuid::new_root_fs("test");
         let id = root.new("test_file"); // a506eaa8-7236-53f9-a7ed-9002fdc6a5b9
-        let did = root.new("test_dir");
         let vid = root.new("test_version"); // 2397b0a7-2f31-5d27-9a37-795d05d1ab8b
 
         let version = FileVersion::new(vid, &id);
 
         // First 4 bytes of the file version UUID, followed by all 16 bytes of file UUID,
         // ending with last 4 bytes of file version UUID
-        let mut expected: [u8; 24] = [
+        let expected: [u8; 24] = [
             0x23, 0x97, 0xb0, 0xa7, 0xa5, 0x06, 0xea, 0xa8, 0x72, 0x36, 0x53, 0xf9, 0xa7, 0xed,
             0x90, 0x02, 0xfd, 0xc6, 0xa5, 0xb9, 0x05, 0xd1, 0xab, 0x8b,
         ];

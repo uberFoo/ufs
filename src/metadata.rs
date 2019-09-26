@@ -470,12 +470,6 @@ impl Metadata {
         &self.root_directory
     }
 
-    /// Return a mutable reference to the root directory.
-    ///
-    pub(crate) fn root_directory_mut(&mut self) -> &mut DirectoryMetadata {
-        &mut self.root_directory
-    }
-
     /// Indicator that the metedata needs to be written.
     ///
     pub(crate) fn is_dirty(&self) -> bool {

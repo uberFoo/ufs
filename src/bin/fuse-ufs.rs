@@ -7,7 +7,7 @@ use ::fuse::mount;
 use clap::{App, AppSettings, Arg};
 use pretty_env_logger;
 use reqwest::Url;
-use ufs::{UberFSFuse, UberFileSystem, UfsMounter, UfsUuid};
+use ufs::{UberFSFuse, UberFileSystem, UfsMounter};
 
 fn main() -> Result<(), failure::Error> {
     let opts = App::new("fuse-ufs")
@@ -80,7 +80,7 @@ fn main() -> Result<(), failure::Error> {
                 io::stdout().write_all(b"user: ")?;
                 io::stdout().flush()?;
                 let mut user = String::new();
-                io::stdin().read_line(&mut user);
+                io::stdin().read_line(&mut user).unwrap();
                 let user = user.trim();
                 let password = rpassword::read_password_from_tty(Some("password: ")).unwrap();
 
@@ -106,7 +106,7 @@ fn main() -> Result<(), failure::Error> {
                     io::stdout().write_all(b"user: ")?;
                     io::stdout().flush()?;
                     let mut user = String::new();
-                    io::stdin().read_line(&mut user);
+                    io::stdin().read_line(&mut user).unwrap();
                     let user = user.trim();
                     let password = rpassword::read_password_from_tty(Some("password: ")).unwrap();
 

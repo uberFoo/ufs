@@ -321,6 +321,8 @@ impl UberFileSystem<FileStore> {
 }
 
 impl UberFileSystem<NetworkStore> {
+    /// Load blocks from a remote block server
+    ///
     pub fn new_networked<S, U>(
         user: S,
         password: S,
