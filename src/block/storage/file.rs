@@ -6,28 +6,35 @@
 //! ## FIXME
 //! * It might be better to build a more shallow directory tree: `root_dir/f0/3d/a2.ufsb`?
 //! * Optionally don't create files for every block.
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
-use failure::format_err;
-use log::{debug, error, trace};
+use {
+    failure::format_err,
+    log::{debug, error, trace},
+};
 
 use crate::{
     block::{
         map::BlockMap, BlockCardinality, BlockNumber, BlockReader, BlockSize, BlockSizeType,
         BlockStorage, BlockWriter,
     },
+    crypto::{decrypt, encrypt, make_fs_key},
     uuid::UfsUuid,
-};
-
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
 };
 
 const BLOCK_EXT: &str = "ufsb";
 
 /// Internal-only block writing implementation.
 ///
+/// During bootstrapping we do metadata encryption at this level, rather than in the BlockManager.
+/// This is primarily because we don't yet have a BlockManager!
+///
 struct FileWriter {
+    key: [u8; 32],
+    nonce: Vec<u8>,
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -40,7 +47,13 @@ impl BlockWriter for FileWriter {
     where
         T: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut data = data.as_ref().to_vec();
+        encrypt(
+            &self.key,
+            &self.nonce,
+            bn * self.block_size as u64,
+            &mut data,
+        );
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -50,7 +63,7 @@ impl BlockWriter for FileWriter {
             }
 
             let path = path_for_block(&self.root_path, bn);
-            fs::write(path, data)?;
+            fs::write(path, &data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
@@ -61,18 +74,61 @@ impl BlockWriter for FileWriter {
 
 /// Internal-only block reading implementation.
 ///
+/// During bootstrapping we do metadata decryption at this level, rather than in the BlockManager.
+/// This is primarily because we don't yet have a BlockManager!
+///
 struct FileReader {
+    key: [u8; 32],
+    nonce: Vec<u8>,
+    block_size: BlockSize,
     root_path: PathBuf,
 }
 
+impl FileReader {
+    pub(crate) fn new<P: AsRef<Path>>(key: [u8; 32], path: P) -> Self {
+        let root_path: PathBuf = path.as_ref().into();
+
+        // Note that the id of the file system is the last element in the path
+        let id = UfsUuid::new_root_fs(root_path.file_name().unwrap().to_str().unwrap());
+        let mut nonce = Vec::with_capacity(24);
+        // FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&id.as_bytes()[..]);
+        nonce.extend_from_slice(&id.as_bytes()[0..8]);
+
+        // Infer the block size from the size of the 0-block file.
+        let metadata = fs::metadata(path_for_block(&root_path, 0)).unwrap();
+
+        FileReader {
+            key,
+            nonce,
+            block_size: metadata.len().into(),
+            root_path,
+        }
+    }
+}
+
 impl BlockReader for FileReader {
-    /// This exists because we need a means of loading metadata from a file-based block storage. We
-    /// aren't doing any sanity checking on the block number, or block size, since we don't yet have
-    ///  that information.
+    /// This exists because we need a means of bootstrapping metadata from a file-based block
+    /// storage. We aren't doing any sanity checking on the block number, or block size, since we
+    /// don't yet have that information -- it's stored in the file system we are bootstrapping.
     fn read_block(&self, bn: BlockNumber) -> Result<Vec<u8>, failure::Error> {
         let path = path_for_block(&self.root_path, bn);
         debug!("reading block from {:?}", path);
-        let data = fs::read(path)?;
+        let data = match fs::read(&path) {
+            Ok(mut data) => {
+                decrypt(
+                    &self.key,
+                    &self.nonce,
+                    bn * self.block_size as u64,
+                    &mut data,
+                );
+                data
+            }
+            Err(_) => {
+                error!("error reading file {:?}", path);
+                panic!();
+            }
+        };
         debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
         trace!("{:?}", data);
 
@@ -109,6 +165,8 @@ fn path_for_block(root: &PathBuf, block: BlockNumber) -> PathBuf {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileStore {
     id: UfsUuid,
+    key: [u8; 32],
+    nonce: Vec<u8>,
     block_size: BlockSize,
     block_count: BlockCardinality,
     root_path: PathBuf,
@@ -119,14 +177,23 @@ impl FileStore {
     /// FileStore Constructor
     ///
     /// Note that block 0 is reserved to store block-level metadata.
-    pub fn new<P>(path: P, mut map: BlockMap) -> Result<Self, failure::Error>
+    pub fn new<S, P>(password: S, path: P, mut map: BlockMap) -> Result<Self, failure::Error>
     where
+        S: AsRef<str>,
         P: AsRef<Path>,
     {
         let root_path: PathBuf = path.as_ref().into();
         FileStore::init(&root_path, map.block_size(), map.block_count())?;
 
+        let key = make_fs_key(password.as_ref(), &map.id());
+        let mut nonce = Vec::with_capacity(24);
+        // FIXME: Is this nonce sufficient?
+        nonce.extend_from_slice(&map.id().as_bytes()[..]);
+        nonce.extend_from_slice(&map.id().as_bytes()[0..8]);
+
         let mut writer = FileWriter {
+            key,
+            nonce,
             block_size: map.block_size(),
             block_count: map.block_count(),
             root_path: root_path.clone(),
@@ -136,6 +203,8 @@ impl FileStore {
 
         Ok(FileStore {
             id: map.id().clone(),
+            key,
+            nonce: writer.nonce,
             block_size: map.block_size(),
             block_count: map.block_count(),
             root_path,
@@ -146,16 +215,41 @@ impl FileStore {
     /// Consistency Check
     ///
     /// FIXME: Actually check consistency?
-    pub fn check<P>(path: P) -> Result<(), failure::Error>
+    pub fn check<S, P>(password: S, path: P, show_map: bool) -> Result<(), failure::Error>
     where
+        S: AsRef<str>,
         P: AsRef<Path>,
     {
         println!("Running consistency check on {:?}", path.as_ref());
 
-        let fs = FileStore::load(path)?;
+        let key = make_fs_key(
+            password.as_ref(),
+            &UfsUuid::new_root_fs(
+                path.as_ref()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .as_bytes(),
+            ),
+        );
+
+        let fs = FileStore::load(key, path)?;
+
         println!("File-based Block Storage:");
+        println!("\tID: {}", fs.id);
         println!("\tblock count: {}", fs.block_count);
         println!("\tblock size: {}", fs.block_size);
+        println!("\tfree blocks: {}", fs.map.free_blocks().len());
+        match fs.map.root_block() {
+            Some(block) => println!("\troot block number: {}", block),
+            None => (),
+        };
+
+        if show_map {
+            println!("\nBlockMap Metadata:");
+            println!("{:#?}", fs.map);
+        }
 
         Ok(())
     }
@@ -163,17 +257,31 @@ impl FileStore {
     /// Construct Existing
     ///
     /// Load an existing file store from disk.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, failure::Error> {
+    pub fn load<P>(key: [u8; 32], path: P) -> Result<Self, failure::Error>
+    where
+        P: AsRef<Path>,
+    {
         let root_path: PathBuf = path.as_ref().into();
 
-        let reader = FileReader {
-            root_path: root_path.clone(),
-        };
+        let reader = FileReader::new(key, &path);
 
-        let metadata = BlockMap::deserialize(&reader)?;
+        let metadata = match BlockMap::deserialize(&reader) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                error!(
+                    "Unable to load metadata -- possibly incorrect password?\nError: {}",
+                    e
+                );
+                return Err(format_err!(
+                    "Unable to load metadata -- possibly incorrect password?"
+                ));
+            }
+        };
 
         Ok(FileStore {
             id: metadata.id().clone(),
+            key: reader.key,
+            nonce: reader.nonce,
             block_size: metadata.block_size(),
             block_count: metadata.block_count(),
             root_path,
@@ -246,7 +354,10 @@ impl BlockStorage for FileStore {
 
     fn commit_map(&mut self) {
         debug!("writing BlockMap");
+
         let mut writer = FileWriter {
+            key: self.key,
+            nonce: self.nonce.clone(),
             block_size: self.block_size,
             block_count: self.block_count,
             root_path: self.root_path.clone(),
@@ -281,7 +392,13 @@ impl BlockWriter for FileStore {
     where
         D: AsRef<[u8]>,
     {
-        let data = data.as_ref();
+        let mut data = data.as_ref().to_vec();
+        encrypt(
+            &self.key,
+            &self.nonce,
+            bn * self.block_size as u64,
+            &mut data,
+        );
 
         if bn > self.block_count {
             Err(format_err!("request for bogus block {}", bn))
@@ -291,7 +408,7 @@ impl BlockWriter for FileStore {
             }
 
             let path = path_for_block(&self.root_path, bn);
-            fs::write(path, data)?;
+            fs::write(path, &data)?;
 
             debug!("wrote {} bytes to block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
@@ -307,7 +424,22 @@ impl BlockReader for FileStore {
         } else {
             let path = path_for_block(&self.root_path, bn);
             debug!("reading block from {:?}", path);
-            let data = fs::read(path)?;
+            let data = match fs::read(&path) {
+                Ok(mut data) => {
+                    decrypt(
+                        &self.key,
+                        &self.nonce,
+                        bn * self.block_size as u64,
+                        &mut data,
+                    );
+                    data
+                }
+                Err(_) => {
+                    error!("error reading file {:?}", path);
+                    panic!();
+                }
+            };
+
             debug!("read {} bytes from block 0x{:x?}", data.len(), bn);
             trace!("{:?}", data);
 
@@ -332,8 +464,9 @@ mod test {
         let data = [0x0; BlockSize::FiveTwelve as usize];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 3),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 3),
         )
         .unwrap();
 
@@ -353,8 +486,9 @@ mod test {
         let data = [0x42; BlockSize::TenTwentyFour as usize + 1];
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
         assert!(fs.write_block(1, &data[..]).is_err());
@@ -369,11 +503,18 @@ mod test {
             7a13479a462d71b56c19a74a40b655c58edfe0a188ad2cf46cbf30524f65d423c837dd1ff2bf462ac4198007
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
+        let enciphered = hex!(
+            "6a1a099ad6c2d71922c32c892fe694e47dd60dadde08e5f9393e41f1aa57534f39b72c0d5e08af1c3155564
+            b247499a0327773baa0a4515ee18996b660c7d84b36aaf4d6b585cd0da20e1a383588d8e9040d8748746f121
+            0a73c71107033efab4d23ebc841f3f738dfeaa1192d97ca2b8f7f49d100b8c785d3adb2c1a45d00c7b335c4c
+            6d8296ca9550fe0c01254599bc499b1890cbd63462647bbc1075547011b3bf7"
+        );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let mut fs = FileStore::new(
+            "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
@@ -385,7 +526,7 @@ mod test {
         path.set_extension(BLOCK_EXT);
         assert_eq!(
             fs::read(path).unwrap(),
-            &data[..],
+            &enciphered[..],
             "API write to block, and compare directly"
         );
     }
@@ -399,26 +540,31 @@ mod test {
             7a13479a462d71b56c19a74a40b655c58edfe0a188ad2cf46cbf30524f65d423c837dd1ff2bf462ac4198007
             345bb44dbb7b1c861298cdf61982a833afc728fae1eda2f87aa2c9480858bec"
         );
+        let enciphered = hex!(
+            "6a1a099ad6c2d71922c32c892fe694e47dd60dadde08e5f9393e41f1aa57534f39b72c0d5e08af1c3155564
+            b247499a0327773baa0a4515ee18996b660c7d84b36aaf4d6b585cd0da20e1a383588d8e9040d8748746f121
+            0a73c71107033efab4d23ebc841f3f738dfeaa1192d97ca2b8f7f49d100b8c785d3adb2c1a45d00c7b335c4c
+            6d8296ca9550fe0c01254599bc499b1890cbd63462647bbc1075547011b3bf7"
+        );
 
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let fs = FileStore::new(
+            "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 0x10),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 0x10),
         )
         .unwrap();
 
-        let mut expected_block = vec![0x0; BlockSize::FiveTwelve as usize];
-        expected_block[..data.len()].copy_from_slice(&data[..]);
-
+        // Manually write the block to the file system
         let mut path = PathBuf::from(&test_dir);
         path.push("0");
-        path.push("0");
+        path.push("7");
         path.set_extension(BLOCK_EXT);
-        fs::write(path, &expected_block).unwrap();
+        fs::write(path, &enciphered[..]).unwrap();
 
         assert_eq!(
-            fs.read_block(0).unwrap(),
-            expected_block,
+            fs.read_block(7).unwrap(),
+            &data[..],
             "write directly to block, and compare via the API"
         );
     }
@@ -428,8 +574,9 @@ mod test {
         let test_dir = [TEST_ROOT, "construction_sanity"].concat();
         fs::remove_dir_all(&test_dir).unwrap_or_default();
         let fs = FileStore::new(
+            "foobar",
             &test_dir,
-            BlockMap::new(UfsUuid::new_root("test"), BlockSize::FiveTwelve, 4),
+            BlockMap::new(UfsUuid::new_root_fs("test"), BlockSize::FiveTwelve, 4),
         )
         .unwrap();
 

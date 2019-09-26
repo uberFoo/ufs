@@ -20,6 +20,7 @@ use serde_derive::{Deserialize, Serialize};
 
 pub(crate) mod dir;
 pub(crate) mod file;
+pub(crate) mod user;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::uuid::UfsUuid;
@@ -34,6 +35,8 @@ pub(crate) use dir::DirectoryMetadata;
 pub(crate) use dir::WASM_EXT;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use file::{FileMetadata, FileVersion};
+
+pub(crate) use user::UserMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::block::{
@@ -185,6 +188,9 @@ pub(crate) struct Metadata {
     /// The Root Directory
     ///
     root_directory: DirectoryMetadata,
+    /// File system user information
+    ///
+    users: UserMetadata,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -193,12 +199,41 @@ impl Metadata {
     ///
     /// The UUID of the file system is saved with the metadata.
     /// A new root directory is initialized.
-    pub(crate) fn new(file_system_id: UfsUuid) -> Self {
+    pub(crate) fn new(file_system_id: UfsUuid, owner: UfsUuid) -> Self {
         Metadata {
             dirty: true,
             id: file_system_id.clone(),
-            root_directory: DirectoryMetadata::new(file_system_id.new("/"), None),
+            root_directory: DirectoryMetadata::new(file_system_id.new("/"), None, owner),
+            users: UserMetadata::new(),
         }
+    }
+
+    /// Create a new user
+    ///
+    pub(crate) fn add_user(&mut self, user: String, password: String) {
+        debug!("-------");
+        debug!("`new_user`: {}", user);
+
+        self.dirty = true;
+        self.users.new_user(user, password);
+    }
+
+    /// Validate a user with a password
+    ///
+    /// If successful, return a tuple of the user's id and their key.
+    ///
+    pub(crate) fn validate_user<S: AsRef<str>>(
+        &self,
+        user: S,
+        password: S,
+    ) -> Option<(UfsUuid, [u8; 32])> {
+        self.users.validate_user(&user, &password)
+    }
+
+    /// Return a list of existing users
+    ///
+    pub(crate) fn get_users(&self) -> Vec<String> {
+        self.users.get_users()
     }
 
     /// Create a new directory
@@ -207,12 +242,13 @@ impl Metadata {
         &mut self,
         dir_id: UfsUuid,
         name: &str,
+        owner: UfsUuid,
     ) -> Result<DirectoryMetadata, failure::Error> {
         debug!("--------");
         debug!("`new_directory`: {}", name);
 
         if let Some(root) = self.lookup_dir_mut(dir_id) {
-            let new_dir = root.new_subdirectory(name.to_owned())?;
+            let new_dir = root.new_subdirectory(name.to_owned(), owner)?;
             self.dirty = true;
             debug!("\tcreated directory with id {:?}", dir_id);
             Ok(new_dir)
@@ -244,9 +280,12 @@ impl Metadata {
                                     name.push('@');
                                     name.push_str(&index.to_string());
                                     trace!("\tfound version {}", name);
+                                    // We want to create a new file that only consists of a single
+                                    // version, which is why we create a new one using
+                                    // as_file_metadata().
                                     files.insert(
                                         name,
-                                        DirectoryEntry::File(version.as_file_metadata()),
+                                        DirectoryEntry::File(version.as_file_metadata(&file)),
                                     );
                                 }
                             }
@@ -658,7 +697,8 @@ pub mod test {
     fn new_metadata() {
         init();
 
-        let m = Metadata::new(UfsUuid::new_root("test"));
+        let user = UfsUuid::new_user("test");
+        let m = Metadata::new(UfsUuid::new_root_fs("test"), user);
         let root = m.root_directory();
 
         assert_eq!(m.is_dirty(), true);
@@ -670,10 +710,11 @@ pub mod test {
     fn new_directory() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let user = UfsUuid::new_user("test");
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"), user);
         let root_id = m.root_directory().id();
-        let d = m.new_directory(root_id, "test").unwrap();
-        let d2 = m.new_directory(d.id(), "test2").unwrap();
+        let d = m.new_directory(root_id, "test", user).unwrap();
+        let d2 = m.new_directory(d.id(), "test2", user).unwrap();
 
         assert_eq!(d.parent_id(), Some(root_id));
         assert_eq!(d2.parent_id(), Some(d.id()));
@@ -683,9 +724,10 @@ pub mod test {
     fn id_for_path() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let user = UfsUuid::new_user("test");
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"), user);
         let root_id = m.root_directory().id();
-        let dir = m.new_directory(root_id, "foo").unwrap();
+        let dir = m.new_directory(root_id, "foo", user).unwrap();
         let wasm = dir.entries().get(".wasm").unwrap();
         let wasm_id = if let DirectoryEntry::Directory(d) = wasm {
             d.id()
@@ -716,9 +758,10 @@ pub mod test {
     fn path_for_id() {
         init();
 
-        let mut m = Metadata::new(UfsUuid::new_root("test"));
+        let user = UfsUuid::new_user("test");
+        let mut m = Metadata::new(UfsUuid::new_root_fs("test"), user);
         let root_id = m.root_directory().id();
-        let dir = m.new_directory(root_id, "foo").unwrap();
+        let dir = m.new_directory(root_id, "foo", user).unwrap();
         let wasm = dir.entries().get(".wasm").unwrap();
         let wasm_id = if let DirectoryEntry::Directory(d) = wasm {
             d.id()

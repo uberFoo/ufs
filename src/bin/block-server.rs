@@ -4,68 +4,97 @@
 //!
 //! POST -- write some data to a particular block
 //!
-use std::{collections::HashMap, env, path::Path};
-
-use dotenv::dotenv;
-use futures::future;
-use hyper::{
-    header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE},
-    rt::{Future, Stream},
-    service::service_fn,
-    Body, Method, Request, Response, Server, StatusCode,
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
 };
-// Note to self: error > warn > info > debug > trace
-use log::{debug, error, info, trace};
-use pretty_env_logger;
 
-use ufs::{BlockNumber, BlockReader, BlockWriter, FileStore};
+use {
+    dotenv::dotenv,
+    futures::future,
+    hyper::{
+        header::{HeaderValue, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE},
+        rt::{Future, Stream},
+        service::service_fn,
+        Body, Method, Request, Response, Server, StatusCode,
+    },
+    // Note to self: error > warn > info > debug > trace
+    log::{debug, error, info, trace},
+    pretty_env_logger,
+};
+
+use ufs::{make_fs_key, BlockNumber, BlockReader, BlockWriter, FileStore, UfsUuid};
 
 // Just a simple type alias
 type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
-fn get_store(
-    uri_path: &str,
-    bundle_root: &Path,
-    store_map: &mut HashMap<String, Option<FileStore>>,
-) -> Option<(String, FileStore)> {
-    let path = Path::new(uri_path).strip_prefix("/").unwrap();
-    if path.iter().count() != 1 {
-        // Don't allow arbitrary paths within the host file system -- this is just an ID.
-        error!("Bundle ID is malformed {:?}", path);
-        None
-    } else {
-        let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
-        let bundle_path = bundle_root.join(bundle);
+struct BlockStores {
+    inner: HashMap<String, FileStore>,
+    bundle_root: PathBuf,
+}
 
-        let store = store_map.entry(bundle.to_string()).or_insert_with(|| {
-            match FileStore::load(bundle_path.clone()) {
-                Ok(bs) => {
-                    debug!("loaded file store {:?}", bundle_path);
-                    Some(bs)
-                }
-                Err(e) => {
-                    error!(
-                        "Unable to open File Store {}: {}",
-                        bundle_path.to_str().unwrap(),
-                        e
-                    );
-                    None
-                }
+impl BlockStores {
+    pub fn new(bundle_root: PathBuf) -> Self {
+        BlockStores {
+            inner: HashMap::new(),
+            bundle_root,
+        }
+    }
+
+    fn open_store(bundle_path: PathBuf) -> Option<FileStore> {
+        let fs_name = bundle_path.file_name().unwrap().to_str().unwrap();
+
+        // FIXME: This doesn't allow for running the server as a daemon, i.e., it requires a
+        // TTY, and someone to type the password.
+        let password =
+            rpassword::read_password_from_tty(Some(&format!("master password for {}: ", fs_name)))
+                .unwrap();
+
+        let key = make_fs_key(&password, &UfsUuid::new_root_fs(fs_name));
+
+        match FileStore::load(key, bundle_path.clone()) {
+            Ok(bs) => {
+                debug!("loaded file store {:?}", bundle_path);
+                Some(bs)
             }
-        });
+            Err(_) => {
+                error!(
+                    "Unable to open File Store {}. Possibly invalid password.",
+                    bundle_path.to_str().unwrap(),
+                );
+                None
+            }
+        }
+    }
 
-        match store {
-            Some(store) => Some((bundle.to_string(), store.clone())),
-            None => None,
+    pub fn get_store(&mut self, uri_path: &str) -> Option<(String, FileStore)> {
+        let path = Path::new(uri_path).strip_prefix("/").unwrap();
+
+        if path.iter().count() != 1 {
+            // Don't allow arbitrary paths within the host file system -- this is just an ID.
+            error!("Bundle ID is malformed {:?}", path);
+            None
+        } else {
+            let bundle = path.to_str().expect("Bundle ID wasn't parsable.");
+            let bundle_path = self.bundle_root.join(bundle);
+
+            match self.inner.get(bundle) {
+                Some(store) => Some((bundle.to_string(), store.clone())),
+                None => match BlockStores::open_store(bundle_path) {
+                    Some(store) => {
+                        let store = self.inner.entry(bundle.to_owned()).or_insert(store);
+                        Some((bundle.to_string(), store.clone()))
+                    }
+                    None => None,
+                },
+            }
         }
     }
 }
 
-fn block_manager(
-    req: Request<Body>,
-    bundle_root: &Path,
-    store_map: &mut HashMap<String, Option<FileStore>>,
-) -> BoxFut {
+fn block_manager(req: Request<Body>, store_map: &Arc<RwLock<BlockStores>>) -> BoxFut {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NOT_FOUND;
 
@@ -77,7 +106,7 @@ fn block_manager(
         // The path component specifies the file system UUID, and the sole query component the
         // block number.
         (&Method::GET, path, Some(query)) => {
-            if let Some((bundle, store)) = get_store(path, bundle_root, store_map) {
+            if let Some((bundle, store)) = store_map.write().unwrap().get_store(path) {
                 // FIXME:
                 // * Allow a comma separated list of blocks, e.g., 0,5,4,10,1
                 // * Allow a range of blocks, e.g., 5-9
@@ -90,9 +119,9 @@ fn block_manager(
                             CONTENT_TYPE,
                             HeaderValue::from_static("application/octet-stream"),
                         );
-                        response
-                            .headers_mut()
-                            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+                        // response
+                        //     .headers_mut()
+                        //     .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
                         *response.body_mut() = Body::from(data);
                         *response.status_mut() = StatusCode::OK;
                     } else {
@@ -109,7 +138,7 @@ fn block_manager(
         // The path component specifies the file system UUID, and the sole query component the
         // block number.
         (&Method::POST, path, Some(query)) => {
-            if let Some((bundle, mut store)) = get_store(path, bundle_root, store_map) {
+            if let Some((bundle, mut store)) = store_map.write().unwrap().get_store(path) {
                 if let Ok(block) = query.parse::<BlockNumber>() {
                     debug!("Request to write {}:0x{:x?}", bundle, block);
 
@@ -185,24 +214,15 @@ fn main() -> Result<(), failure::Error> {
         );
     }
 
-    // FIXME: This does _not_ work as expected.
-    // It looks like new_service is _only_ called when I'm not using client::reqwest.  In other
-    // words, creating a reqwest::Client, and then using get on it caches the FileStore as expected.
-    // So there is some session stuff happening?
-    // Also, even when it appears to "work", it isn't really.  I really want the caching to happen
-    // globally.
-    let store: HashMap<String, Option<FileStore>> = HashMap::new();
+    let block_stores = Arc::new(RwLock::new(BlockStores::new(PathBuf::from(bundle_root))));
 
     let new_service = move || {
         debug!("Starting a new service");
-        let bundle_root = bundle_root.clone();
-        let mut store = store.clone();
-
-        service_fn(move |req| block_manager(req, &Path::new(&bundle_root), &mut store))
+        let block_stores = block_stores.clone();
+        service_fn(move |req| block_manager(req, &block_stores))
     };
 
     let server = Server::bind(&addr)
-        // .serve(|| service_fn(block_manager))
         .serve(new_service)
         .map_err(|e| eprintln!("server error: {}", e));
 

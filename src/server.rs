@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{spawn, JoinHandle};
 
 use failure::format_err;
-use log::{debug, error, info};
+use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::fsops::FileSystemOps;
@@ -26,7 +26,7 @@ pub(crate) enum UfsRemoteServerMessage {
 }
 
 impl UfsRemoteServerMessage {
-    fn handle_message(msg: &UfsRemoteServerMessage) -> Result<(), failure::Error> {
+    fn handle_message(_msg: &UfsRemoteServerMessage) -> Result<(), failure::Error> {
         Ok(())
     }
 }
@@ -102,7 +102,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
     fn read_file(
         &mut self,
         handle: FileHandle,
-        offset: i64,
+        offset: u64,
         size: usize,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.ufs.lock().expect("poisoned ufs lock");
@@ -111,7 +111,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
 
     fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error> {
         let mut guard = self.ufs.lock().expect("poisoned ufs lock");
-        guard.write_file(handle, bytes)
+        guard.write_file(handle, bytes, 0)
     }
 
     fn create_dir(&mut self, path: &Path) -> Result<(), failure::Error> {
@@ -142,7 +142,8 @@ mod test {
     fn connect() -> Box<TcpStream> {
         init();
 
-        let ufs = UberFileSystem::new_memory(BlockSize::TwentyFortyEight, 100);
+        let ufs =
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
         let mounter = UfsMounter::new(ufs, Some(8787));
         let mut stream = TcpStream::connect("127.0.0.1:8787").unwrap();
         Box::new(stream)
