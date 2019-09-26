@@ -14,3 +14,9 @@ mut_static = "5.0.0"
 [dependencies.ufs]
 default-features = false
 path = "../../"
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"
+lto = true
+debug = true
