@@ -604,6 +604,19 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         match self.open_files.remove(&handle) {
             Some(file) => {
+                if let Some(program_mgr) = &self.program_mgr {
+                    program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                        IofsFileMessage::FileClosed(
+                            self.block_manager
+                                .metadata()
+                                .path_from_file_id(file.file_id)
+                                .to_str()
+                                .unwrap()
+                                .to_string(),
+                        ),
+                    )));
+                }
+
                 // self.notify_listeners(UfsMessage::FileClose(
                 //     self.block_manager
                 //         .metadata()

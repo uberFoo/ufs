@@ -18,8 +18,9 @@ pub extern "C" fn init() {
     register_callback(WasmMessage::Ping, ping);
     register_callback(WasmMessage::Shutdown, shutdown);
     register_callback(WasmMessage::NewFile, handle_new_file);
-    register_callback(WasmMessage::FileDeleted, handle_file_deleted);
     register_callback(WasmMessage::NewDir, handle_new_dir);
+    register_callback(WasmMessage::FileDeleted, handle_file_deleted);
+    register_callback(WasmMessage::FileClosed, handle_file_closed);
 }
 
 #[no_mangle]
@@ -42,6 +43,13 @@ pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
 }
 
 #[no_mangle]
+pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::String(path)) = payload {
+        print(&format!("handle new dir: {:?}", path.get_str()));
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::String(path)) = payload {
         print(&format!("handle file deleted: {:?}", path.get_str()));
@@ -49,8 +57,8 @@ pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
 }
 
 #[no_mangle]
-pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
+pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::String(path)) = payload {
-        print(&format!("handle new dir: {:?}", path.get_str()));
+        print(&format!("handle file closed: {:?}", path.get_str()));
     }
 }

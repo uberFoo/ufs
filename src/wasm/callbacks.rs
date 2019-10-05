@@ -1,3 +1,7 @@
+//! Extern WASM function implementations
+//!
+//! Functions that are declared in the WASM program as `extern` are resolved here.
+//!
 use {
     crate::{block::BlockStorage, wasm::WasmContext},
     colored::*,
@@ -48,12 +52,10 @@ fn unbox_message(ctx: &Ctx, msg_ptr: u32) -> WasmMessage {
         0 => WasmMessage::Shutdown,
         1 => WasmMessage::Ping,
         2 => WasmMessage::NewFile,
-        3 => WasmMessage::FileChanged,
-        4 => WasmMessage::FileWritten,
-        5 => WasmMessage::FileRead,
-        6 => WasmMessage::FileDeleted,
-        7 => WasmMessage::NewDir,
-        8 => WasmMessage::DirChanged,
+        3 => WasmMessage::NewDir,
+        4 => WasmMessage::FileDeleted,
+        5 => WasmMessage::DirDeleted,
+        6 => WasmMessage::FileClosed,
         _ => panic!("Invalid value decoding WasmMessage"),
     }
 }

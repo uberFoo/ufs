@@ -1,3 +1,5 @@
+//! Main interface between the IOFS and WASM
+//!
 use {
     crate::{
         block::BlockStorage,
@@ -69,7 +71,7 @@ impl WasmProgram {
 
 /// WASM Thread Management
 ///
-/// The sole purpose of this struct is to provide a means by which the `UberFileSystem` may start
+/// The sole purpose of this struct is to provide a means by which the `IOFileSystem` may start
 /// and stop WASM programs. There is a channel that the UFS uses to send start and stop messages to
 /// the `RuntimeManager`. This then handles the work of doing so.
 ///

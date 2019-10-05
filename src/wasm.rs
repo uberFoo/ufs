@@ -1,3 +1,7 @@
+//! Module for WASM Runtime
+//!
+//! We use wasmer as our WASM interpreter.
+//!
 mod callbacks;
 pub(crate) mod manager;
 pub(crate) mod message;
@@ -26,6 +30,12 @@ use {
     wasmer_runtime::{func, imports, instantiate},
 };
 
+/// Communication between WASM and Rust
+///
+/// This is the means whereby Rust and WASM may communicate. It's a shared memory context that
+/// contains a handle to the file system that WASM programs may use to invoke file system functions.
+/// It also contains a list of handlers that the WASM program has registered to be called when file
+/// system events occur.
 pub(in crate::wasm) struct WasmContext<B: BlockStorage> {
     /// A non-unique identifier for the WASM program.  Uniqueness may be virtuous.
     pub(in crate::wasm) path: PathBuf,
@@ -47,11 +57,10 @@ impl<B: BlockStorage> WasmContext<B> {
         handlers.insert(WasmMessage::Shutdown, false);
         handlers.insert(WasmMessage::Ping, false);
         handlers.insert(WasmMessage::NewFile, false);
-        handlers.insert(WasmMessage::FileChanged, false);
-        handlers.insert(WasmMessage::FileWritten, false);
-        handlers.insert(WasmMessage::FileRead, false);
         handlers.insert(WasmMessage::NewDir, false);
-        handlers.insert(WasmMessage::DirChanged, false);
+        handlers.insert(WasmMessage::FileDeleted, false);
+        handlers.insert(WasmMessage::DirDeleted, false);
+        handlers.insert(WasmMessage::FileClosed, false);
 
         WasmContext {
             path,
@@ -78,6 +87,12 @@ impl<B: BlockStorage> WasmContext<B> {
     }
 }
 
+/// The main interface between the file system and WASM
+///
+/// One of these is created when the file system loads a new WASM program. This struct maintains a
+/// channel which the file system uses to send file system events to the WASM program. The WASM
+/// program itself is started in the `start` associated function. Messages are received there and
+/// forwarded to the executing WASM program.
 pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     sender: crossbeam_channel::Sender<IofsMessage>,
     receiver: crossbeam_channel::Receiver<IofsMessage>,
@@ -104,6 +119,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         debug!("--------");
         debug!("start {:?}", process.wasm_context.path());
         spawn(move || {
+            // This is the mapping of functions imported to the WASM interpreter.
             let import_object = imports! {
                 "env" => {
                     "__register_for_callback" => func!(__register_for_callback<B>),
@@ -168,6 +184,14 @@ impl<B: BlockStorage> WasmProcess<B> {
                                 .does_handle_message(WasmMessage::FileDeleted)
                             {
                                 msg_sender.send_file_deleted(f)?;
+                            }
+                        }
+                        IofsFileMessage::FileClosed(f) => {
+                            if process
+                                .wasm_context
+                                .does_handle_message(WasmMessage::FileClosed)
+                            {
+                                msg_sender.send_file_closed(f)?;
                             }
                         }
                         _ => unimplemented!(),

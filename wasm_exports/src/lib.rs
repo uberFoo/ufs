@@ -1,3 +1,8 @@
+//! Functions exported to the WASM environment
+//!
+//! These are functions needed to interface with the IOFS, and are linked into the user's WASM
+//! program when it's built.
+//!
 use {
     lazy_static::lazy_static,
     mut_static::MutStatic,
@@ -25,12 +30,10 @@ pub enum WasmMessage {
     Shutdown,
     Ping,
     NewFile,
-    FileChanged,
-    FileWritten,
-    FileRead,
-    FileDeleted,
     NewDir,
-    DirChanged,
+    FileDeleted,
+    DirDeleted,
+    FileClosed,
 }
 
 #[no_mangle]
@@ -65,6 +68,15 @@ pub extern "C" fn __handle_new_file(ptr: i32, len: i32) {
 }
 
 #[no_mangle]
+pub extern "C" fn __handle_new_dir(ptr: i32, len: i32) {
+    let lookup = LOOKUP.read().unwrap();
+    if let Some(func) = lookup.lookup(&WasmMessage::NewDir) {
+        let path_from_host = RefStr { ptr, len };
+        func(Some(MessagePayload::String(path_from_host)));
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn __handle_file_delete(ptr: i32, len: i32) {
     let lookup = LOOKUP.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileDeleted) {
@@ -74,9 +86,9 @@ pub extern "C" fn __handle_file_delete(ptr: i32, len: i32) {
 }
 
 #[no_mangle]
-pub extern "C" fn __handle_new_dir(ptr: i32, len: i32) {
+pub extern "C" fn __handle_file_close(ptr: i32, len: i32) {
     let lookup = LOOKUP.read().unwrap();
-    if let Some(func) = lookup.lookup(&WasmMessage::NewDir) {
+    if let Some(func) = lookup.lookup(&WasmMessage::FileClosed) {
         let path_from_host = RefStr { ptr, len };
         func(Some(MessagePayload::String(path_from_host)));
     }
