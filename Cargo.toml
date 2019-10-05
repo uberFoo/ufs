@@ -7,6 +7,9 @@ edition = "2018"
 [features]
 default  = ["fuse", "hyper", "reqwest", "ring"]
 
+[workspace]
+members = ["wasm_exports"]
+
 [[bench]]
 name = "block-server"
 harness = false
@@ -33,6 +36,8 @@ c2-chacha = "~0.2"
 hmac = "~0.7"
 sha2 = "~0.8"
 pbkdf2 = "~0.3"
+wasmer-runtime = "~0.7"
+wasm_exports = { path = "wasm_exports" }
 
 [dependencies.chrono]
 version = "~0.4"

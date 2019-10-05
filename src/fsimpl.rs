@@ -21,6 +21,10 @@ use crate::{
         DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, Metadata, WASM_EXT,
     },
     server::UfsRemoteServer,
+    wasm::{
+        IofsDirMessage, IofsFileMessage, IofsMessage, RuntimeManager, RuntimeManagerMsg,
+        WasmProgram,
+    },
     UfsUuid,
 };
 
@@ -37,35 +41,6 @@ pub enum OpenFileMode {
     /// Open file for reading and writing
     ///
     ReadWrite,
-}
-
-/// Runtime Manager Messages
-///
-/// These are used to communicate messages to the Runtime Manager from the file system
-/// implementation.
-enum RuntimeManagerMsg {
-    /// Shutdown WASM Runtime
-    ///
-    /// The file system is shutting down, and this allows the WASM programs the same opportunity.
-    Shutdown,
-    /// Add a new WASM Program
-    ///
-    /// The file system contains a WASM program, and wishes it to be loaded and run.
-    Start(WasmProgram),
-    /// Stop a running WASM Program
-    ///
-    /// There is a running program that must needs be stopped.
-    Stop(PathBuf),
-}
-
-/// Information necessary to start running a WASM program
-///
-/// This is the contents of the RuntimeManagerMsg::Start message.
-struct WasmProgram {
-    /// A non-unique identifier for the WASM program.  Uniqueness may be virtuous.
-    name: PathBuf,
-    /// The bytes that comprise the program.
-    program: Vec<u8>,
 }
 
 /// File System integration with WASM interpreter
@@ -153,87 +128,6 @@ impl<B: BlockStorage> DerefMut for UfsMounter<B> {
     }
 }
 
-/// WASM Thread Management
-///
-/// The sole purpose of this struct is to provide a means by which the `UberFileSystem` may start
-/// and stop WASM programs. There is a channel that the UFS uses to send start and stop messages to
-/// the `RuntimeManager`. This then handles the work of doing so.
-///
-/// The `UfsMounter` will also send a shutdown message, on the same channel, when the file system is
-/// going away. Here, we use that message to nicely stop the WASM programs before exiting.
-pub struct RuntimeManager<B: BlockStorage + 'static> {
-    ufs: Arc<Mutex<UberFileSystem<B>>>,
-    receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
-    threads: HashMap<PathBuf, JoinHandle<Result<(), failure::Error>>>,
-}
-
-impl<B: BlockStorage> RuntimeManager<B> {
-    fn new(
-        ufs: Arc<Mutex<UberFileSystem<B>>>,
-        receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
-    ) -> Self {
-        RuntimeManager {
-            ufs,
-            receiver,
-            threads: HashMap::new(),
-        }
-    }
-
-    /// Start the RuntimeManager
-    ///
-    /// Note that this does not take `self`, but has access via `runtime`.
-    fn start(mut runtime: RuntimeManager<B>) -> JoinHandle<Result<(), failure::Error>> {
-        spawn(move || {
-            loop {
-                let msg = runtime.receiver.recv().unwrap();
-                match msg {
-                    // Shutdown comes from the UfsMounter, thus we need to shutdown the running
-                    // programs (via our UberFileSystem reference) before joining the threads,
-                    // see below.
-                    RuntimeManagerMsg::Shutdown => break,
-                    // Stop the WASM program and remove it from the listeners map.
-                    RuntimeManagerMsg::Stop(name) => {
-                        info!("Stopping WASM program {:?}", name);
-                        let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
-                        if let Some(thread) = runtime.threads.remove(&name) {
-                            // if let Some(sender) = ufs.listeners.remove(&name) {
-                            //     sender.send(UfsMessage::Shutdown);
-                            //     thread.join().unwrap().unwrap();
-                            // }
-                        }
-                    }
-                    // Start the WASM program and add it to the listeners map.
-                    RuntimeManagerMsg::Start(wasm) => {
-                        info!("Starting WASM program {:?}", wasm.name);
-                        // let process = Process::new(wasm.name.clone(), wasm.program);
-                        // let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
-                        // ufs.listeners
-                        //     .insert(wasm.name.clone(), process.get_sender());
-                        // runtime.threads.insert(
-                        //     wasm.name,
-                        //     Process::start(
-                        //         process,
-                        //         Box::new(FileSystemOperator::new(runtime.ufs.clone()))
-                        //             as Box<dyn FileSystemOps>,
-                        //     ),
-                        // );
-                    }
-                }
-            }
-
-            let ufs = runtime.ufs.lock().expect("poisoned ufs lock");
-            info!("Shutting down WASM programs");
-            // ufs.notify_listeners(UfsMessage::Shutdown);
-
-            for (_, thread) in runtime.threads {
-                thread.join().unwrap().unwrap();
-            }
-
-            Ok(())
-        })
-    }
-}
-
 /// Main File System Implementation
 ///
 pub struct UberFileSystem<B: BlockStorage> {
@@ -243,7 +137,6 @@ pub struct UberFileSystem<B: BlockStorage> {
     open_files: HashMap<FileHandle, File>,
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
     open_file_counter: FileHandle,
-    // listeners: HashMap<PathBuf, crossbeam_channel::Sender<UfsMessage>>,
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
 }
 
@@ -272,7 +165,6 @@ impl UberFileSystem<MemoryStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            // listeners: HashMap::new(),
             program_mgr: None,
         }
     }
@@ -312,7 +204,6 @@ impl UberFileSystem<FileStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            // listeners: HashMap::new(),
             program_mgr: None,
         })
     }
@@ -341,7 +232,6 @@ impl UberFileSystem<NetworkStore> {
             open_files: HashMap::new(),
             open_dirs: HashMap::new(),
             open_file_counter: 0,
-            // listeners: HashMap::new(),
             program_mgr: None,
         })
     }
@@ -362,16 +252,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
     pub(crate) fn get_root_directory_id(&self) -> UfsUuid {
         self.block_manager.metadata().root_directory().id()
     }
-
-    /// Send a message to all listening WASM programs.
-    // fn notify_listeners(&self, msg: UfsMessage) {
-    //     for (_, listener) in &self.listeners {
-    //         match listener.send(msg.clone()) {
-    //             Ok(_) => (),
-    //             Err(e) => error!("unable to send on channel {}", e),
-    //         }
-    //     }
-    // }
 
     /// Initialize for the Runtime
     ///
@@ -425,10 +305,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     if let Ok(program) = self.read_file(fh, 0, size as usize) {
                         info!("Adding existing program {:?} to runtime.", path);
                         program_mgr
-                            .send(RuntimeManagerMsg::Start(WasmProgram {
-                                name: path,
-                                program,
-                            }))
+                            .send(RuntimeManagerMsg::Start(WasmProgram::new(path, program)))
                             .unwrap()
                     }
                 }
@@ -477,6 +354,19 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .metadata_mut()
             .new_directory(parent_id, name, self.user)?;
 
+        if let Some(program_mgr) = &self.program_mgr {
+            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
+                IofsDirMessage::NewDir(
+                    self.block_manager
+                        .metadata()
+                        .path_from_dir_id(dir.id())
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                ),
+            )));
+        }
+
         // self.notify_listeners(UfsMessage::DirCreate(
         //     self.block_manager.metadata().path_from_dir_id(dir.id()),
         // ));
@@ -499,6 +389,19 @@ impl<B: BlockStorage> UberFileSystem<B> {
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
         self.open_files.insert(fh, file.clone());
+
+        if let Some(program_mgr) = &self.program_mgr {
+            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                IofsFileMessage::NewFile(
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id)
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                ),
+            )));
+        }
 
         // self.notify_listeners(UfsMessage::FileCreate(
         //     self.block_manager
@@ -559,6 +462,19 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .metadata()
             .get_file_metadata_from_dir_and_name(dir_id, name)
         {
+            if let Some(program_mgr) = &self.program_mgr {
+                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                    IofsFileMessage::FileDeleted(
+                        self.block_manager
+                            .metadata()
+                            .path_from_file_id(file.id())
+                            .to_str()
+                            .unwrap()
+                            .to_string(),
+                    ),
+                )));
+            }
+
             // self.notify_listeners(UfsMessage::FileRemove(
             //     self.block_manager.metadata().path_from_file_id(file.id()),
             // ));
@@ -566,9 +482,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
             if let Some(program_mgr) = &self.program_mgr {
                 if let Ok(dir) = self.block_manager.metadata().get_directory(dir_id) {
                     if dir.is_wasm_dir() {
-                        program_mgr.send(RuntimeManagerMsg::Stop(
-                            self.block_manager.metadata().path_from_file_id(file.id()),
-                        )).expect("unable to send message to Runtime Manager");
+                        program_mgr
+                            .send(RuntimeManagerMsg::Stop(
+                                self.block_manager.metadata().path_from_file_id(file.id()),
+                            ))
+                            .expect("unable to send message to Runtime Manager");
                     }
                 }
             }
@@ -666,10 +584,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
                                                 self.read_file(handle, 0, size as usize)
                                             {
                                                 program_mgr
-                                                    .send(RuntimeManagerMsg::Start(WasmProgram {
-                                                        name: path.to_path_buf(),
-                                                        program,
-                                                    }))
+                                                    .send(RuntimeManagerMsg::Start(
+                                                        WasmProgram::new(
+                                                            path.to_path_buf(),
+                                                            program,
+                                                        ),
+                                                    ))
                                                     .unwrap()
                                             }
                                         }

@@ -120,6 +120,7 @@ mod metadata;
 mod server;
 mod time;
 mod uuid;
+mod wasm;
 
 pub use crate::fuse::UberFSFuse;
 pub use crate::uuid::UfsUuid;

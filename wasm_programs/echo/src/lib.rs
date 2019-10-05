@@ -1,8 +1,4 @@
-use std::path::PathBuf;
-
-use lazy_static::lazy_static;
-use mut_static::MutStatic;
-use ufs::*;
+use {lazy_static::lazy_static, mut_static::MutStatic, wasm_exports::*};
 
 lazy_static! {
     pub static ref PROGRAM: MutStatic<Echo> = { MutStatic::from(Echo::new()) };
@@ -17,41 +13,44 @@ impl Echo {
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_create(path: &str) {
-    print(&format!("handle_file_create: {}", path));
+pub extern "C" fn init() {
+    let mut _pgm = PROGRAM.write().unwrap();
+    register_callback(WasmMessage::Ping, ping);
+    register_callback(WasmMessage::Shutdown, shutdown);
+    register_callback(WasmMessage::NewFile, handle_new_file);
+    register_callback(WasmMessage::FileDeleted, handle_file_deleted);
+    register_callback(WasmMessage::NewDir, handle_new_dir);
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_remove(path: &str) {
-    print(&format!("handle_file_remove: {}", path));
+pub extern "C" fn ping(_payload: Option<MessagePayload>) {
+    unsafe {
+        pong();
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_open(path: &str) {
-    print(&format!("handle_file_open: {}", path));
+pub extern "C" fn shutdown(_payload: Option<MessagePayload>) {
+    print("shutdown");
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_close(path: &str) {
-    print(&format!("handle_file_close: {}", path));
+pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::String(path)) = payload {
+        print(&format!("handle new file: {:?}", path.get_str()));
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_read(path: &str, data: &[u8]) {
-    print(&format!("handle_file_read: {}", path));
+pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::String(path)) = payload {
+        print(&format!("handle file deleted: {:?}", path.get_str()));
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn handle_file_write(path: &str, data: &[u8]) {
-    print(&format!("handle_file_write: {}", path));
-}
-
-#[no_mangle]
-pub extern "C" fn handle_dir_create(path: &str) {
-    print(&format!("handle_dir_create: {}", path));
-}
-
-#[no_mangle]
-pub extern "C" fn handle_dir_remove(path: &str) {
-    print(&format!("handle_dir_remove: {}", path));
+pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::String(path)) = payload {
+        print(&format!("handle new dir: {:?}", path.get_str()));
+    }
 }

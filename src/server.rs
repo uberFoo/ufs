@@ -159,7 +159,9 @@ mod test {
     fn list_files() {
         let mut connection = connect();
         let msg = UfsRemoteServerMessage::ListFiles;
-        connection.write(bincode::serialize(&msg).unwrap().as_slice()).unwrap();
+        connection
+            .write(bincode::serialize(&msg).unwrap().as_slice())
+            .unwrap();
         let mut buffer = [0; 256];
         connection.read(&mut buffer).unwrap();
         let response = bincode::deserialize::<UfsRemoteServerMessage>(&buffer).unwrap();
