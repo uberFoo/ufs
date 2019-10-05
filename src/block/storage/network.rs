@@ -2,9 +2,11 @@
 //!
 //! This is how we fetch blocks from the network.
 //!
-use failure::format_err;
-use log::{debug, error, trace};
-use reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url};
+use {
+    failure::format_err,
+    log::{debug, error, trace},
+    reqwest::{header::CONTENT_TYPE, Client, IntoUrl, Url},
+};
 
 use crate::{
     block::{
@@ -18,6 +20,7 @@ use crate::{
 ///
 pub struct NetworkStore {
     id: UfsUuid,
+    nonce: Vec<u8>,
     url: Url,
     client: Client,
     block_size: BlockSize,
@@ -26,19 +29,34 @@ pub struct NetworkStore {
 }
 
 impl NetworkStore {
-    pub fn new<U: IntoUrl>(url: U) -> Result<Self, failure::Error> {
+    pub fn new<S, U>(name: S, url: U) -> Result<Self, failure::Error>
+    where
+        S: AsRef<str>,
+        U: IntoUrl,
+    {
         match url.into_url() {
-            Ok(url) => {
+            Ok(u) => {
+                let url = u.join(name.as_ref())?;
                 let client = Client::builder().gzip(true).build()?;
 
-                let reader = NetworkReader {
+                // Note that the id of the file system is the last element in the path
+                let id = UfsUuid::new_root_fs(name.as_ref());
+                let mut nonce = Vec::with_capacity(24);
+                // FIXME: Is this nonce sufficient?
+                nonce.extend_from_slice(&id.as_bytes()[..]);
+                nonce.extend_from_slice(&id.as_bytes()[0..8]);
+
+                let mut reader = NetworkReader {
+                    nonce,
                     url: url.clone(),
                     client: client.clone(),
                 };
-                let metadata = BlockMap::deserialize(&reader)?;
+
+                let metadata = BlockMap::deserialize(&mut reader)?;
 
                 Ok(NetworkStore {
                     id: metadata.id().clone(),
+                    nonce: reader.nonce,
                     url,
                     client,
                     block_size: metadata.block_size(),
@@ -55,8 +73,10 @@ impl BlockStorage for NetworkStore {
     fn id(&self) -> &UfsUuid {
         &self.id
     }
+
     fn commit_map(&mut self) {
         debug!("writing BlockMap");
+
         let mut writer = NetworkWriter {
             url: self.url.clone(),
             client: self.client.clone(),
@@ -92,6 +112,7 @@ impl BlockWriter for NetworkStore {
         T: AsRef<[u8]>,
     {
         let data = data.as_ref();
+
         trace!(
             "Writing {} bytes to block number {} at {}.",
             data.len(),
@@ -108,8 +129,6 @@ impl BlockWriter for NetworkStore {
             .header(CONTENT_TYPE, "application/octet-stream")
             .body(data.to_vec())
             .send()?;
-
-        // debug!("block: {}, bytes:\n{:?}", bn, data);
 
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
@@ -144,6 +163,7 @@ impl BlockWriter for NetworkWriter {
         T: AsRef<[u8]>,
     {
         let data = data.as_ref();
+
         trace!(
             "Writing {} bytes to block number {} at {}.",
             data.len(),
@@ -161,8 +181,6 @@ impl BlockWriter for NetworkWriter {
             .body(data.to_vec())
             .send()?;
 
-        // debug!("block: {}, bytes:\n{:?}", bn, data);
-
         match resp.text()?.parse::<BlockSizeType>() {
             Ok(bytes_written) => Ok(bytes_written),
             Err(e) => Err(format_err!("Could not parse result as BlockSize: {}", e)),
@@ -171,6 +189,7 @@ impl BlockWriter for NetworkWriter {
 }
 
 struct NetworkReader {
+    nonce: Vec<u8>,
     url: Url,
     client: Client,
 }
@@ -196,7 +215,7 @@ mod test {
 
     #[test]
     fn read_and_write_block() {
-        let mut bs = NetworkStore::new("http://localhost:8888/test").unwrap();
+        let mut bs = NetworkStore::new("test", "http://localhost:8888").unwrap();
         let block_number = 88;
         let expected = r#"ion<BlockCardinality>,
    pub directory: HashMap<String, Block>,

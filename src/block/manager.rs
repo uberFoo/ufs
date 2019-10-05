@@ -3,14 +3,17 @@
 //! High level access to block storage.  The block manager checks block hash consistency, handles
 //! encryption, etc.  It also contains the `BlockMap` and handles directory and file metadata.
 
-use failure::format_err;
-use log::{debug, error};
+use {
+    failure::format_err,
+    log::{debug, error},
+};
 
 use crate::{
     block::{
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
+    crypto::{decrypt, encrypt, make_fs_key},
     metadata::Metadata,
     uuid::UfsUuid,
 };
@@ -38,6 +41,10 @@ where
     store: BS,
     /// File and Directory metadata
     metadata: Metadata,
+    /// Current user of the file system
+    user: UfsUuid,
+    /// File system key for the current user
+    key: [u8; 32],
 }
 
 impl<'a, BS> BlockManager<BS>
@@ -45,28 +52,46 @@ where
     BS: BlockStorage,
 {
     /// Layer metadata atop a block storage
-    pub fn new(store: BS) -> Self {
+    pub fn new<S: AsRef<str>>(user: S, password: S, store: BS) -> Self {
+        let user_id = UfsUuid::new_user(user.as_ref());
+        let mut metadata = Metadata::new(*store.id(), user_id);
+        metadata.add_user(user.as_ref().to_owned(), password.as_ref().to_owned());
+
         BlockManager {
             id: store.id().clone(),
-            metadata: Metadata::new(*store.id()),
+            metadata,
+            user: user_id,
+            key: make_fs_key(password.as_ref(), &store.id()),
             store,
         }
     }
 
+    /// Load an existing BlockManager, using metadata from an existing BlockStorage
+    ///
     /// FIXME: This may be nice in a From<BlockMetadata>
-    pub(crate) fn load(mut store: BS) -> Result<Self, failure::Error> {
+    pub(crate) fn load<S: AsRef<str>>(
+        user: S,
+        password: S,
+        mut store: BS,
+    ) -> Result<Self, failure::Error> {
         match store.map().root_block() {
             Some(root_block) => {
                 debug!("Reading root directory from block {}", root_block);
                 match read_metadata(&mut store, root_block) {
                     Ok(metadata) => {
                         debug!("loaded metadata");
-
-                        Ok(BlockManager {
-                            id: store.id().clone(),
-                            metadata,
-                            store,
-                        })
+                        let md: &Metadata = &metadata;
+                        if let Some((user_id, key)) = md.validate_user(&user, &password) {
+                            Ok(BlockManager {
+                                id: store.id().clone(),
+                                metadata,
+                                user: user_id,
+                                key,
+                                store,
+                            })
+                        } else {
+                            Err(format_err!("Invalid user id, and/or password."))
+                        }
                     }
                     Err(e) => Err(format_err!("Problem loading file system metadata: {}", e)),
                 }
@@ -132,9 +157,9 @@ where
         if self.metadata.is_dirty() {
             match write_metadata(&mut self.store, &mut self.metadata) {
                 Ok(block) => {
-                    debug!("Stored new root block {}", block);
                     self.store.map_mut().set_root_block(block);
                     self.store.commit_map();
+                    debug!("Stored new root block {}", block);
                 }
                 Err(e) => {
                     error!("error writing metadata: {}", e);
@@ -148,13 +173,21 @@ where
     ///
     /// This function will write up to `self.store.block_size()` bytes from the given slice to a
     /// free block.  A new [Block] is returned.
-    pub(crate) fn write<T: AsRef<[u8]>>(&mut self, data: T) -> Result<&Block, failure::Error> {
+    pub(crate) fn write<T: AsRef<[u8]>>(
+        &mut self,
+        nonce: Vec<u8>,
+        offset: u64,
+        data: T,
+    ) -> Result<&Block, failure::Error> {
         let data = data.as_ref();
         if let Some(number) = self.get_free_block() {
             let end = data.len().min(self.store.block_size() as usize);
-            let bytes = &data[..end];
-            let byte_count = self.store.write_block(number, bytes)?;
+            let mut bytes = data[..end].to_vec();
+            encrypt(&self.key, &nonce, offset, &mut bytes);
+
+            let byte_count = self.store.write_block(number, &bytes)?;
             debug!("wrote block 0x{:x?}", number);
+
             let block = self.store.map_mut().get_mut(number).unwrap();
             block.set_size(byte_count);
             block.set_hash(BlockHash::new(bytes));
@@ -175,7 +208,12 @@ where
     /// see it anyway) is to avoid copying memory.  At this point, we can't know how the memory
     /// is going to be used.  By returning a `Vec<u8>` the caller is forced to use the vector --
     /// even if they have their own buffer allocated to take the bytes.
-    pub(crate) fn read(&self, block: &Block) -> Result<Vec<u8>, failure::Error> {
+    pub(crate) fn read(
+        &self,
+        nonce: Vec<u8>,
+        offset: u64,
+        block: &Block,
+    ) -> Result<Vec<u8>, failure::Error> {
         if let Block {
             number: block_number,
             hash: Some(block_hash),
@@ -183,10 +221,12 @@ where
             block_type: _,
         } = block
         {
-            let bytes = self.store.read_block(*block_number)?;
+            let mut bytes = self.store.read_block(*block_number)?;
+
             let hash = BlockHash::new(&bytes);
             if hash == *block_hash {
                 debug!("read block 0x{:x?}", *block_number);
+                decrypt(&self.key, &nonce, offset, &mut bytes);
                 Ok(bytes)
             } else {
                 Err(format_err!(
@@ -219,9 +259,14 @@ mod test {
 
     use super::*;
     use crate::{
-        block::{map::BlockMap, BlockSize, MemoryStore},
+        block::{map::BlockMap, storage::BlockReader, BlockSize, MemoryStore},
         UfsUuid,
     };
+
+    const NONCE: [u8; 24] = [
+        0x23, 0x97, 0xb0, 0xa7, 0xa5, 0x06, 0xea, 0xa8, 0x72, 0x36, 0x53, 0xf9, 0xa7, 0xed, 0x90,
+        0x02, 0xfd, 0xc6, 0xa5, 0xb9, 0x05, 0xd1, 0xab, 0x8b,
+    ];
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -229,13 +274,17 @@ mod test {
 
     #[test]
     fn not_enough_free_blocks_error() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            1,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                1,
+            )),
+        );
 
-        let blocks = bm.write(&vec![0x0; 513][..]);
+        let blocks = bm.write(NONCE.to_vec(), 0, &vec![0x0; 513][..]);
         assert_eq!(
             blocks.is_err(),
             true,
@@ -245,25 +294,29 @@ mod test {
 
     #[test]
     fn tiny_test() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            2,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                2,
+            )),
+        );
 
-        let block = bm.write(b"abc").unwrap().clone();
+        let block = bm.write(NONCE.to_vec(), 0, b"abc").unwrap().clone();
         println!("{:#?}", block);
 
         assert_eq!(bm.free_block_count(), 0);
         let hash = block.hash.unwrap();
         assert_eq!(
             hash.as_ref(),
-            hex!("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            hex!("c9775b434c391333e0c86eb0842fe3a85826983dace40ca589e44113784b0889"),
             "validate hash"
         );
 
         assert_eq!(
-            bm.read(&block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             b"abc",
             "compare stored data with expected values"
         );
@@ -271,16 +324,23 @@ mod test {
 
     #[test]
     fn write_data_smaller_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            2,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                2,
+            )),
+        );
 
-        let block = bm.write(&vec![0x38; 511][..]).unwrap().clone();
+        let block = bm
+            .write(NONCE.to_vec(), 0, &vec![0x38; 511][..])
+            .unwrap()
+            .clone();
         assert_eq!(bm.free_block_count(), 0);
         assert_eq!(
-            bm.read(&block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             &vec![0x38; 511][..],
             "compare stored data with expected values"
         );
@@ -289,16 +349,23 @@ mod test {
 
     #[test]
     fn write_data_larger_than_blocksize() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            3,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                3,
+            )),
+        );
 
-        let block = bm.write(&vec![0x38; 513][..]).unwrap().clone();
+        let block = bm
+            .write(NONCE.to_vec(), 0, &vec![0x38; 513][..])
+            .unwrap()
+            .clone();
         assert_eq!(bm.free_block_count(), 1);
         assert_eq!(
-            bm.read(&block).unwrap(),
+            bm.read(NONCE.to_vec(), 0, &block).unwrap(),
             &vec![0x38; 512][..],
             "compare stored data with expected values"
         );
@@ -307,32 +374,46 @@ mod test {
 
     #[test]
     fn read_block_bad_hash() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            2,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                2,
+            )),
+        );
 
-        let mut block = bm.write(b"abc").unwrap().clone();
+        let mut block = bm.write(NONCE.to_vec(), 0, b"abc").unwrap().clone();
 
         // Replace the hash of the block with something else.
         block.hash.replace(BlockHash::new("abcd"));
 
-        assert!(bm.read(&block).is_err(), "hash validation failure");
+        assert!(
+            bm.read(NONCE.to_vec(), 0, &block).is_err(),
+            "hash validation failure"
+        );
     }
 
     #[test]
     fn recycle_blocks() {
-        let mut bm = BlockManager::new(MemoryStore::new(BlockMap::new(
-            UfsUuid::new_root("test"),
-            BlockSize::FiveTwelve,
-            10,
-        )));
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                10,
+            )),
+        );
 
         // One block is taken by the block map
         assert_eq!(bm.free_block_count(), 9);
 
-        let block = bm.write(&vec![0x38; 511][..]).unwrap().clone();
+        let block = bm
+            .write(NONCE.to_vec(), 0, &vec![0x38; 512][..])
+            .unwrap()
+            .clone();
         assert_eq!(bm.free_block_count(), 8);
         let from_map = bm.store.map().get(block.number).unwrap();
         assert_eq!(from_map, &block);
@@ -341,5 +422,38 @@ mod test {
         bm.recycle_block(block.number);
         assert_eq!(bm.free_block_count(), 9);
         assert!(bm.store.map().get(block.number).unwrap().is_free());
+    }
+
+    #[test]
+    fn encrypt_and_decrypt_two_blocks_with_different_stream_positions() {
+        let mut bm = BlockManager::new(
+            "test",
+            "foobar",
+            MemoryStore::new(BlockMap::new(
+                UfsUuid::new_root_fs("test"),
+                BlockSize::FiveTwelve,
+                10,
+            )),
+        );
+
+        let block1 = bm
+            .write(NONCE.to_vec(), 0, &vec![0x38; 512][..])
+            .unwrap()
+            .clone();
+        let block2 = bm
+            .write(NONCE.to_vec(), 512, &vec![0x38; 512][..])
+            .unwrap()
+            .clone();
+
+        let c_data_1 = bm.store.read_block(block1.number).unwrap();
+        let c_data_2 = bm.store.read_block(block2.number).unwrap();
+
+        assert_ne!(c_data_1, c_data_2, "encrypted blocks should differ");
+        assert_ne!(c_data_1[511], c_data_2[0], "no overlap");
+
+        let data_1 = bm.read(NONCE.to_vec(), 0, &block1).unwrap();
+        let data_2 = bm.read(NONCE.to_vec(), 512, &block2).unwrap();
+
+        assert_eq!(data_1, data_2, "decrypted blocks should be identical");
     }
 }

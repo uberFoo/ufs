@@ -113,6 +113,17 @@ impl From<u32> for BlockSize {
     }
 }
 
+impl From<u64> for BlockSize {
+    fn from(n: u64) -> Self {
+        match n {
+            512 => BlockSize::FiveTwelve,
+            1024 => BlockSize::TenTwentyFour,
+            2048 => BlockSize::TwentyFortyEight,
+            _ => panic!("Invalid Block Size"),
+        }
+    }
+}
+
 impl From<BlockSize> for BlockSizeType {
     fn from(n: BlockSize) -> Self {
         match n {
@@ -179,9 +190,9 @@ impl Block {
         }
     }
 
-    /// Mark a block as containing metadata
-    pub(in crate::block) fn tag_metadata(&mut self) {
-        self.block_type = BlockType::new_metadata();
+    /// Mark a block as being free
+    pub(in crate::block) fn tag_free(&mut self) {
+        self.block_type = BlockType::new_free();
     }
 
     /// Mark a block as containing data
@@ -189,14 +200,19 @@ impl Block {
         self.block_type = BlockType::new_data();
     }
 
-    /// Mark a block as being free
-    pub(in crate::block) fn tag_free(&mut self) {
-        self.block_type = BlockType::new_free();
+    /// Mark a block as containing the block map
+    pub(in crate::block) fn tag_map(&mut self) {
+        self.block_type = BlockType::new_map();
     }
 
-    /// Check if a block contains metadata
-    pub(in crate::block) fn is_metadata(&self) -> bool {
-        self.block_type.is_metadata()
+    /// Mark a block as containing metadata
+    pub(in crate::block) fn tag_metadata(&mut self) {
+        self.block_type = BlockType::new_metadata();
+    }
+
+    /// Check if a block is free
+    pub(in crate::block) fn is_free(&self) -> bool {
+        self.block_type.is_free()
     }
 
     /// Check if a block contains data
@@ -204,9 +220,14 @@ impl Block {
         self.block_type.is_data()
     }
 
-    /// Check if a block is free
-    pub(in crate::block) fn is_free(&self) -> bool {
-        self.block_type.is_free()
+    /// Check if a block contains metadata
+    pub(in crate::block) fn is_map(&self) -> bool {
+        self.block_type.is_map()
+    }
+
+    /// Check if a block contains metadata
+    pub(in crate::block) fn is_metadata(&self) -> bool {
+        self.block_type.is_metadata()
     }
 
     /// Return the block number

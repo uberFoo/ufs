@@ -145,7 +145,7 @@ impl<B: BlockStorage> UberFSFuse<B> {
                 0,
                 Inode::Dir(DirInode {
                     number: 0,
-                    id: UfsUuid::new_root("hack"),
+                    id: UfsUuid::new_root_fs("hack"),
                     time: TIME,
                     files: HashMap::new(),
                     perm: 0o755,
@@ -619,7 +619,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         );
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        match &mut guard.read_file(fh, offset, size as usize) {
+        match &mut guard.read_file(fh, offset as u64, size as usize) {
             Ok(buffer) => {
                 debug!("read {} bytes", buffer.len());
                 trace!("{:?}", &buffer);
@@ -651,7 +651,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
         if let Some(Inode::File(inode)) = self.inodes.get_mut(&ino) {
             let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-            if let Ok(len) = &mut guard.write_file(fh, data) {
+            if let Ok(len) = &mut guard.write_file(fh, data, offset as u64) {
                 debug!("wrote {} bytes", len);
                 trace!("{:?}", &data[..*len]);
 
