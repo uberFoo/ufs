@@ -42,10 +42,17 @@ pub(crate) struct WasmMessageSender<'a> {
 }
 
 impl<'a> WasmMessageSender<'a> {
-    pub(crate) fn new(instance: &'a mut Instance) -> Self {
+    pub(crate) fn new(instance: &'a mut Instance, root_id: UfsUuid) -> Self {
         let mut wms = WasmMessageSender { instance };
-        wms.call_wasm_func("init", None)
-            .expect("Unable to call init function");
+
+        let id_str = &format!("{}", root_id);
+        wms.write_wasm_memory(0, id_str);
+
+        wms.call_wasm_func(
+            "__init",
+            Some(&[Value::I32(0), Value::I32(id_str.len() as _)]),
+        )
+        .expect("Unable to call init function");
         wms
     }
 

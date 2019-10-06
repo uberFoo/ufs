@@ -157,7 +157,14 @@ impl<B: BlockStorage> WasmProcess<B> {
 
             instance.context_mut().data = &mut process.wasm_context as *mut _ as *mut c_void;
 
-            let mut msg_sender = WasmMessageSender::new(&mut instance);
+            let mut root_id;
+            {
+                let guard = process.wasm_context.iofs.clone();
+                let guard = guard.lock().expect("poisoned iofs lock");
+                root_id = guard.get_root_directory_id();
+            }
+
+            let mut msg_sender = WasmMessageSender::new(&mut instance, root_id);
 
             loop {
                 let message = process.receiver.recv()?;

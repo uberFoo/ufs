@@ -26,6 +26,11 @@ extern "C" {
     pub fn __read_file(handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
 }
 
+/// This is the sole function expected to exist in the user's WASM program
+extern "C" {
+    pub fn init(root_id: RefStr);
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[repr(C)]
 pub enum WasmMessage {
@@ -40,12 +45,10 @@ pub enum WasmMessage {
     FileWrite,
 }
 
-#[derive(Debug)]
+#[repr(C)]
 pub enum MessagePayload {
     Path(RefStr),
     PathAndId(RefStr, RefStr),
-    Data(RefSlice),
-    None,
 }
 
 pub struct MessageHandler {
@@ -64,7 +67,7 @@ impl MessageHandler {
     }
 }
 
-#[derive(Debug)]
+#[repr(C)]
 pub struct RefStr {
     ptr: i32,
     len: i32,
@@ -74,18 +77,6 @@ impl RefStr {
     pub fn get_str(&self) -> &str {
         let slice = unsafe { slice::from_raw_parts(self.ptr as _, self.len as _) };
         str::from_utf8(&slice).unwrap()
-    }
-}
-
-#[derive(Debug)]
-pub struct RefSlice {
-    ptr: i32,
-    len: i32,
-}
-
-impl RefSlice {
-    pub fn get_vec(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr as _, self.len as _) }
     }
 }
 
@@ -117,8 +108,13 @@ pub fn read_file(handle: u64, offset: u32, data: &mut [u8]) -> u32 {
 }
 
 //
-// The following functions are called from Rust
+// The following functions are called from Rust. They manipulate data coming across the WASM
+// boundary, and make things nicer for the person writing a WASM program.
 //
+#[no_mangle]
+pub extern "C" fn __init(ptr: i32, len: i32) {
+    unsafe { init(RefStr { ptr, len }) };
+}
 #[no_mangle]
 pub extern "C" fn __handle_shutdown() {
     let lookup = LOOKUP.read().unwrap();

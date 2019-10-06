@@ -4,17 +4,26 @@ lazy_static! {
     pub static ref PROGRAM: MutStatic<Echo> = { MutStatic::from(Echo::new()) };
 }
 
-pub struct Echo {}
+pub struct Echo {
+    root_id: Option<String>,
+}
 
 impl Echo {
     fn new() -> Self {
-        Echo {}
+        Echo { root_id: None }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn init() {
-    let mut _pgm = PROGRAM.write().unwrap();
+pub extern "C" fn init(root_id: RefStr) {
+    // Initialize our main struct
+    let mut pgm = PROGRAM.write().unwrap();
+    // Store the root id
+    pgm.root_id = Some(root_id.get_str().to_string());
+
+    print(&format!("Starting at root directory {:?}.", pgm.root_id));
+
+    // Register our callback functions
     register_callback(WasmMessage::Ping, ping);
     register_callback(WasmMessage::Shutdown, shutdown);
     register_callback(WasmMessage::NewFile, handle_new_file);
