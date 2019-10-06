@@ -7,14 +7,13 @@ use {
         UberFileSystem,
     },
     crossbeam::crossbeam_channel,
-    log::{debug, error, info},
+    log::{error, info},
     std::{
         collections::HashMap,
         path::PathBuf,
         sync::{Arc, Mutex},
         thread::{spawn, JoinHandle},
     },
-    wasm_exports::WasmMessage,
 };
 
 /// Runtime Manager Messages

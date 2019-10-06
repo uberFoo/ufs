@@ -5,5 +5,5 @@ authors = ["Keith T. Star <keith@uberfoo.com>"]
 edition = "2018"
 
 [dependencies]
-lazy_static = "~1.4"
-mut_static = "~5.0"
+lazy_static = "1.4"
+mut_static = "5.0"

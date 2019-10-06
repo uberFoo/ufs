@@ -18,7 +18,7 @@ static ref USER_ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"user.uber
 ///
 /// The ID is a version 5 UUID wit it's base namespace as "uberfoo.com". New ID's are derived from
 /// that root.
-#[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct UfsUuid {
     inner: Uuid,
 }
@@ -81,5 +81,13 @@ impl AsRef<Uuid> for UfsUuid {
 impl fmt::Display for UfsUuid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.inner)
+    }
+}
+
+impl From<String> for UfsUuid {
+    fn from(str: String) -> Self {
+        UfsUuid {
+            inner: Uuid::parse_str(&str).expect("unable to parse Uuid from String"),
+        }
     }
 }

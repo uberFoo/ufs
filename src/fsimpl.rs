@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    thread::{spawn, JoinHandle},
+    thread::JoinHandle,
 };
 
 use crossbeam::crossbeam_channel;
@@ -18,7 +18,8 @@ use crate::{
     },
     crypto::make_fs_key,
     metadata::{
-        DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, Metadata, WASM_EXT,
+        DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileSize, Metadata,
+        WASM_EXT,
     },
     server::UfsRemoteServer,
     wasm::{
@@ -363,6 +364,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         .to_str()
                         .unwrap()
                         .to_string(),
+                    dir.id(),
                 ),
             )));
         }
@@ -399,6 +401,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         .to_str()
                         .unwrap()
                         .to_string(),
+                    file.file_id,
                 ),
             )));
         }
@@ -464,13 +467,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
         {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::FileDeleted(
+                    IofsFileMessage::FileDelete(
                         self.block_manager
                             .metadata()
                             .path_from_file_id(file.id())
                             .to_str()
                             .unwrap()
                             .to_string(),
+                        file.id(),
                     ),
                 )));
             }
@@ -520,6 +524,20 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         let fh = self.open_file_counter;
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
+
+        if let Some(program_mgr) = &self.program_mgr {
+            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                IofsFileMessage::FileOpen(
+                    self.block_manager
+                        .metadata()
+                        .path_from_file_id(file.file_id)
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
+                    file.file_id,
+                ),
+            )));
+        }
 
         // self.notify_listeners(UfsMessage::FileOpen(
         //     self.block_manager
@@ -606,13 +624,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Some(file) => {
                 if let Some(program_mgr) = &self.program_mgr {
                     program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                        IofsFileMessage::FileClosed(
+                        IofsFileMessage::FileClose(
                             self.block_manager
                                 .metadata()
                                 .path_from_file_id(file.file_id)
                                 .to_str()
                                 .unwrap()
                                 .to_string(),
+                            file.file_id,
                         ),
                     )));
                 }
@@ -668,6 +687,20 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         // Down here to appease the Borrow Checker Gods
         if let Some(file) = self.open_files.get(&handle) {
+            if let Some(program_mgr) = &self.program_mgr {
+                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                    IofsFileMessage::FileWrite(
+                        self.block_manager
+                            .metadata()
+                            .path_from_file_id(file.file_id)
+                            .to_str()
+                            .unwrap()
+                            .to_string(),
+                        file.file_id,
+                    ),
+                )));
+            }
+
             // self.notify_listeners(UfsMessage::FileWrite(
             //     self.block_manager
             //         .metadata()
@@ -708,10 +741,11 @@ impl<B: BlockStorage> UberFileSystem<B> {
             let mut read = 0;
             let mut buffer = vec![0; size];
             let mut blocks_read = 0;
+            // while read < size || read + offset as usize == file.version.size() as usize {
             while read < size {
                 if let Some(block_number) = block_iter.next() {
                     if let Some(block) = self.block_manager.get_block(*block_number) {
-                        trace!("reading block {:?}", &block);
+                        debug!("reading block {:?}", &block);
                         if let Ok(bytes) = self.block_manager.read(
                             file.version.nonce(),
                             ((start_block + blocks_read) * block_size as usize) as u64,
@@ -749,6 +783,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 //     buffer.clone(),
                 // ));
 
+                debug!("read_file success");
+
                 Ok(buffer)
             } else {
                 Err(format_err!("Error reading file {}", handle))
@@ -762,6 +798,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.block_manager
             .metadata_mut()
             .set_unix_permissions(id, perms);
+    }
+
+    // Functions specifically for Rust-side WASM related use.
+    pub(crate) fn get_file_size(&self, handle: FileHandle) -> Result<FileSize, failure::Error> {
+        if let Some(file) = self.open_files.get(&handle) {
+            Ok(file.version.size())
+        } else {
+            Err(format_err!("File not open {}", handle))
+        }
     }
 }
 

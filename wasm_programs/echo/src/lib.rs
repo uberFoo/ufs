@@ -19,8 +19,10 @@ pub extern "C" fn init() {
     register_callback(WasmMessage::Shutdown, shutdown);
     register_callback(WasmMessage::NewFile, handle_new_file);
     register_callback(WasmMessage::NewDir, handle_new_dir);
-    register_callback(WasmMessage::FileDeleted, handle_file_deleted);
-    register_callback(WasmMessage::FileClosed, handle_file_closed);
+    register_callback(WasmMessage::FileDelete, handle_file_deleted);
+    register_callback(WasmMessage::FileOpen, handle_file_opened);
+    register_callback(WasmMessage::FileClose, handle_file_closed);
+    register_callback(WasmMessage::FileWrite, handle_file_write);
 }
 
 #[no_mangle]
@@ -37,28 +39,78 @@ pub extern "C" fn shutdown(_payload: Option<MessagePayload>) {
 
 #[no_mangle]
 pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::String(path)) = payload {
-        print(&format!("handle new file: {:?}", path.get_str()));
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        print(&format!(
+            "handle new file: {:?} ({})",
+            path.get_str(),
+            id.get_str()
+        ));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::String(path)) = payload {
-        print(&format!("handle new dir: {:?}", path.get_str()));
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        print(&format!(
+            "handle new dir: {:?} ({})",
+            path.get_str(),
+            id.get_str()
+        ));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::String(path)) = payload {
-        print(&format!("handle file deleted: {:?}", path.get_str()));
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        print(&format!(
+            "handle file deleted: {:?} ({})",
+            path.get_str(),
+            id.get_str()
+        ));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn handle_file_opened(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        print(&format!(
+            "handle file opened: {:?} ({})",
+            path.get_str(),
+            id.get_str()
+        ));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::String(path)) = payload {
-        print(&format!("handle file closed: {:?}", path.get_str()));
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        let id = id.get_str();
+        print(&format!(
+            "handle file closed: {:?} ({})",
+            path.get_str(),
+            id
+        ));
+        let handle = open_file(id);
+        print(&format!("open handle: {}", handle));
+        let mut bytes: [u8; 256] = [0; 256];
+        let mut offset = 0;
+        let mut read_len = read_file(handle, offset, &mut bytes);
+        while read_len > 0 {
+            offset += read_len;
+            let str = String::from_utf8_lossy(&bytes);
+            print(&format!("read len: {}\n data: {}", read_len, str));
+            read_len = read_file(handle, offset, &mut bytes);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn handle_file_write(payload: Option<MessagePayload>) {
+    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        print(&format!(
+            "handle file write: {:?} ({})",
+            path.get_str(),
+            id.get_str()
+        ));
     }
 }

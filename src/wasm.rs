@@ -12,7 +12,7 @@ pub(crate) use {
 };
 
 use {
-    self::callbacks::{__print, __register_for_callback, pong},
+    self::callbacks::*,
     crate::{block::BlockStorage, UberFileSystem},
     crossbeam::crossbeam_channel,
     failure::{Backtrace, Context, Fail},
@@ -58,9 +58,10 @@ impl<B: BlockStorage> WasmContext<B> {
         handlers.insert(WasmMessage::Ping, false);
         handlers.insert(WasmMessage::NewFile, false);
         handlers.insert(WasmMessage::NewDir, false);
-        handlers.insert(WasmMessage::FileDeleted, false);
-        handlers.insert(WasmMessage::DirDeleted, false);
-        handlers.insert(WasmMessage::FileClosed, false);
+        handlers.insert(WasmMessage::FileDelete, false);
+        handlers.insert(WasmMessage::DirDelete, false);
+        handlers.insert(WasmMessage::FileClose, false);
+        handlers.insert(WasmMessage::FileWrite, false);
 
         WasmContext {
             path,
@@ -79,11 +80,16 @@ impl<B: BlockStorage> WasmContext<B> {
     }
 
     pub(crate) fn does_handle_message(&mut self, msg: WasmMessage) -> bool {
+        // If the entry does not exist, insert the default bool value (false).
         *self.notifications.entry(msg).or_default()
     }
 
-    pub(crate) fn handle_message(&mut self, msg: WasmMessage) {
+    pub(crate) fn set_handles_message(&mut self, msg: WasmMessage) {
         self.notifications.insert(msg, true);
+    }
+
+    pub(crate) fn unset_handles_message(&mut self, msg: WasmMessage) {
+        self.notifications.entry(msg).and_modify(|e| *e = true);
     }
 }
 
@@ -124,6 +130,8 @@ impl<B: BlockStorage> WasmProcess<B> {
                 "env" => {
                     "__register_for_callback" => func!(__register_for_callback<B>),
                     "__print" => func!(__print<B>),
+                    "__open_file" => func!(__open_file<B>),
+                    "__read_file" => func!(__read_file<B>),
                     "pong" => func!(pong),
                 },
             };
@@ -140,7 +148,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                             e,
                             process.wasm_context.path()
                         );
-                        return Err(RuntimeErrorKind::ProgramInstantiationFailure.into());
+                        return Err(RuntimeErrorKind::ProgramInstantiation.into());
                     }
                 };
 
@@ -170,39 +178,55 @@ impl<B: BlockStorage> WasmProcess<B> {
                         }
                     },
                     IofsMessage::FileMessage(m) => match m {
-                        IofsFileMessage::NewFile(f) => {
+                        IofsFileMessage::NewFile(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::NewFile)
                             {
-                                msg_sender.send_new_file(f)?;
+                                msg_sender.send_new_file(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileDeleted(f) => {
+                        IofsFileMessage::FileDelete(path, id) => {
                             if process
                                 .wasm_context
-                                .does_handle_message(WasmMessage::FileDeleted)
+                                .does_handle_message(WasmMessage::FileDelete)
                             {
-                                msg_sender.send_file_deleted(f)?;
+                                msg_sender.send_file_delete(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileClosed(f) => {
+                        IofsFileMessage::FileOpen(path, id) => {
                             if process
                                 .wasm_context
-                                .does_handle_message(WasmMessage::FileClosed)
+                                .does_handle_message(WasmMessage::FileClose)
                             {
-                                msg_sender.send_file_closed(f)?;
+                                msg_sender.send_file_open(path, id)?;
+                            }
+                        }
+                        IofsFileMessage::FileClose(path, id) => {
+                            if process
+                                .wasm_context
+                                .does_handle_message(WasmMessage::FileClose)
+                            {
+                                msg_sender.send_file_close(path, id)?;
+                            }
+                        }
+                        IofsFileMessage::FileWrite(path, id) => {
+                            if process
+                                .wasm_context
+                                .does_handle_message(WasmMessage::FileWrite)
+                            {
+                                msg_sender.send_file_write(path, id)?;
                             }
                         }
                         _ => unimplemented!(),
                     },
                     IofsMessage::DirMessage(m) => match m {
-                        IofsDirMessage::NewDir(d) => {
+                        IofsDirMessage::NewDir(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::NewDir)
                             {
-                                msg_sender.send_new_dir(d)?;
+                                msg_sender.send_new_dir(path, id)?;
                             }
                         }
                         _ => unimplemented!(),
@@ -249,9 +273,11 @@ impl Display for RuntimeError {
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Fail)]
 enum RuntimeErrorKind {
     #[fail(display = "Unable to start WASM program.")]
-    ProgramInstantiationFailure,
+    ProgramInstantiation,
     #[fail(display = "Error invoking function in WASM.")]
-    FunctionInvocationFailure,
+    FunctionInvocation,
+    #[fail(display = "Error invoking IOFS function in WASM.")]
+    IOFSInvocation,
 }
 
 impl From<RuntimeErrorKind> for RuntimeError {
