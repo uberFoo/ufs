@@ -219,6 +219,41 @@ where
     }
 }
 
+pub(crate) fn __open_directory<B>(ctx: &mut Ctx, parent_id_ptr: u32, name_ptr: u32) -> i32
+where
+    B: BlockStorage,
+{
+    debug!("--------");
+    debug!(
+        "__open_directory: parent_id_ptr: {}, name_ptr: {}",
+        parent_id_ptr, name_ptr
+    );
+
+    let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
+    let parent_id = unbox_str(ctx, parent_id_ptr);
+    let name = unbox_str(ctx, name_ptr);
+    let guard = wc.iofs.clone();
+    let mut guard = guard.lock().expect("poisoned iofs lock");
+
+    let dir = guard.open_sub_directory(parent_id.into(), &name);
+
+    match dir {
+        Ok(dir) => {
+            debug!("found directory {:?} with id {}", name, dir);
+            let mut memory = ctx.memory(0);
+            let dir_id_str = &format!("{}", dir);
+            for (byte, cell) in dir_id_str
+                .bytes()
+                .zip(memory.view()[0..dir_id_str.len()].iter())
+            {
+                cell.set(byte);
+            }
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
 fn unbox_message(ctx: &Ctx, msg_ptr: u32) -> WasmMessage {
     let memory = ctx.memory(0);
     let ptr_vec: Vec<_> = memory.view()[msg_ptr as usize..(msg_ptr + 4) as usize]

@@ -26,6 +26,7 @@ extern "C" {
     pub fn __read_file(handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
     pub fn __create_file(id_ptr: u32, name_ptr: u32) -> i32;
     pub fn __create_directory(id_ptr: u32, name_ptr: u32) -> i32;
+    pub fn __open_directory(id_ptr: u32, name_ptr: u32) -> i32;
 }
 
 /// This is the sole function expected to exist in the user's WASM program
@@ -134,7 +135,6 @@ pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
             id: file_id_str.to_string(),
         })
     } else {
-        print("create_file failure?");
         None
     }
 }
@@ -143,6 +143,20 @@ pub fn create_directory(parent_id: &str, name: &str) -> Option<String> {
     let parent_id = Box::into_raw(Box::new(parent_id));
     let name = Box::into_raw(Box::new(name));
     let dir_id_ptr = unsafe { __create_directory(parent_id as u32, name as u32) };
+    if dir_id_ptr != -1 {
+        let slice = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 36) };
+        let dir_id_str = str::from_utf8(&slice).expect("unable to create dir_id str");
+
+        Some(dir_id_str.to_string())
+    } else {
+        None
+    }
+}
+
+pub fn open_directory(parent_id: &str, name: &str) -> Option<String> {
+    let parent_id = Box::into_raw(Box::new(parent_id));
+    let name = Box::into_raw(Box::new(name));
+    let dir_id_ptr = unsafe { __open_directory(parent_id as u32, name as u32) };
     if dir_id_ptr != -1 {
         let slice = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 36) };
         let dir_id_str = str::from_utf8(&slice).expect("unable to create dir_id str");

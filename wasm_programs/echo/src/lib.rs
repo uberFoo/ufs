@@ -24,16 +24,6 @@ pub extern "C" fn init(root_id: RefStr) {
 
     print(&format!("Starting at root directory {:?}.", pgm.root_id));
 
-    // Try creating a directory off the root
-    let dir_id = create_directory(root_id, "fubar");
-    print(&format!("Dir id: {:?}", dir_id));
-
-    // Try creating a file in the directory.
-    if let Some(dir_id) = dir_id {
-        let file_handle = create_file(&dir_id, "baz");
-        print(&format!("File id: {:?}", file_handle));
-    }
-
     // Register our callback functions
     register_callback(WasmMessage::Ping, ping);
     register_callback(WasmMessage::Shutdown, shutdown);
@@ -104,12 +94,34 @@ pub extern "C" fn handle_file_opened(payload: Option<MessagePayload>) {
 #[no_mangle]
 pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
+        let pgm = PROGRAM.read().unwrap();
+
         let id = id.get_str();
         print(&format!(
             "handle file closed: {:?} ({})",
             path.get_str(),
             id
         ));
+
+        // Check for the "fubar" directory
+        let dir_id = if let Some(dir_id) = open_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+            print(&format!("found dir id: {:?}", dir_id));
+            Some(dir_id)
+        } else {
+            if let Some(dir_id) = create_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+                print(&format!("created dir id: {:?}", dir_id));
+                Some(dir_id)
+            } else {
+                None
+            }
+        };
+
+        // Try creating a file in the directory.
+        if let Some(dir_id) = dir_id {
+            let file_handle = create_file(&dir_id, "baz");
+            print(&format!("File id: {:?}", file_handle));
+        }
+
         // let handle = open_file(id);
         // print(&format!("open handle: {}", handle));
         // let mut bytes: [u8; 256] = [0; 256];

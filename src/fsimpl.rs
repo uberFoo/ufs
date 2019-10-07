@@ -832,12 +832,32 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .set_unix_permissions(id, perms);
     }
 
+    //
     // Functions specifically for Rust-side WASM related use.
+    //
     pub(crate) fn get_file_size(&self, handle: FileHandle) -> Result<FileSize, failure::Error> {
         if let Some(file) = self.open_files.get(&handle) {
             Ok(file.version.size())
         } else {
             Err(format_err!("File not open {}", handle))
+        }
+    }
+
+    /// Open a sub-directory
+    ///
+    pub(crate) fn open_sub_directory(
+        &mut self,
+        pid: UfsUuid,
+        name: &str,
+    ) -> Result<UfsUuid, failure::Error> {
+        let parent_dir = self.block_manager.metadata().get_directory(pid)?;
+        match self
+            .block_manager
+            .metadata()
+            .get_dir_metadata_from_dir_and_name(pid, name)
+        {
+            Ok(dir_meta) => Ok(dir_meta.id()),
+            Err(e) => Err(e),
         }
     }
 }

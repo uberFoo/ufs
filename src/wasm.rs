@@ -135,6 +135,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                     "__read_file" => func!(__read_file<B>),
                     "__create_file" => func!(__create_file<B>),
                     "__create_directory" => func!(__create_directory<B>),
+                    "__open_directory" => func!(__open_directory<B>),
                     "pong" => func!(pong),
                 },
             };
