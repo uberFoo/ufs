@@ -5,12 +5,13 @@
 //!
 //! FIXME: The directory data is not versioned. What happens to deleted files?  What do we do when
 //! a directory goes away?
-use failure::format_err;
-use log::debug;
-use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-use crate::{time::UfsTime, uuid::UfsUuid};
+use {
+    crate::{time::UfsTime, uuid::UfsUuid, IOFSErrorKind},
+    failure::format_err,
+    log::debug,
+    serde_derive::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
 pub(crate) const WASM_DIR: &'static str = ".wasm";
 pub(crate) const WASM_EXT: &'static str = "wasm";
@@ -140,7 +141,7 @@ impl DirectoryMetadata {
         debug!("`new_subdirectory`: {:?}", name);
 
         if self.entries.contains_key(&name) {
-            Err(format_err!("directory already exists"))
+            Err(IOFSErrorKind::DirectoryExists.into())
         } else {
             let new_id = self.id.new(&name);
             let dir = DirectoryMetadata::new(new_id, Some(self.id), owner);

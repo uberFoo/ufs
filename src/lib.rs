@@ -122,6 +122,11 @@ mod time;
 mod uuid;
 mod wasm;
 
+use {
+    failure::{Backtrace, Context, Fail},
+    std::fmt::{self, Display},
+};
+
 pub use crate::fuse::UberFSFuse;
 pub use crate::uuid::UfsUuid;
 pub use block::{
@@ -130,3 +135,50 @@ pub use block::{
 };
 pub use crypto::make_fs_key;
 pub use fsimpl::{OpenFileMode, UberFileSystem, UfsMounter};
+
+#[derive(Debug)]
+pub(crate) struct IOFSError {
+    inner: Context<IOFSErrorKind>,
+}
+
+impl IOFSError {
+    pub fn kind(&self) -> IOFSErrorKind {
+        *self.inner.get_context()
+    }
+}
+
+impl Fail for IOFSError {
+    fn cause(&self) -> Option<&Fail> {
+        self.inner.cause()
+    }
+
+    fn backtrace(&self) -> Option<&Backtrace> {
+        self.inner.backtrace()
+    }
+}
+
+impl Display for IOFSError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.inner, f)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Fail)]
+enum IOFSErrorKind {
+    #[fail(display = "Directory already exists")]
+    DirectoryExists,
+}
+
+impl From<IOFSErrorKind> for IOFSError {
+    fn from(kind: IOFSErrorKind) -> Self {
+        IOFSError {
+            inner: Context::new(kind),
+        }
+    }
+}
+
+impl From<Context<IOFSErrorKind>> for IOFSError {
+    fn from(inner: Context<IOFSErrorKind>) -> Self {
+        IOFSError { inner: inner }
+    }
+}
