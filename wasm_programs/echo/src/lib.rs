@@ -19,15 +19,26 @@ pub extern "C" fn init(root_id: RefStr) {
     // Initialize our main struct
     let mut pgm = PROGRAM.write().unwrap();
     // Store the root id
-    pgm.root_id = Some(root_id.get_str().to_string());
+    let root_id = root_id.get_str();
+    pgm.root_id = Some(root_id.to_string());
 
     print(&format!("Starting at root directory {:?}.", pgm.root_id));
+
+    // Try creating a directory off the root
+    let dir_id = create_directory(root_id, "fubar");
+    print(&format!("Dir id: {:?}", dir_id));
+
+    // Try creating a file in the directory.
+    if let Some(dir_id) = dir_id {
+        let file_handle = create_file(&dir_id, "baz");
+        print(&format!("File id: {:?}", file_handle));
+    }
 
     // Register our callback functions
     register_callback(WasmMessage::Ping, ping);
     register_callback(WasmMessage::Shutdown, shutdown);
-    register_callback(WasmMessage::NewFile, handle_new_file);
-    register_callback(WasmMessage::NewDir, handle_new_dir);
+    register_callback(WasmMessage::FileCreate, handle_new_file);
+    register_callback(WasmMessage::DirCreate, handle_new_dir);
     register_callback(WasmMessage::FileDelete, handle_file_deleted);
     register_callback(WasmMessage::FileOpen, handle_file_opened);
     register_callback(WasmMessage::FileClose, handle_file_closed);
@@ -99,17 +110,17 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
             path.get_str(),
             id
         ));
-        let handle = open_file(id);
-        print(&format!("open handle: {}", handle));
-        let mut bytes: [u8; 256] = [0; 256];
-        let mut offset = 0;
-        let mut read_len = read_file(handle, offset, &mut bytes);
-        while read_len > 0 {
-            offset += read_len;
-            let str = String::from_utf8_lossy(&bytes);
-            print(&format!("read len: {}\n data: {}", read_len, str));
-            read_len = read_file(handle, offset, &mut bytes);
-        }
+        // let handle = open_file(id);
+        // print(&format!("open handle: {}", handle));
+        // let mut bytes: [u8; 256] = [0; 256];
+        // let mut offset = 0;
+        // let mut read_len = read_file(handle, offset, &mut bytes);
+        // while read_len > 0 {
+        //     offset += read_len;
+        //     let str = String::from_utf8_lossy(&bytes);
+        //     print(&format!("read len: {}\n data: {}", read_len, str));
+        //     read_len = read_file(handle, offset, &mut bytes);
+        // }
     }
 }
 

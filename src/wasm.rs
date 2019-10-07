@@ -56,9 +56,10 @@ impl<B: BlockStorage> WasmContext<B> {
         let mut handlers = HashMap::new();
         handlers.insert(WasmMessage::Shutdown, false);
         handlers.insert(WasmMessage::Ping, false);
-        handlers.insert(WasmMessage::NewFile, false);
-        handlers.insert(WasmMessage::NewDir, false);
+        handlers.insert(WasmMessage::FileCreate, false);
+        handlers.insert(WasmMessage::DirCreate, false);
         handlers.insert(WasmMessage::FileDelete, false);
+        handlers.insert(WasmMessage::DirDelete, false);
         handlers.insert(WasmMessage::DirDelete, false);
         handlers.insert(WasmMessage::FileClose, false);
         handlers.insert(WasmMessage::FileWrite, false);
@@ -132,6 +133,8 @@ impl<B: BlockStorage> WasmProcess<B> {
                     "__print" => func!(__print<B>),
                     "__open_file" => func!(__open_file<B>),
                     "__read_file" => func!(__read_file<B>),
+                    "__create_file" => func!(__create_file<B>),
+                    "__create_directory" => func!(__create_directory<B>),
                     "pong" => func!(pong),
                 },
             };
@@ -185,15 +188,15 @@ impl<B: BlockStorage> WasmProcess<B> {
                         }
                     },
                     IofsMessage::FileMessage(m) => match m {
-                        IofsFileMessage::NewFile(path, id) => {
+                        IofsFileMessage::Create(path, id) => {
                             if process
                                 .wasm_context
-                                .does_handle_message(WasmMessage::NewFile)
+                                .does_handle_message(WasmMessage::FileCreate)
                             {
-                                msg_sender.send_new_file(path, id)?;
+                                msg_sender.send_file_create(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileDelete(path, id) => {
+                        IofsFileMessage::Delete(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::FileDelete)
@@ -201,7 +204,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                                 msg_sender.send_file_delete(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileOpen(path, id) => {
+                        IofsFileMessage::Open(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::FileClose)
@@ -209,7 +212,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                                 msg_sender.send_file_open(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileClose(path, id) => {
+                        IofsFileMessage::Close(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::FileClose)
@@ -217,7 +220,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                                 msg_sender.send_file_close(path, id)?;
                             }
                         }
-                        IofsFileMessage::FileWrite(path, id) => {
+                        IofsFileMessage::Write(path, id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::FileWrite)
@@ -228,15 +231,22 @@ impl<B: BlockStorage> WasmProcess<B> {
                         _ => unimplemented!(),
                     },
                     IofsMessage::DirMessage(m) => match m {
-                        IofsDirMessage::NewDir(path, id) => {
+                        IofsDirMessage::Create(path, id) => {
                             if process
                                 .wasm_context
-                                .does_handle_message(WasmMessage::NewDir)
+                                .does_handle_message(WasmMessage::DirCreate)
                             {
-                                msg_sender.send_new_dir(path, id)?;
+                                msg_sender.send_dir_create(path, id)?;
                             }
                         }
-                        _ => unimplemented!(),
+                        IofsDirMessage::Delete(path, id) => {
+                            if process
+                                .wasm_context
+                                .does_handle_message(WasmMessage::DirDelete)
+                            {
+                                msg_sender.send_dir_delete(path, id)?
+                            }
+                        }
                     },
                 };
                 if let IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) = message {

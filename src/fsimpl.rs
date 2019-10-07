@@ -357,7 +357,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                IofsDirMessage::NewDir(
+                IofsDirMessage::Create(
                     self.block_manager
                         .metadata()
                         .path_from_dir_id(dir.id())
@@ -394,7 +394,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::NewFile(
+                IofsFileMessage::Create(
                     self.block_manager
                         .metadata()
                         .path_from_file_id(file.file_id)
@@ -462,7 +462,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                    IofsDirMessage::DirDelete(
+                    IofsDirMessage::Delete(
                         self.block_manager
                             .metadata()
                             .path_from_dir_id(dir.id())
@@ -499,7 +499,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::FileDelete(
+                    IofsFileMessage::Delete(
                         self.block_manager
                             .metadata()
                             .path_from_file_id(file.id())
@@ -559,7 +559,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::FileOpen(
+                IofsFileMessage::Open(
                     self.block_manager
                         .metadata()
                         .path_from_file_id(file.file_id)
@@ -656,7 +656,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Some(file) => {
                 if let Some(program_mgr) = &self.program_mgr {
                     program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                        IofsFileMessage::FileClose(
+                        IofsFileMessage::Close(
                             self.block_manager
                                 .metadata()
                                 .path_from_file_id(file.file_id)
@@ -721,7 +721,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         if let Some(file) = self.open_files.get(&handle) {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::FileWrite(
+                    IofsFileMessage::Write(
                         self.block_manager
                             .metadata()
                             .path_from_file_id(file.file_id)

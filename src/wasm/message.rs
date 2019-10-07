@@ -24,17 +24,17 @@ pub(crate) enum IofsSystemMessage {
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum IofsFileMessage {
-    NewFile(String, UfsUuid),
-    FileDelete(String, UfsUuid),
-    FileOpen(String, UfsUuid),
-    FileClose(String, UfsUuid),
-    FileWrite(String, UfsUuid),
+    Create(String, UfsUuid),
+    Delete(String, UfsUuid),
+    Open(String, UfsUuid),
+    Close(String, UfsUuid),
+    Write(String, UfsUuid),
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum IofsDirMessage {
-    NewDir(String, UfsUuid),
-    DirDeleted(String),
+    Create(String, UfsUuid),
+    Delete(String, UfsUuid),
 }
 
 pub(crate) struct WasmMessageSender<'a> {
@@ -52,7 +52,7 @@ impl<'a> WasmMessageSender<'a> {
             "__init",
             Some(&[Value::I32(0), Value::I32(id_str.len() as _)]),
         )
-        .expect("Unable to call init function");
+        .expect("error calling init function");
         wms
     }
 
@@ -94,7 +94,11 @@ impl<'a> WasmMessageSender<'a> {
         self.call_wasm_func("__handle_ping", None)
     }
 
-    pub(crate) fn send_new_file(&mut self, path: &str, id: &UfsUuid) -> Result<(), failure::Error> {
+    pub(crate) fn send_file_create(
+        &mut self,
+        path: &str,
+        id: &UfsUuid,
+    ) -> Result<(), failure::Error> {
         self.write_wasm_memory(0, path);
         let id_str = &format!("{}", id);
         self.write_wasm_memory(path.len(), id_str);
@@ -109,7 +113,11 @@ impl<'a> WasmMessageSender<'a> {
         )
     }
 
-    pub(crate) fn send_new_dir(&mut self, path: &str, id: &UfsUuid) -> Result<(), failure::Error> {
+    pub(crate) fn send_dir_create(
+        &mut self,
+        path: &str,
+        id: &UfsUuid,
+    ) -> Result<(), failure::Error> {
         self.write_wasm_memory(0, path);
         let id_str = &format!("{}", id);
         self.write_wasm_memory(path.len(), id_str);
@@ -134,6 +142,25 @@ impl<'a> WasmMessageSender<'a> {
         self.write_wasm_memory(path.len(), id_str);
         self.call_wasm_func(
             "__handle_file_delete",
+            Some(&[
+                Value::I32(0),
+                Value::I32(path.len() as i32),
+                Value::I32(path.len() as i32),
+                Value::I32(id_str.len() as i32),
+            ]),
+        )
+    }
+
+    pub(crate) fn send_dir_delete(
+        &mut self,
+        path: &str,
+        id: &UfsUuid,
+    ) -> Result<(), failure::Error> {
+        self.write_wasm_memory(0, path);
+        let id_str = &format!("{}", id);
+        self.write_wasm_memory(path.len(), id_str);
+        self.call_wasm_func(
+            "__handle_dir_delete",
             Some(&[
                 Value::I32(0),
                 Value::I32(path.len() as i32),

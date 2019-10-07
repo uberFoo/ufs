@@ -3,12 +3,12 @@
 //! Functions that are declared in the WASM program as `extern` are resolved here.
 //!
 use {
-    crate::{block::BlockStorage, wasm::WasmContext, OpenFileMode},
+    crate::{block::BlockStorage, wasm::WasmContext, IOFSError, IOFSErrorKind, OpenFileMode},
     colored::*,
     log::{debug, info},
-    std::{convert::TryInto, str},
-    wasm_exports::WasmMessage,
-    wasmer_runtime::Ctx,
+    std::{cell::Cell, convert::TryInto, str},
+    wasm_exports::{RefStr, WasmMessage},
+    wasmer_runtime::{memory::MemoryView, Ctx},
 };
 
 pub(crate) fn __register_for_callback<B>(ctx: &mut Ctx, message_ptr: u32)
@@ -45,6 +45,7 @@ where
 {
     debug!("--------");
     debug!("__open_file: id_ptr: {}", id_ptr);
+
     let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
     let id = unbox_str(ctx, id_ptr);
     let guard = wc.iofs.clone();
@@ -84,6 +85,7 @@ where
         "__read_file: handle: {}, data_ptr: {}, data_len: {}",
         handle, data_ptr, data_len
     );
+
     let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
     let guard = wc.iofs.clone();
     let mut guard = guard.lock().expect("poisoned iofs lock");
@@ -116,24 +118,125 @@ where
             }
             bytes.len() as _
         }
-        Err(e) => 0,
+        Err(_) => 0,
+    }
+}
+
+pub(crate) fn __create_file<B>(ctx: &mut Ctx, parent_id_ptr: u32, name_ptr: u32) -> i32
+where
+    B: BlockStorage,
+{
+    debug!("--------");
+    debug!("__create_file: name_ptr: {}", name_ptr);
+
+    let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
+    let parent_id = unbox_str(ctx, parent_id_ptr);
+    let name = unbox_str(ctx, name_ptr);
+    let guard = wc.iofs.clone();
+    let mut guard = guard.lock().expect("poisoned iofs lock");
+
+    // Disable notification for this
+    let has_handler = wc.does_handle_message(WasmMessage::FileCreate);
+
+    if has_handler {
+        wc.unset_handles_message(WasmMessage::FileCreate)
+    }
+
+    let file = guard.create_file(parent_id.into(), &name);
+
+    if has_handler {
+        wc.set_handles_message(WasmMessage::FileCreate)
+    }
+
+    match file {
+        Ok((handle, file)) => {
+            debug!(
+                "created file {:?}, handle: {}, id: {}",
+                name, handle, file.file_id
+            );
+            let mut memory = ctx.memory(0);
+            let ptr = handle.to_le_bytes();
+            for (i, cell) in memory.view()[0..ptr.len()].iter().enumerate() {
+                cell.set(ptr[i]);
+            }
+
+            let file_id_str = &format!("{}", file.file_id);
+            for (byte, cell) in file_id_str
+                .bytes()
+                .zip(memory.view()[ptr.len()..ptr.len() + file_id_str.len()].iter())
+            {
+                cell.set(byte);
+            }
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+pub(crate) fn __create_directory<B>(ctx: &mut Ctx, parent_id_ptr: u32, name_ptr: u32) -> i32
+where
+    B: BlockStorage,
+{
+    debug!("--------");
+    debug!(
+        "__create_directory: parent_id_ptr: {}, name_ptr: {}",
+        parent_id_ptr, name_ptr
+    );
+
+    let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
+    let parent_id = unbox_str(ctx, parent_id_ptr);
+    let name = unbox_str(ctx, name_ptr);
+    let guard = wc.iofs.clone();
+    let mut guard = guard.lock().expect("poisoned iofs lock");
+
+    // Disable notification for this
+    let has_handler = wc.does_handle_message(WasmMessage::DirCreate);
+
+    if has_handler {
+        wc.unset_handles_message(WasmMessage::DirCreate)
+    }
+
+    let dir = guard.create_directory(parent_id.into(), &name);
+
+    if has_handler {
+        wc.set_handles_message(WasmMessage::DirCreate)
+    }
+
+    match dir {
+        Ok(dir) => {
+            debug!("created directory {:?} with id {}", name, dir.id());
+            let mut memory = ctx.memory(0);
+            let dir_id_str = &format!("{}", dir.id());
+            for (byte, cell) in dir_id_str
+                .bytes()
+                .zip(memory.view()[0..dir_id_str.len()].iter())
+            {
+                cell.set(byte);
+            }
+            0
+        }
+        Err(_) => -1,
     }
 }
 
 fn unbox_message(ctx: &Ctx, msg_ptr: u32) -> WasmMessage {
     let memory = ctx.memory(0);
-
     let ptr_vec: Vec<_> = memory.view()[msg_ptr as usize..(msg_ptr + 4) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();
-    let ptr = u32::from_le_bytes(ptr_vec.as_slice().try_into().unwrap());
+    let ptr = u32::from_le_bytes(
+        ptr_vec
+            .as_slice()
+            .try_into()
+            .expect("error unboxing message"),
+    );
 
     match ptr {
         0 => WasmMessage::Shutdown,
         1 => WasmMessage::Ping,
-        2 => WasmMessage::NewFile,
-        3 => WasmMessage::NewDir,
+        2 => WasmMessage::FileCreate,
+        3 => WasmMessage::DirCreate,
         4 => WasmMessage::FileDelete,
         5 => WasmMessage::DirDelete,
         6 => WasmMessage::FileOpen,
