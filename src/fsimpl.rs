@@ -448,6 +448,38 @@ impl<B: BlockStorage> UberFileSystem<B> {
         }
     }
 
+    /// Remove a directory
+    ///
+    pub(crate) fn remove_directory(
+        &mut self,
+        parent_id: UfsUuid,
+        name: &str,
+    ) -> Result<(), failure::Error> {
+        if let Ok(dir) = self
+            .block_manager()
+            .metadata()
+            .get_dir_metadata_from_dir_and_name(parent_id, name)
+        {
+            if let Some(program_mgr) = &self.program_mgr {
+                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
+                    IofsDirMessage::DirDelete(
+                        self.block_manager
+                            .metadata()
+                            .path_from_dir_id(dir.id())
+                            .to_str()
+                            .unwrap()
+                            .to_string(),
+                        dir.id(),
+                    ),
+                )));
+            }
+        }
+
+        self.block_manager
+            .metadata_mut()
+            .remove_directory(parent_id, name)
+    }
+
     /// Remove a file
     ///
     pub(crate) fn remove_file(

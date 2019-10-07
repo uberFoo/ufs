@@ -322,6 +322,27 @@ impl Metadata {
         }
     }
 
+    /// Get DirectoryMetadata given a parent directory, and a name
+    ///
+    pub(crate) fn get_dir_metadata_from_dir_and_name(
+        &self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<DirectoryMetadata, failure::Error> {
+        if let Some(dir) = self.lookup_dir(dir_id) {
+            match dir.entries().get(name) {
+                Some(DirectoryEntry::Directory(d)) => Ok(d.clone()),
+                _ => Err(format_err!(
+                    "unable to find directory {} under directory {}",
+                    name,
+                    dir_id
+                )),
+            }
+        } else {
+            Err(format_err!("unable to find directory with id {}", dir_id))
+        }
+    }
+
     /// Get FileMetadata given a parent directory, and a name
     ///
     pub(crate) fn get_file_metadata_from_dir_and_name(
@@ -412,6 +433,29 @@ impl Metadata {
         }
     }
 
+    /// Remove a directory
+    ///
+    pub(crate) fn remove_directory(
+        &mut self,
+        parent_id: UfsUuid,
+        name: &str,
+    ) -> Result<(), failure::Error> {
+        debug!("--------");
+        debug!("`remove_directory`: {}, parent: {:#?}", name, parent_id);
+
+        if let Some(parent) = self.lookup_dir_mut(parent_id) {
+            match parent.entries_mut().remove(name) {
+                Some(DirectoryEntry::Directory(dir)) => {
+                    debug!("\tremoved {:#?}\n\tfrom {:#?}", dir, parent);
+                    Ok(())
+                }
+                _ => Err(format_err!("did not find {} in {:#?}", name, parent)),
+            }
+        } else {
+            Err(format_err!("unable to find directory {:#?}", parent_id))
+        }
+    }
+
     /// Remove a file from a directory
     ///
     pub(crate) fn unlink_file(
@@ -427,13 +471,13 @@ impl Metadata {
             // from the parent.
             if dir.is_vers_dir() {
                 debug!("\teventually, we'll be able to remove specific versions of the file");
-                debug!("\tsomeday, I'd even like to make removing the root file, save it");
+                debug!("\tsomeday, I'd even like to make removing the root file save it");
                 debug!("\tsomeplace until all of the versions are removed");
                 Ok(vec![])
             } else {
                 match dir.entries_mut().remove(name) {
                     Some(DirectoryEntry::File(file)) => {
-                        debug!("\tremoved {:#?}\nfrom {:#?}", file, dir);
+                        debug!("\tremoved {:#?}\n\tfrom {:#?}", file, dir);
                         self.dirty = true;
                         // We need to collect all of the blocks, for all of the versions of the file
                         // and return them as a single list to be deleted by the caller

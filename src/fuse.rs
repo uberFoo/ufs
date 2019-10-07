@@ -582,6 +582,28 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         }
     }
 
+    // Remove a directory from the file system
+    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        debug!("--------");
+        debug!("`rmdir`: {:?}, parent: {}", name, parent);
+
+        if let Some(Inode::Dir(parent_ino)) = self.inodes.get_mut(&parent) {
+            let name = name.to_str().unwrap();
+
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            match guard.remove_directory(parent_ino.id, name) {
+                Ok(_) => reply.ok(),
+                Err(e) => {
+                    error!("unlinking file {}", e);
+                    reply.error(ENOENT);
+                }
+            }
+        } else {
+            warn!("can't find parent inode {}", parent);
+            reply.error(ENOENT);
+        }
+    }
+
     fn release(
         &mut self,
         _req: &Request,
