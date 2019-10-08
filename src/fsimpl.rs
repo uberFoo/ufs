@@ -402,6 +402,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         .unwrap()
                         .to_string(),
                     file.file_id,
+                    dir_id,
                 ),
             )));
         }
@@ -850,7 +851,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
         pid: UfsUuid,
         name: &str,
     ) -> Result<UfsUuid, failure::Error> {
-        let parent_dir = self.block_manager.metadata().get_directory(pid)?;
         match self
             .block_manager
             .metadata()

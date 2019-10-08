@@ -24,7 +24,7 @@ pub(crate) enum IofsSystemMessage {
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum IofsFileMessage {
-    Create(String, UfsUuid),
+    Create(String, UfsUuid, UfsUuid),
     Delete(String, UfsUuid),
     Open(String, UfsUuid),
     Close(String, UfsUuid),
@@ -98,17 +98,27 @@ impl<'a> WasmMessageSender<'a> {
         &mut self,
         path: &str,
         id: &UfsUuid,
+        parent_id: &UfsUuid,
     ) -> Result<(), failure::Error> {
         self.write_wasm_memory(0, path);
+
+        let id_str_offset = path.len();
         let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        self.write_wasm_memory(id_str_offset, id_str);
+
+        let parent_id_str_offset = id_str_offset + id_str.len();
+        let parent_id_str = &format!("{}", parent_id);
+        self.write_wasm_memory(parent_id_str_offset, parent_id_str);
+
         self.call_wasm_func(
-            "__handle_new_file",
+            "__handle_file_create",
             Some(&[
                 Value::I32(0),
                 Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
+                Value::I32(id_str_offset as i32),
                 Value::I32(id_str.len() as i32),
+                Value::I32(parent_id_str_offset as i32),
+                Value::I32(parent_id_str.len() as i32),
             ]),
         )
     }
@@ -122,7 +132,7 @@ impl<'a> WasmMessageSender<'a> {
         let id_str = &format!("{}", id);
         self.write_wasm_memory(path.len(), id_str);
         self.call_wasm_func(
-            "__handle_new_dir",
+            "__handle_dir_create",
             Some(&[
                 Value::I32(0),
                 Value::I32(path.len() as i32),

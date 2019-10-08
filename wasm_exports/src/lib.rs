@@ -51,19 +51,6 @@ pub enum WasmMessage {
     FileWrite,
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct FileHandle {
-    pub handle: u64,
-    pub id: String,
-}
-
-#[repr(C)]
-pub enum MessagePayload {
-    Path(RefStr),
-    PathAndId(RefStr, RefStr),
-}
-
 pub struct MessageHandler {
     callbacks: HashMap<WasmMessage, extern "C" fn(Option<MessagePayload>)>,
 }
@@ -77,6 +64,41 @@ impl MessageHandler {
 
     fn lookup(&self, msg: &WasmMessage) -> Option<&extern "C" fn(Option<MessagePayload>)> {
         self.callbacks.get(msg)
+    }
+}
+
+#[derive(Debug)]
+pub struct FileHandle {
+    pub handle: u64,
+    pub id: String,
+}
+
+pub enum MessagePayload {
+    Path(RefStr),
+    PathAndId(RefStr, RefStr),
+    PathAndIdAndPid(RefStr, RefStr, RefStr),
+    FileCreate(__FileCreate),
+}
+
+pub struct __FileCreate {
+    path: RefStr,
+    id: RefStr,
+    dir_id: RefStr,
+}
+
+pub struct FileCreate {
+    pub path: String,
+    pub id: String,
+    pub dir_id: String,
+}
+
+impl __FileCreate {
+    pub fn unpack(self) -> FileCreate {
+        FileCreate {
+            path: self.path.get_str().to_owned(),
+            id: self.id.get_str().to_owned(),
+            dir_id: self.dir_id.get_str().to_owned(),
+        }
     }
 }
 
@@ -205,7 +227,14 @@ pub extern "C" fn __handle_ping() {
 }
 
 #[no_mangle]
-pub extern "C" fn __handle_new_file(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_file_create(
+    path_ptr: i32,
+    path_len: i32,
+    id_ptr: i32,
+    id_len: i32,
+    parent_id_ptr: i32,
+    parent_id_len: i32,
+) {
     let lookup = LOOKUP.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileCreate) {
         let path_from_host = RefStr {
@@ -216,15 +245,20 @@ pub extern "C" fn __handle_new_file(path_ptr: i32, path_len: i32, id_ptr: i32, i
             ptr: id_ptr,
             len: id_len,
         };
-        func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
-        )));
+        let parent_id_from_host = RefStr {
+            ptr: parent_id_ptr,
+            len: parent_id_len,
+        };
+        func(Some(MessagePayload::FileCreate(__FileCreate {
+            path: path_from_host,
+            id: id_from_host,
+            dir_id: parent_id_from_host,
+        })));
     }
 }
 
 #[no_mangle]
-pub extern "C" fn __handle_new_dir(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirCreate) {
         let path_from_host = RefStr {

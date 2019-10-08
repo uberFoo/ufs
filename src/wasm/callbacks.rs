@@ -3,12 +3,12 @@
 //! Functions that are declared in the WASM program as `extern` are resolved here.
 //!
 use {
-    crate::{block::BlockStorage, wasm::WasmContext, IOFSError, IOFSErrorKind, OpenFileMode},
+    crate::{block::BlockStorage, wasm::WasmContext, OpenFileMode},
     colored::*,
-    log::{debug, info},
-    std::{cell::Cell, convert::TryInto, str},
-    wasm_exports::{RefStr, WasmMessage},
-    wasmer_runtime::{memory::MemoryView, Ctx},
+    log::{debug, error, info},
+    std::{convert::TryInto, str},
+    wasm_exports::WasmMessage,
+    wasmer_runtime::Ctx,
 };
 
 pub(crate) fn __register_for_callback<B>(ctx: &mut Ctx, message_ptr: u32)
@@ -66,7 +66,10 @@ where
 
     match file {
         Ok(handle) => handle,
-        Err(e) => 0,
+        Err(e) => {
+            error!("Unable to open file: {}", e);
+            0
+        }
     }
 }
 
@@ -88,7 +91,7 @@ where
         wc.unset_handles_message(WasmMessage::FileClose)
     }
 
-    let file = guard.close_file(handle);
+    guard.close_file(handle);
 
     if has_handler {
         wc.set_handles_message(WasmMessage::FileClose)
@@ -113,7 +116,7 @@ where
 
     let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
     let guard = wc.iofs.clone();
-    let mut guard = guard.lock().expect("poisoned iofs lock");
+    let guard = guard.lock().expect("poisoned iofs lock");
 
     // Disable notification for this open
     let has_handler = wc.does_handle_message(WasmMessage::FileRead);
@@ -134,7 +137,7 @@ where
 
     match bytes {
         Ok(bytes) => {
-            let mut memory = ctx.memory(0);
+            let memory = ctx.memory(0);
             for (i, cell) in memory.view()[data_ptr as _..data_ptr as usize + bytes.len()]
                 .iter()
                 .enumerate()
@@ -174,7 +177,7 @@ where
         wc.unset_handles_message(WasmMessage::FileWrite)
     }
 
-    let mut memory = ctx.memory(0);
+    let memory = ctx.memory(0);
     let bytes: Vec<_> = memory.view()[data_ptr as usize..(data_ptr + data_len) as usize]
         .iter()
         .map(|cell| cell.get())
@@ -225,7 +228,7 @@ where
                 "created file {:?}, handle: {}, id: {}",
                 name, handle, file.file_id
             );
-            let mut memory = ctx.memory(0);
+            let memory = ctx.memory(0);
             let ptr = handle.to_le_bytes();
             for (i, cell) in memory.view()[0..ptr.len()].iter().enumerate() {
                 cell.set(ptr[i]);
@@ -240,7 +243,10 @@ where
             }
             0
         }
-        Err(_) => -1,
+        Err(e) => {
+            error!("unable to create file {}", e);
+            -1
+        }
     }
 }
 
@@ -276,7 +282,7 @@ where
     match dir {
         Ok(dir) => {
             debug!("created directory {:?} with id {}", name, dir.id());
-            let mut memory = ctx.memory(0);
+            let memory = ctx.memory(0);
             let dir_id_str = &format!("{}", dir.id());
             for (byte, cell) in dir_id_str
                 .bytes()
@@ -311,7 +317,7 @@ where
     match dir {
         Ok(dir) => {
             debug!("found directory {:?} with id {}", name, dir);
-            let mut memory = ctx.memory(0);
+            let memory = ctx.memory(0);
             let dir_id_str = &format!("{}", dir);
             for (byte, cell) in dir_id_str
                 .bytes()

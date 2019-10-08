@@ -163,7 +163,7 @@ impl<B: BlockStorage> WasmProcess<B> {
 
             instance.context_mut().data = &mut process.wasm_context as *mut _ as *mut c_void;
 
-            let mut root_id;
+            let root_id;
             {
                 let guard = process.wasm_context.iofs.clone();
                 let guard = guard.lock().expect("poisoned iofs lock");
@@ -191,12 +191,12 @@ impl<B: BlockStorage> WasmProcess<B> {
                         }
                     },
                     IofsMessage::FileMessage(m) => match m {
-                        IofsFileMessage::Create(path, id) => {
+                        IofsFileMessage::Create(path, id, parent_id) => {
                             if process
                                 .wasm_context
                                 .does_handle_message(WasmMessage::FileCreate)
                             {
-                                msg_sender.send_file_create(path, id)?;
+                                msg_sender.send_file_create(path, id, parent_id)?;
                             }
                         }
                         IofsFileMessage::Delete(path, id) => {
@@ -275,7 +275,7 @@ impl RuntimeError {
 }
 
 impl Fail for RuntimeError {
-    fn cause(&self) -> Option<&Fail> {
+    fn cause(&self) -> Option<&dyn Fail> {
         self.inner.cause()
     }
 

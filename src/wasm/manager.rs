@@ -120,7 +120,6 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // Stop the WASM program and remove it from the listeners map.
                     RuntimeManagerMsg::Stop(name) => {
                         info!("Stopping WASM program {:?}", name);
-                        let mut ufs = runtime.ufs.lock().expect("poisoned ufs lock");
                         if let Some(thread) = runtime.threads.remove(&name) {
                             thread
                                 .channel

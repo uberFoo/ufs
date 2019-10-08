@@ -49,11 +49,11 @@ pub extern "C" fn shutdown(_payload: Option<MessagePayload>) {
 
 #[no_mangle]
 pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+    if let Some(MessagePayload::FileCreate(file)) = payload {
+        let file = file.unpack();
         print(&format!(
-            "handle new file: {:?} ({})",
-            path.get_str(),
-            id.get_str()
+            "handle new file: {:?} ({}) under directory {}",
+            file.path, file.id, file.dir_id
         ));
     }
 }
@@ -118,10 +118,13 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
 
         // Try creating a file in the directory.
         if let Some(dir_id) = dir_id {
-            let file_handle = create_file(&dir_id, "baz").unwrap();
-            print(&format!("File id: {:?}", file_handle));
-            write_file(file_handle.handle, 0, "Hello World!".as_bytes());
-            close_file(file_handle.handle);
+            if let Some(file_handle) = create_file(&dir_id, "baz") {
+                print(&format!("File id: {:?}", file_handle));
+                write_file(file_handle.handle, 0, "Hello World!\n".as_bytes());
+                close_file(file_handle.handle);
+            } else {
+                print("file create unsuccessful");
+            }
         }
 
         // let handle = open_file(id);
