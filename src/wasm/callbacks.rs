@@ -70,6 +70,31 @@ where
     }
 }
 
+pub(crate) fn __close_file<B>(ctx: &mut Ctx, handle: u64)
+where
+    B: BlockStorage,
+{
+    debug!("--------");
+    debug!("__close_file: handle: {}", handle);
+
+    let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
+    let guard = wc.iofs.clone();
+    let mut guard = guard.lock().expect("poisoned iofs lock");
+
+    // Disable notification for this message
+    let has_handler = wc.does_handle_message(WasmMessage::FileClose);
+
+    if has_handler {
+        wc.unset_handles_message(WasmMessage::FileClose)
+    }
+
+    let file = guard.close_file(handle);
+
+    if has_handler {
+        wc.set_handles_message(WasmMessage::FileClose)
+    }
+}
+
 pub(crate) fn __read_file<B>(
     ctx: &mut Ctx,
     handle: u64,
@@ -91,10 +116,10 @@ where
     let mut guard = guard.lock().expect("poisoned iofs lock");
 
     // Disable notification for this open
-    let has_handler = wc.does_handle_message(WasmMessage::FileOpen);
+    let has_handler = wc.does_handle_message(WasmMessage::FileRead);
 
     if has_handler {
-        wc.unset_handles_message(WasmMessage::FileOpen)
+        wc.unset_handles_message(WasmMessage::FileRead)
     }
 
     let file_size = guard
@@ -104,7 +129,7 @@ where
     let bytes = guard.read_file(handle, offset as _, read_len as _);
 
     if has_handler {
-        wc.set_handles_message(WasmMessage::FileOpen)
+        wc.set_handles_message(WasmMessage::FileRead)
     }
 
     match bytes {
@@ -118,6 +143,52 @@ where
             }
             bytes.len() as _
         }
+        Err(_) => 0,
+    }
+}
+
+pub(crate) fn __write_file<B>(
+    ctx: &mut Ctx,
+    handle: u64,
+    offset: u32,
+    data_ptr: u32,
+    data_len: u32,
+) -> u32
+where
+    B: BlockStorage,
+{
+    debug!("--------");
+    debug!(
+        "__write_file: handle: {}, data_ptr: {}, data_len: {}",
+        handle, data_ptr, data_len
+    );
+
+    let wc: &mut WasmContext<B> = unsafe { &mut *(ctx.data as *mut WasmContext<B>) };
+    let guard = wc.iofs.clone();
+    let mut guard = guard.lock().expect("poisoned iofs lock");
+
+    // Disable notification for this open
+    let has_handler = wc.does_handle_message(WasmMessage::FileWrite);
+
+    if has_handler {
+        wc.unset_handles_message(WasmMessage::FileWrite)
+    }
+
+    let mut memory = ctx.memory(0);
+    let bytes: Vec<_> = memory.view()[data_ptr as usize..(data_ptr + data_len) as usize]
+        .iter()
+        .map(|cell| cell.get())
+        .collect();
+
+    let bytes_written = guard.write_file(handle, &bytes, offset as _);
+    debug!("\twrote {:?} bytes", bytes_written);
+
+    if has_handler {
+        wc.set_handles_message(WasmMessage::FileWrite)
+    }
+
+    match bytes_written {
+        Ok(i) => i as u32,
         Err(_) => 0,
     }
 }
@@ -276,7 +347,8 @@ fn unbox_message(ctx: &Ctx, msg_ptr: u32) -> WasmMessage {
         5 => WasmMessage::DirDelete,
         6 => WasmMessage::FileOpen,
         7 => WasmMessage::FileClose,
-        8 => WasmMessage::FileWrite,
+        8 => WasmMessage::FileRead,
+        9 => WasmMessage::FileWrite,
         _ => panic!("Invalid value decoding WasmMessage"),
     }
 }

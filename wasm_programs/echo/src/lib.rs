@@ -118,8 +118,10 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
 
         // Try creating a file in the directory.
         if let Some(dir_id) = dir_id {
-            let file_handle = create_file(&dir_id, "baz");
+            let file_handle = create_file(&dir_id, "baz").unwrap();
             print(&format!("File id: {:?}", file_handle));
+            write_file(file_handle.handle, 0, "Hello World!".as_bytes());
+            close_file(file_handle.handle);
         }
 
         // let handle = open_file(id);

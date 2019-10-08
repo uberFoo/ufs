@@ -23,7 +23,9 @@ extern "C" {
     pub fn __register_for_callback(message: u32);
     pub fn __print(ptr: u32);
     pub fn __open_file(ptr: u32) -> u64;
+    pub fn __close_file(handle: u64);
     pub fn __read_file(handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
+    pub fn __write_file(handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
     pub fn __create_file(id_ptr: u32, name_ptr: u32) -> i32;
     pub fn __create_directory(id_ptr: u32, name_ptr: u32) -> i32;
     pub fn __open_directory(id_ptr: u32, name_ptr: u32) -> i32;
@@ -45,14 +47,15 @@ pub enum WasmMessage {
     DirDelete,
     FileOpen,
     FileClose,
+    FileRead,
     FileWrite,
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct FileHandle {
-    handle: u64,
-    id: String,
+    pub handle: u64,
+    pub id: String,
 }
 
 #[repr(C)]
@@ -111,10 +114,20 @@ pub fn open_file(id: &str) -> u64 {
     unsafe { __open_file(id as u32) }
 }
 
-pub fn read_file(handle: u64, offset: u32, data: &mut [u8]) -> u32 {
+pub fn close_file(handle: u64) {
+    unsafe { __close_file(handle) }
+}
+
+pub fn read_file(handle: u64, offset: u32, data: &[u8]) -> u32 {
     let ptr = data.as_ptr();
     let len = data.len();
     unsafe { __read_file(handle, offset, ptr as _, len as _) }
+}
+
+pub fn write_file(handle: u64, offset: u32, data: &[u8]) -> u32 {
+    let ptr = data.as_ptr();
+    let len = data.len();
+    unsafe { __write_file(handle, offset, ptr as _, len as _) }
 }
 
 pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
