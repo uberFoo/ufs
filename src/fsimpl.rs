@@ -23,8 +23,8 @@ use crate::{
     },
     server::UfsRemoteServer,
     wasm::{
-        IofsDirMessage, IofsFileMessage, IofsMessage, RuntimeManager, RuntimeManagerMsg,
-        WasmProgram,
+        IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, RuntimeManager,
+        RuntimeManagerMsg, WasmProgram,
     },
     UfsUuid,
 };
@@ -357,15 +357,17 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                IofsDirMessage::Create(
-                    self.block_manager
+                IofsDirMessage::Create(IofsMessagePayload {
+                    target_path: self
+                        .block_manager
                         .metadata()
                         .path_from_dir_id(dir.id())
                         .to_str()
                         .unwrap()
                         .to_string(),
-                    dir.id(),
-                ),
+                    target_id: dir.id(),
+                    parent_id,
+                }),
             )));
         }
 
@@ -394,16 +396,17 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::Create(
-                    self.block_manager
+                IofsFileMessage::Create(IofsMessagePayload {
+                    target_path: self
+                        .block_manager
                         .metadata()
                         .path_from_file_id(file.file_id)
                         .to_str()
                         .unwrap()
                         .to_string(),
-                    file.file_id,
-                    dir_id,
-                ),
+                    target_id: file.file_id,
+                    parent_id: dir_id,
+                }),
             )));
         }
 
@@ -463,15 +466,17 @@ impl<B: BlockStorage> UberFileSystem<B> {
         {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                    IofsDirMessage::Delete(
-                        self.block_manager
+                    IofsDirMessage::Delete(IofsMessagePayload {
+                        target_path: self
+                            .block_manager
                             .metadata()
                             .path_from_dir_id(dir.id())
                             .to_str()
                             .unwrap()
                             .to_string(),
-                        dir.id(),
-                    ),
+                        target_id: dir.id(),
+                        parent_id,
+                    }),
                 )));
             }
         }
@@ -500,15 +505,17 @@ impl<B: BlockStorage> UberFileSystem<B> {
         {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::Delete(
-                        self.block_manager
+                    IofsFileMessage::Delete(IofsMessagePayload {
+                        target_path: self
+                            .block_manager
                             .metadata()
                             .path_from_file_id(file.id())
                             .to_str()
                             .unwrap()
                             .to_string(),
-                        file.id(),
-                    ),
+                        target_id: file.id(),
+                        parent_id: dir_id,
+                    }),
                 )));
             }
 
@@ -560,15 +567,22 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::Open(
-                    self.block_manager
+                IofsFileMessage::Open(IofsMessagePayload {
+                    target_path: self
+                        .block_manager
                         .metadata()
                         .path_from_file_id(file.file_id)
                         .to_str()
                         .unwrap()
                         .to_string(),
-                    file.file_id,
-                ),
+                    target_id: file.file_id,
+                    parent_id: self
+                        .block_manager
+                        .metadata()
+                        .get_file_metadata(file.file_id)
+                        .expect("should not fail in open_file")
+                        .dir_id(),
+                }),
             )));
         }
 
@@ -657,15 +671,22 @@ impl<B: BlockStorage> UberFileSystem<B> {
             Some(file) => {
                 if let Some(program_mgr) = &self.program_mgr {
                     program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                        IofsFileMessage::Close(
-                            self.block_manager
+                        IofsFileMessage::Close(IofsMessagePayload {
+                            target_path: self
+                                .block_manager
                                 .metadata()
                                 .path_from_file_id(file.file_id)
                                 .to_str()
                                 .unwrap()
                                 .to_string(),
-                            file.file_id,
-                        ),
+                            target_id: file.file_id,
+                            parent_id: self
+                                .block_manager
+                                .metadata()
+                                .get_file_metadata(file.file_id)
+                                .expect("should not fail in close_file")
+                                .dir_id(),
+                        }),
                     )));
                 }
 
@@ -722,15 +743,22 @@ impl<B: BlockStorage> UberFileSystem<B> {
         if let Some(file) = self.open_files.get(&handle) {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::Write(
-                        self.block_manager
+                    IofsFileMessage::Write(IofsMessagePayload {
+                        target_path: self
+                            .block_manager
                             .metadata()
                             .path_from_file_id(file.file_id)
                             .to_str()
                             .unwrap()
                             .to_string(),
-                        file.file_id,
-                    ),
+                        target_id: file.file_id,
+                        parent_id: self
+                            .block_manager
+                            .metadata()
+                            .get_file_metadata(file.file_id)
+                            .expect("should not fail in write_file")
+                            .dir_id(),
+                    }),
                 )));
             }
 
@@ -834,8 +862,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
     }
 
     //
+    //
     // Functions specifically for Rust-side WASM related use.
     //
+    //
+
+    /// Return file size
+    ///
+    /// Used in the WASM file read implementation in order to know how many bytes to read.
+    ///
     pub(crate) fn get_file_size(&self, handle: FileHandle) -> Result<FileSize, failure::Error> {
         if let Some(file) = self.open_files.get(&handle) {
             Ok(file.version.size())

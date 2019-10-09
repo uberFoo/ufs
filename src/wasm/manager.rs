@@ -3,7 +3,7 @@
 use {
     crate::{
         block::BlockStorage,
-        wasm::{IofsMessage, IofsSystemMessage, WasmContext, WasmProcess},
+        wasm::{IofsMessage, IofsSystemMessage, WasmProcess},
         UberFileSystem,
     },
     crossbeam::crossbeam_channel,
@@ -42,7 +42,7 @@ pub(crate) enum RuntimeManagerMsg {
 ///
 /// This is the contents of the RuntimeManagerMsg::Start message.
 pub(crate) struct WasmProgram {
-    /// A non-unique identifier for the WASM program.  Uniqueness may be virtuous.
+    /// A unique identifier for the WASM program -- it's the path, and there can be only one.
     pub(in crate::wasm) name: PathBuf,
     /// The bytes that comprise the program.
     pub(in crate::wasm) program: Vec<u8>,
@@ -134,9 +134,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // Start the WASM program and add it to the listeners map.
                     RuntimeManagerMsg::Start(wasm) => {
                         info!("Starting WASM program {:?}", wasm.name);
-                        let wc =
-                            WasmContext::new(wasm.name.clone(), wasm.program, runtime.ufs.clone());
-                        let process = WasmProcess::new(wc);
+                        let process =
+                            WasmProcess::new(wasm.name.clone(), wasm.program, runtime.ufs.clone());
                         runtime
                             .threads
                             .insert(wasm.name, RuntimeProcess::new(process));

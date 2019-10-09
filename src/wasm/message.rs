@@ -24,17 +24,24 @@ pub(crate) enum IofsSystemMessage {
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum IofsFileMessage {
-    Create(String, UfsUuid, UfsUuid),
-    Delete(String, UfsUuid),
-    Open(String, UfsUuid),
-    Close(String, UfsUuid),
-    Write(String, UfsUuid),
+    Create(IofsMessagePayload),
+    Delete(IofsMessagePayload),
+    Open(IofsMessagePayload),
+    Close(IofsMessagePayload),
+    Write(IofsMessagePayload),
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum IofsDirMessage {
-    Create(String, UfsUuid),
-    Delete(String, UfsUuid),
+    Create(IofsMessagePayload),
+    Delete(IofsMessagePayload),
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub(crate) struct IofsMessagePayload {
+    pub(crate) target_id: UfsUuid,
+    pub(crate) target_path: String,
+    pub(crate) parent_id: UfsUuid,
 }
 
 pub(crate) struct WasmMessageSender<'a> {

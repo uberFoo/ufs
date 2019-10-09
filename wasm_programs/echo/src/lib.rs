@@ -96,11 +96,10 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
         let pgm = PROGRAM.read().unwrap();
 
-        let id = id.get_str();
         print(&format!(
             "handle file closed: {:?} ({})",
             path.get_str(),
-            id
+            id.get_str()
         ));
 
         // Check for the "fubar" directory
@@ -119,9 +118,10 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
         // Try creating a file in the directory.
         if let Some(dir_id) = dir_id {
             if let Some(file_handle) = create_file(&dir_id, "baz") {
+                let id = &file_handle.id;
                 print(&format!("File id: {:?}", file_handle));
-                write_file(file_handle.handle, 0, "Hello World!\n".as_bytes());
-                close_file(file_handle.handle);
+                write_file(id, file_handle.handle, 0, "Hello World!\n".as_bytes());
+                close_file(id, file_handle.handle);
             } else {
                 print("file create unsuccessful");
             }

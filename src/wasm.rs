@@ -8,12 +8,19 @@ pub(crate) mod message;
 
 pub(crate) use {
     manager::{RuntimeManager, RuntimeManagerMsg, WasmProgram},
-    message::{IofsDirMessage, IofsFileMessage, IofsMessage, IofsSystemMessage, WasmMessageSender},
+    message::{
+        IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, IofsSystemMessage,
+        WasmMessageSender,
+    },
 };
 
 use {
     self::callbacks::*,
-    crate::{block::BlockStorage, UberFileSystem},
+    crate::{
+        block::BlockStorage,
+        metadata::{DirectoryMetadata, File, FileHandle},
+        OpenFileMode, UberFileSystem, UfsUuid,
+    },
     crossbeam::crossbeam_channel,
     failure::{Backtrace, Context, Fail},
     log::{debug, error, info},
@@ -30,45 +37,57 @@ use {
     wasmer_runtime::{func, imports, instantiate},
 };
 
-/// Communication between WASM and Rust
+/// The main interface between the file system and WASM
 ///
-/// This is the means whereby Rust and WASM may communicate. It's a shared memory context that
-/// contains a handle to the file system that WASM programs may use to invoke file system functions.
-/// It also contains a list of handlers that the WASM program has registered to be called when file
-/// system events occur.
-pub(in crate::wasm) struct WasmContext<B: BlockStorage> {
-    /// A non-unique identifier for the WASM program.  Uniqueness may be virtuous.
-    pub(in crate::wasm) path: PathBuf,
+/// One of these is created when the file system loads a new WASM program. This struct maintains a
+/// channel which the file system uses to send file system events to the WASM program. The WASM
+/// program itself is started in the `start` associated function. Messages are received there and
+/// forwarded to the executing WASM program.
+pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
+    /// A unique identifier for the WASM program -- it's the path, and there can be only one.
+    path: PathBuf,
     /// The bytes that comprise the program.
-    pub(in crate::wasm) program: Vec<u8>,
+    program: Vec<u8>,
+    /// The file system sends messages with sender...
+    sender: crossbeam_channel::Sender<IofsMessage>,
+    /// we receive them using this.
+    receiver: crossbeam_channel::Receiver<IofsMessage>,
+    /// A list of IDs of the files or directories which were the subjects of the synchronous method
+    /// invocations to the file system -- we can filter notifications with these.
+    sync_func_ids: Vec<UfsUuid>,
+    /// IOFS access
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
     /// Notification delivery registration tracking.
     pub notifications: HashMap<WasmMessage, bool>,
-    /// IOFS access
-    pub iofs: Arc<Mutex<UberFileSystem<B>>>,
 }
 
-impl<B: BlockStorage> WasmContext<B> {
-    pub(crate) fn new(
+impl<B: BlockStorage> WasmProcess<B> {
+    pub(in crate::wasm) fn new(
         path: PathBuf,
         program: Vec<u8>,
         iofs: Arc<Mutex<UberFileSystem<B>>>,
     ) -> Self {
-        let mut handlers = HashMap::new();
-        handlers.insert(WasmMessage::Shutdown, false);
-        handlers.insert(WasmMessage::Ping, false);
-        handlers.insert(WasmMessage::FileCreate, false);
-        handlers.insert(WasmMessage::DirCreate, false);
-        handlers.insert(WasmMessage::FileDelete, false);
-        handlers.insert(WasmMessage::DirDelete, false);
-        handlers.insert(WasmMessage::DirDelete, false);
-        handlers.insert(WasmMessage::FileClose, false);
-        handlers.insert(WasmMessage::FileWrite, false);
+        let (sender, receiver) = crossbeam_channel::unbounded::<IofsMessage>();
 
-        WasmContext {
+        let mut notifications = HashMap::new();
+        notifications.insert(WasmMessage::Shutdown, false);
+        notifications.insert(WasmMessage::Ping, false);
+        notifications.insert(WasmMessage::FileCreate, false);
+        notifications.insert(WasmMessage::DirCreate, false);
+        notifications.insert(WasmMessage::FileDelete, false);
+        notifications.insert(WasmMessage::DirDelete, false);
+        notifications.insert(WasmMessage::DirDelete, false);
+        notifications.insert(WasmMessage::FileClose, false);
+        notifications.insert(WasmMessage::FileWrite, false);
+
+        WasmProcess {
             path,
             program,
-            notifications: handlers,
+            sender,
+            receiver,
+            sync_func_ids: vec![],
             iofs,
+            notifications,
         }
     }
 
@@ -78,6 +97,10 @@ impl<B: BlockStorage> WasmContext<B> {
 
     pub(crate) fn path(&self) -> &str {
         self.path.to_str().unwrap()
+    }
+
+    pub(crate) fn get_sender(&self) -> crossbeam_channel::Sender<IofsMessage> {
+        self.sender.clone()
     }
 
     pub(crate) fn does_handle_message(&mut self, msg: WasmMessage) -> bool {
@@ -92,39 +115,111 @@ impl<B: BlockStorage> WasmContext<B> {
     pub(crate) fn unset_handles_message(&mut self, msg: WasmMessage) {
         self.notifications.entry(msg).and_modify(|e| *e = true);
     }
-}
 
-/// The main interface between the file system and WASM
-///
-/// One of these is created when the file system loads a new WASM program. This struct maintains a
-/// channel which the file system uses to send file system events to the WASM program. The WASM
-/// program itself is started in the `start` associated function. Messages are received there and
-/// forwarded to the executing WASM program.
-pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
-    sender: crossbeam_channel::Sender<IofsMessage>,
-    receiver: crossbeam_channel::Receiver<IofsMessage>,
-    wasm_context: WasmContext<B>,
-}
-
-impl<B: BlockStorage> WasmProcess<B> {
-    pub(in crate::wasm) fn new(ctx: WasmContext<B>) -> Self {
-        let (sender, receiver) = crossbeam_channel::unbounded::<IofsMessage>();
-        WasmProcess {
-            sender,
-            receiver,
-            wasm_context: ctx,
+    /// Check incoming message to see if we're the source.
+    ///
+    /// We don't want to be notified about things that we've done to the file system, so we maintain
+    /// a list of ID's that are associated with each synchronous file system call. When a message
+    /// arrives, we check to see if it's in our list, and if so, don't notify the WASM program.
+    ///
+    /// We maintain a simple FIFO queue of ID's. We know that messages arrive in the order that they
+    /// are generated, so we just have to check the top of the list for a matching ID.
+    ///
+    /// This feels like it might be brittle. For one, we are just tracking ID's, and not message
+    /// types. So if two messages have the same ID, then it's possible that one notification is due
+    /// to something we did, and the other to another process in the file system.
+    fn should_send_notification(&mut self, id: &UfsUuid) -> bool {
+        if self.sync_func_ids.len() > 0 && *id == self.sync_func_ids[0] {
+            self.sync_func_ids.remove(0);
+            false
+        } else {
+            true
         }
     }
 
-    pub(crate) fn get_sender(&self) -> crossbeam_channel::Sender<IofsMessage> {
-        self.sender.clone()
+    pub(crate) fn open_file(
+        &mut self,
+        id: UfsUuid,
+        mode: OpenFileMode,
+    ) -> Result<FileHandle, failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(id);
+
+        guard.open_file(id, mode)
+    }
+
+    pub(crate) fn close_file(&mut self, id: UfsUuid, handle: FileHandle) {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(id);
+
+        guard.close_file(handle);
+    }
+
+    pub(crate) fn read_file(
+        &mut self,
+        id: UfsUuid,
+        handle: FileHandle,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(id);
+
+        guard.read_file(handle, offset, size)
+    }
+
+    pub(crate) fn write_file(
+        &mut self,
+        id: UfsUuid,
+        handle: FileHandle,
+        bytes: &[u8],
+        offset: u64,
+    ) -> Result<usize, failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(id);
+
+        guard.write_file(handle, &bytes, offset)
+    }
+
+    pub(crate) fn create_file(
+        &mut self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<(FileHandle, File), failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(dir_id);
+
+        guard.create_file(dir_id, name)
+    }
+
+    pub(crate) fn create_directory(
+        &mut self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<DirectoryMetadata, failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        self.sync_func_ids.push(dir_id);
+
+        guard.create_directory(dir_id, name)
     }
 }
 
 impl<B: BlockStorage> WasmProcess<B> {
     pub(crate) fn start(mut process: WasmProcess<B>) -> JoinHandle<Result<(), failure::Error>> {
         debug!("--------");
-        debug!("start {:?}", process.wasm_context.path());
+        debug!("start {:?}", process.path);
         spawn(move || {
             // This is the mapping of functions imported to the WASM interpreter.
             let import_object = imports! {
@@ -142,30 +237,29 @@ impl<B: BlockStorage> WasmProcess<B> {
                 },
             };
 
-            let mut instance =
-                match instantiate(process.wasm_context.program.as_slice(), &import_object) {
-                    Ok(i) => {
-                        info!("Instantiated WASM program {}", process.wasm_context.name());
-                        i
-                    }
-                    Err(e) => {
-                        error!(
-                            "Error {} -- unable to instantiate WASM program: {}",
-                            e,
-                            process.wasm_context.path()
-                        );
-                        return Err(RuntimeErrorKind::ProgramInstantiation.into());
-                    }
-                };
+            let mut instance = match instantiate(process.program.as_slice(), &import_object) {
+                Ok(i) => {
+                    info!("Instantiated WASM program {}", process.name());
+                    i
+                }
+                Err(e) => {
+                    error!(
+                        "Error {} -- unable to instantiate WASM program: {}",
+                        e,
+                        process.path()
+                    );
+                    return Err(RuntimeErrorKind::ProgramInstantiation.into());
+                }
+            };
 
             // Clear the program buffer, and save a little memory?
-            process.wasm_context.program = vec![];
+            process.program = vec![];
 
-            instance.context_mut().data = &mut process.wasm_context as *mut _ as *mut c_void;
+            instance.context_mut().data = &mut process as *mut _ as *mut c_void;
 
             let root_id;
             {
-                let guard = process.wasm_context.iofs.clone();
+                let guard = process.iofs.clone();
                 let guard = guard.lock().expect("poisoned iofs lock");
                 root_id = guard.get_root_directory_id();
             }
@@ -177,83 +271,83 @@ impl<B: BlockStorage> WasmProcess<B> {
                 match &message {
                     IofsMessage::SystemMessage(m) => match m {
                         IofsSystemMessage::Shutdown => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::Shutdown)
-                            {
+                            if process.does_handle_message(WasmMessage::Shutdown) {
                                 msg_sender.send_shutdown()?;
                             }
                         }
                         IofsSystemMessage::Ping => {
-                            if process.wasm_context.does_handle_message(WasmMessage::Ping) {
+                            if process.does_handle_message(WasmMessage::Ping) {
                                 msg_sender.send_ping()?;
                             }
                         }
                     },
                     IofsMessage::FileMessage(m) => match m {
-                        IofsFileMessage::Create(path, id, parent_id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::FileCreate)
+                        IofsFileMessage::Create(payload) => {
+                            if process.does_handle_message(WasmMessage::FileCreate)
+                                && process.should_send_notification(&payload.parent_id)
                             {
-                                msg_sender.send_file_create(path, id, parent_id)?;
+                                msg_sender.send_file_create(
+                                    &payload.target_path,
+                                    &payload.target_id,
+                                    &payload.parent_id,
+                                )?;
                             }
                         }
-                        IofsFileMessage::Delete(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::FileDelete)
+                        IofsFileMessage::Delete(payload) => {
+                            if process.does_handle_message(WasmMessage::FileDelete)
+                                && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender.send_file_delete(path, id)?;
+                                msg_sender
+                                    .send_file_delete(&payload.target_path, &payload.target_id)?;
                             }
                         }
-                        IofsFileMessage::Open(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::FileClose)
+                        IofsFileMessage::Open(payload) => {
+                            if process.does_handle_message(WasmMessage::FileClose)
+                                && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender.send_file_open(path, id)?;
+                                msg_sender
+                                    .send_file_open(&payload.target_path, &payload.target_id)?;
                             }
                         }
-                        IofsFileMessage::Close(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::FileClose)
+                        IofsFileMessage::Close(payload) => {
+                            if process.does_handle_message(WasmMessage::FileClose)
+                                && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender.send_file_close(path, id)?;
+                                msg_sender
+                                    .send_file_close(&payload.target_path, &payload.target_id)?;
                             }
                         }
-                        IofsFileMessage::Write(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::FileWrite)
+                        IofsFileMessage::Write(payload) => {
+                            if process.does_handle_message(WasmMessage::FileWrite)
+                                && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender.send_file_write(path, id)?;
+                                msg_sender
+                                    .send_file_write(&payload.target_path, &payload.target_id)?;
                             }
                         }
                         _ => unimplemented!(),
                     },
                     IofsMessage::DirMessage(m) => match m {
-                        IofsDirMessage::Create(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::DirCreate)
+                        IofsDirMessage::Create(payload) => {
+                            if process.does_handle_message(WasmMessage::DirCreate)
+                                && process.should_send_notification(&payload.parent_id)
                             {
-                                msg_sender.send_dir_create(path, id)?;
+                                msg_sender
+                                    .send_dir_create(&payload.target_path, &payload.target_id)?;
                             }
                         }
-                        IofsDirMessage::Delete(path, id) => {
-                            if process
-                                .wasm_context
-                                .does_handle_message(WasmMessage::DirDelete)
+                        IofsDirMessage::Delete(payload) => {
+                            if process.does_handle_message(WasmMessage::DirDelete)
+                                && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender.send_dir_delete(path, id)?
+                                msg_sender
+                                    .send_dir_delete(&payload.target_path, &payload.target_id)?
                             }
                         }
                     },
                 };
                 if let IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) = message {
-                    info!("WASM program {} shutting down", process.wasm_context.name());
+                    info!("WASM program {} shutting down", process.name());
                     break;
                 }
             }
