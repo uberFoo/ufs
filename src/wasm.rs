@@ -174,11 +174,11 @@ impl<B: BlockStorage> WasmProcess<B> {
         guard.read_file(handle, offset, size)
     }
 
-    pub(crate) fn write_file(
+    pub(crate) fn write_file<T: AsRef<[u8]>>(
         &mut self,
         id: UfsUuid,
         handle: FileHandle,
-        bytes: &[u8],
+        bytes: T,
         offset: u64,
     ) -> Result<usize, failure::Error> {
         let guard = self.iofs.clone();
@@ -186,7 +186,7 @@ impl<B: BlockStorage> WasmProcess<B> {
 
         self.sync_func_ids.push(id);
 
-        guard.write_file(handle, &bytes, offset)
+        guard.write_file(handle, bytes.as_ref(), offset)
     }
 
     pub(crate) fn create_file(
@@ -268,6 +268,7 @@ impl<B: BlockStorage> WasmProcess<B> {
 
             loop {
                 let message = process.receiver.recv()?;
+                debug!("WasmProcess dispatching message {:#?}", message);
                 match &message {
                     IofsMessage::SystemMessage(m) => match m {
                         IofsSystemMessage::Shutdown => {

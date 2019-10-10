@@ -93,14 +93,17 @@ where
     );
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let guard = wc.iofs.clone();
-    let guard = guard.lock().expect("poisoned iofs lock");
+
     let id = unbox_str(ctx, id_ptr);
     debug!("\tid: {}", id);
 
-    let file_size = guard
-        .get_file_size(handle)
-        .expect("tried to read invalid file handle");
+    let file_size = {
+        let guard = wc.iofs.clone();
+        let guard = guard.lock().expect("poisoned iofs lock");
+        guard
+            .get_file_size(handle)
+            .expect("tried to read invalid file handle")
+    };
     let read_len = std::cmp::min(data_len as u64, file_size - offset as u64);
     let bytes = wc.read_file(id.into(), handle, offset as _, read_len as _);
 

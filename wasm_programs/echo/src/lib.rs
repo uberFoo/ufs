@@ -102,41 +102,42 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
             id.get_str()
         ));
 
-        // Check for the "fubar" directory
-        let dir_id = if let Some(dir_id) = open_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
-            print(&format!("found dir id: {:?}", dir_id));
-            Some(dir_id)
-        } else {
-            if let Some(dir_id) = create_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
-                print(&format!("created dir id: {:?}", dir_id));
-                Some(dir_id)
-            } else {
-                None
-            }
-        };
-
-        // Try creating a file in the directory.
-        if let Some(dir_id) = dir_id {
-            if let Some(file_handle) = create_file(&dir_id, "baz") {
-                let id = &file_handle.id;
-                print(&format!("File id: {:?}", file_handle));
-                write_file(id, file_handle.handle, 0, "Hello World!\n".as_bytes());
-                close_file(id, file_handle.handle);
-            } else {
-                print("file create unsuccessful");
-            }
-        }
-
+        // let id = id.get_str();
         // let handle = open_file(id);
         // print(&format!("open handle: {}", handle));
         // let mut bytes: [u8; 256] = [0; 256];
         // let mut offset = 0;
-        // let mut read_len = read_file(handle, offset, &mut bytes);
+        // let mut read_len = read_file(id, handle, offset, &mut bytes);
         // while read_len > 0 {
         //     offset += read_len;
         //     let str = String::from_utf8_lossy(&bytes);
         //     print(&format!("read len: {}\n data: {}", read_len, str));
-        //     read_len = read_file(handle, offset, &mut bytes);
+        //     read_len = read_file(id, handle, offset, &mut bytes);
+        // }
+
+        // // Check for the "fubar" directory
+        // let dir_id = if let Some(dir_id) = open_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+        //     print(&format!("found dir id: {:?}", dir_id));
+        //     Some(dir_id)
+        // } else {
+        //     if let Some(dir_id) = create_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+        //         print(&format!("created dir id: {:?}", dir_id));
+        //         Some(dir_id)
+        //     } else {
+        //         None
+        //     }
+        // };
+
+        // // Try creating a file in the directory.
+        // if let Some(dir_id) = dir_id {
+        //     if let Some(file_handle) = create_file(&dir_id, "baz") {
+        //         let id = &file_handle.id;
+        //         print(&format!("File id: {:?}", file_handle));
+        //         write_file(id, file_handle.handle, 0, "Hello World!\n".as_bytes());
+        //         close_file(id, file_handle.handle);
+        //     } else {
+        //         print("file create unsuccessful");
+        //     }
         // }
     }
 }
