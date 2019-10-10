@@ -312,7 +312,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
                             match entry {
                                 DirectoryEntry::Directory(d) => {
-                                    debug!("\tadding directory: {}", number);
+                                    debug!("\tadding directory: ino: {}, id: {}", number, d.id());
                                     let inode = DirInode {
                                         number,
                                         id: d.id().clone(),
@@ -327,10 +327,11 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                     let file = f.get_latest();
                                     self.inode_number = number.wrapping_add(1);
                                     debug!(
-                                        "\tadding file size: {}, time: {:?}, ino: {}",
+                                        "\tadding file: ino: {}, size: {}, time: {:?}, id: {}",
+                                        number,
                                         file.size(),
                                         file.write_time(),
-                                        number,
+                                        file.file_id()
                                     );
                                     let inode = FileInode {
                                         number,
@@ -389,7 +390,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                 if let Some(inode) = self.inodes.get(index) {
                     match inode {
                         Inode::Dir(dir) => {
-                            trace!(
+                            debug!(
                                 "adding to reply: inode {}, offset {}, Directory, name {}",
                                 dir.number,
                                 i + 1,
@@ -399,7 +400,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                             reply.add(dir.number, (i + 1) as i64, FileType::Directory, name);
                         }
                         Inode::File(file) => {
-                            trace!(
+                            debug!(
                                 "adding to reply: inode {}, offset {}, File, name {}",
                                 file.number,
                                 i + 1,
