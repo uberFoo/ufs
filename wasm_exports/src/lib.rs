@@ -132,9 +132,14 @@ pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePay
     unsafe { __register_for_callback(msg as u32) };
 }
 
-pub fn open_file(id: &str) -> u64 {
+pub fn open_file(id: &str) -> Option<u64> {
     let id = Box::into_raw(Box::new(id));
-    unsafe { __open_file(id as u32) }
+    let handle = unsafe { __open_file(id as u32) };
+    if handle == 0 {
+        None
+    } else {
+        Some(handle)
+    }
 }
 
 pub fn close_file(id: &str, handle: u64) {

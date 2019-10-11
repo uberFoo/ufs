@@ -103,7 +103,7 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
         ));
 
         // let id = id.get_str();
-        // let handle = open_file(id);
+        // let handle = open_file(id).unwrap();
         // print(&format!("open handle: {}", handle));
         // let mut bytes: [u8; 256] = [0; 256];
         // let mut offset = 0;

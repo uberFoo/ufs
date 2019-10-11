@@ -144,12 +144,12 @@ where
     debug!("\tid: {}", id);
 
     let memory = ctx.memory(0);
-    let bytes: Vec<_> = memory.view()[data_ptr as usize..(data_ptr + data_len) as usize]
+    let bytes: Vec<u8> = memory.view()[data_ptr as usize..(data_ptr + data_len) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();
 
-    let bytes_written = wc.write_file(id.into(), handle, &bytes, offset as _);
+    let bytes_written = wc.write_file(id.into(), handle, &bytes, offset as u64);
     debug!("\twrote {:?} bytes", bytes_written);
 
     match bytes_written {
