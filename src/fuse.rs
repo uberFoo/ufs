@@ -641,7 +641,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         );
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        match &mut guard.read_file(fh, offset as u64, size as usize) {
+        match &mut guard.read_file(fh, offset as u64, size) {
             Ok(buffer) => {
                 debug!("read {} bytes", buffer.len());
                 trace!("{:?}", &buffer);

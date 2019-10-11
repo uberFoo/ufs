@@ -164,7 +164,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         id: UfsUuid,
         handle: FileHandle,
         offset: u64,
-        size: usize,
+        size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");

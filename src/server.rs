@@ -107,7 +107,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
         &mut self,
         handle: FileHandle,
         offset: u64,
-        size: usize,
+        size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.ufs.lock().expect("poisoned ufs lock");
         guard.read_file(handle, offset, size)

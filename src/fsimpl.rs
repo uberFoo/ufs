@@ -303,7 +303,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 if let Ok(fh) = self.open_file(file.id(), OpenFileMode::Read) {
                     let version = file.get_latest();
                     let size = version.size();
-                    if let Ok(program) = self.read_file(fh, 0, size as usize) {
+                    if let Ok(program) = self.read_file(fh, 0, size as u32) {
                         info!("Adding existing program {:?} to runtime.", path);
                         program_mgr
                             .send(RuntimeManagerMsg::Start(WasmProgram::new(path, program)))
@@ -646,7 +646,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                                             info!("Adding program {:?} to runtime", name);
                                             let size = file.version.size();
                                             if let Ok(program) =
-                                                self.read_file(handle, 0, size as usize)
+                                                self.read_file(handle, 0, size as u32)
                                             {
                                                 program_mgr
                                                     .send(RuntimeManagerMsg::Start(
@@ -780,7 +780,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         &self,
         handle: FileHandle,
         offset: u64,
-        size: usize,
+        size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         debug!("-------");
         debug!(
@@ -789,54 +789,53 @@ impl<B: BlockStorage> UberFileSystem<B> {
         );
 
         if let Some(file) = self.open_files.get(&handle) {
-            let block_size = self.block_manager.block_size();
-
-            let start_block = (offset / block_size as u64) as usize;
-            let mut start_offset = (offset % block_size as u64) as usize;
-
-            let mut blocks = file.version.blocks().clone();
-            trace!("reading from blocks {:?}", &blocks);
-            let block_iter = &mut blocks.iter_mut().skip(start_block);
-            trace!("current iterator {:?}", block_iter);
-
-            let mut read = 0;
-            let mut buffer = vec![0; size];
-            let mut blocks_read = 0;
-            // while read < size || read + offset as usize == file.version.size() as usize {
-            while read < size {
-                if let Some(block_number) = block_iter.next() {
-                    if let Some(block) = self.block_manager.get_block(*block_number) {
-                        debug!("reading block {:?}", &block);
-                        if let Ok(bytes) = self.block_manager.read(
-                            file.version.nonce(),
-                            ((start_block + blocks_read) * block_size as usize) as u64,
-                            block,
-                        ) {
-                            blocks_read += 1;
-
-                            trace!("read bytes\n{:?}", &bytes);
-                            let block_len = bytes.len();
-                            let width = std::cmp::min(size - read, block_len - start_offset);
-
-                            trace!(
-                                "copying to buffer[{}..{}] from bytes[{}..{}]",
-                                read,
-                                read + width,
-                                start_offset,
-                                start_offset + width
-                            );
-                            buffer[read..read + width]
-                                .copy_from_slice(&bytes[start_offset..start_offset + width]);
-
-                            read += width;
-                            trace!("buffer is now {:?}", &buffer);
-                        }
-                    }
-                    start_offset = 0;
+            let blocks = file.version.blocks().clone();
+            // This is the index into the file version's blocks from which we're reading.
+            let mut read_block = 0;
+            // This offset is the length of the blocks skipped over to get to the file offset.
+            let mut block_length_offset: u64 = 0;
+            for block_number in &blocks {
+                let block = self
+                    .block_manager
+                    .get_block(*block_number)
+                    .expect("block doesn't exist in read_file");
+                if (block_length_offset + block.size() as u64) < offset {
+                    block_length_offset += block.size() as u64;
+                    read_block += 1;
+                } else {
+                    break;
                 }
             }
 
-            if buffer.len() == size {
+            let mut read: u32 = 0;
+            let mut block_read_offset = (offset - block_length_offset) as u32;
+            let mut buffer = vec![0; size as usize];
+            while read < size {
+                if let Some(block) = self.block_manager.get_block(blocks[read_block]) {
+                    if let Ok(bytes) =
+                        self.block_manager
+                            .read(file.version.nonce(), block_length_offset, block)
+                    {
+                        let block_len = bytes.len() as u32;
+                        let bytes_to_read =
+                            std::cmp::min(size - read, block_len - block_read_offset);
+
+                        buffer[read as usize..(read + bytes_to_read) as usize].copy_from_slice(
+                            &bytes[block_read_offset as usize
+                                ..(block_read_offset + bytes_to_read) as usize],
+                        );
+                        read += bytes_to_read;
+                        if read < size {
+                            assert!(read_block + 1 < blocks.len());
+                            read_block += 1;
+                            block_length_offset += block_len as u64;
+                        }
+                    }
+                }
+                block_read_offset = 0;
+            }
+
+            if buffer.len() == size as usize {
                 // self.notify_listeners(UfsMessage::FileRead(
                 //     self.block_manager
                 //         .metadata()
@@ -928,13 +927,13 @@ mod test {
 
         let mut ufs =
             UberFileSystem::new_networked("test", "test", "test", "http://localhost:8888").unwrap();
-        let test = include_str!("lib.rs").as_bytes();
+        let test = include_str!("wasm.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
         assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
-        let bytes = ufs.read_file(h, 0, test.len()).unwrap();
+        let bytes = ufs.read_file(h, 0, test.len() as u32).unwrap();
         assert_eq!(test, bytes.as_slice());
 
         // If we don't remove the file, the test fails on the next run.
@@ -953,18 +952,18 @@ mod test {
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
 
         assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
-        let bytes = ufs.read_file(h, 0, test.len()).unwrap();
+        let bytes = ufs.read_file(h, 0, test.len() as u32).unwrap();
         assert_eq!(test, bytes.as_slice());
     }
 
     #[test]
-    fn small_chunks() {
+    fn read_small_chunks() {
         init();
 
         let chunk_size = 88;
         let mut ufs =
             UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
-        let test = include_str!("lib.rs").as_bytes();
+        let test = include_str!("fuse.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
@@ -972,7 +971,69 @@ mod test {
 
         let mut offset = 0;
         test.chunks(chunk_size).for_each(|test_bytes| {
-            let bytes = ufs.read_file(h, offset, test_bytes.len()).unwrap();
+            let bytes = ufs.read_file(h, offset, test_bytes.len() as u32).unwrap();
+            let len = bytes.len();
+            assert_eq!(
+                std::str::from_utf8(test_bytes).unwrap(),
+                String::from_utf8(bytes).unwrap(),
+                "failed at offset {}",
+                offset
+            );
+            offset += len as u64;
+        });
+    }
+
+    #[test]
+    fn read_large_chunks() {
+        init();
+
+        let chunk_size = 8888;
+        let mut ufs =
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
+        let test = include_str!("fuse.rs").as_bytes();
+
+        let root_id = ufs.block_manager.metadata().root_directory().id();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
+        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
+
+        let mut offset = 0;
+        test.chunks(chunk_size).for_each(|test_bytes| {
+            let bytes = ufs.read_file(h, offset, test_bytes.len() as u32).unwrap();
+            let len = bytes.len();
+            assert_eq!(
+                std::str::from_utf8(test_bytes).unwrap(),
+                String::from_utf8(bytes).unwrap(),
+                "failed at offset {}",
+                offset
+            );
+            offset += len as u64;
+        });
+    }
+
+    #[test]
+    fn small_chunks() {
+        init();
+
+        let write_chunk_size = 77;
+        let read_chunk_size = 88;
+        let mut ufs =
+            UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 1000);
+        let test = include_str!("fuse.rs").as_bytes();
+
+        let root_id = ufs.block_manager.metadata().root_directory().id();
+        let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
+        let mut offset = 0;
+        test.chunks(write_chunk_size).for_each(|write_bytes| {
+            assert_eq!(
+                write_bytes.len(),
+                ufs.write_file(h, write_bytes, offset).unwrap()
+            );
+            offset += write_chunk_size as u64;
+        });
+
+        let mut offset = 0;
+        test.chunks(read_chunk_size).for_each(|test_bytes| {
+            let bytes = ufs.read_file(h, offset, test_bytes.len() as u32).unwrap();
             let len = bytes.len();
             assert_eq!(
                 std::str::from_utf8(test_bytes).unwrap(),
@@ -988,18 +1049,26 @@ mod test {
     fn large_chunks() {
         init();
 
-        let chunk_size = 8888;
+        let write_chunk_size = 7777;
+        let read_chunk_size = 8888;
         let mut ufs =
             UberFileSystem::new_memory("test", "foobar", "test", BlockSize::TwentyFortyEight, 100);
-        let test = include_str!("lib.rs").as_bytes();
+        let test = include_str!("fuse.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
         let (h, _) = ufs.create_file(root_id, "lib.rs").unwrap();
-        assert_eq!(test.len(), ufs.write_file(h, test, 0).unwrap());
+        let mut offset = 0;
+        test.chunks(write_chunk_size).for_each(|write_bytes| {
+            assert_eq!(
+                write_bytes.len(),
+                ufs.write_file(h, write_bytes, offset).unwrap()
+            );
+            offset += write_chunk_size as u64;
+        });
 
         let mut offset = 0;
-        test.chunks(chunk_size).for_each(|test_bytes| {
-            let bytes = ufs.read_file(h, offset, test_bytes.len()).unwrap();
+        test.chunks(read_chunk_size).for_each(|test_bytes| {
+            let bytes = ufs.read_file(h, offset, test_bytes.len() as u32).unwrap();
             let len = bytes.len();
             assert_eq!(
                 std::str::from_utf8(test_bytes).unwrap(),
