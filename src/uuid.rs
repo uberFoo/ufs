@@ -6,7 +6,6 @@ use rand::{thread_rng, Rng};
 use serde_derive::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[cfg(not(target_arch = "wasm32"))]
 lazy_static! {
 /// The UUID to rule them all
 ///
@@ -19,13 +18,11 @@ static ref USER_ROOT_UUID: Uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"user.uber
 ///
 /// The ID is a version 5 UUID wit it's base namespace as "uberfoo.com". New ID's are derived from
 /// that root.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct UfsUuid {
     inner: Uuid,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl UfsUuid {
     /// Create a new file system UfsUuid
     ///
@@ -75,16 +72,22 @@ impl UfsUuid {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl AsRef<Uuid> for UfsUuid {
     fn as_ref(&self) -> &Uuid {
         &self.inner
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for UfsUuid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.inner)
+    }
+}
+
+impl From<String> for UfsUuid {
+    fn from(str: String) -> Self {
+        UfsUuid {
+            inner: Uuid::parse_str(&str).expect("unable to parse Uuid from String"),
+        }
     }
 }

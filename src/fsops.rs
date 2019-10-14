@@ -20,7 +20,7 @@ pub(crate) trait FileSystemOps: Send {
         &mut self,
         handle: FileHandle,
         offset: u64,
-        size: usize,
+        size: u32,
     ) -> Result<Vec<u8>, failure::Error>;
     fn write_file(&mut self, handle: FileHandle, bytes: &[u8]) -> Result<usize, failure::Error>;
     fn create_dir(&mut self, path: &Path) -> Result<(), failure::Error>;

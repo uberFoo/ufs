@@ -5,22 +5,20 @@
 //!
 //! FIXME: The directory data is not versioned. What happens to deleted files?  What do we do when
 //! a directory goes away?
-use failure::format_err;
-use log::debug;
-use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{time::UfsTime, uuid::UfsUuid};
+use {
+    crate::{time::UfsTime, uuid::UfsUuid, IOFSErrorKind},
+    failure::format_err,
+    log::debug,
+    serde_derive::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
 pub(crate) const WASM_DIR: &'static str = ".wasm";
 pub(crate) const WASM_EXT: &'static str = "wasm";
 pub(crate) const VERS_DIR: &'static str = ".vers";
 
-#[cfg(not(target_arch = "wasm32"))]
 use super::{DirectoryEntry, FileMetadata, Permission, PermissionGroups};
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DirectoryMetadata {
     /// A flag indicating that the directory's data has been modified and needs to be written.
@@ -65,7 +63,6 @@ pub struct DirectoryMetadata {
     entries: HashMap<String, DirectoryEntry>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
     /// Create a new directory
     ///
@@ -144,7 +141,7 @@ impl DirectoryMetadata {
         debug!("`new_subdirectory`: {:?}", name);
 
         if self.entries.contains_key(&name) {
-            Err(format_err!("directory already exists"))
+            Err(IOFSErrorKind::DirectoryExists.into())
         } else {
             let new_id = self.id.new(&name);
             let dir = DirectoryMetadata::new(new_id, Some(self.id), owner);
@@ -248,6 +245,7 @@ impl DirectoryMetadata {
 
     /// Return true if the directory needs to be serialized
     ///
+    #[allow(dead_code)]
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }

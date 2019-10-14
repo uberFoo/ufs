@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 //! FUSE Interface for uberFS
 //!
 use std::{collections::HashMap, ffi::OsStr};
@@ -313,7 +312,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
 
                             match entry {
                                 DirectoryEntry::Directory(d) => {
-                                    debug!("\tadding directory: {}", number);
+                                    debug!("\tadding directory: ino: {}, id: {}", number, d.id());
                                     let inode = DirInode {
                                         number,
                                         id: d.id().clone(),
@@ -328,10 +327,11 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                                     let file = f.get_latest();
                                     self.inode_number = number.wrapping_add(1);
                                     debug!(
-                                        "\tadding file size: {}, time: {:?}, ino: {}",
+                                        "\tadding file: ino: {}, size: {}, time: {:?}, id: {}",
+                                        number,
                                         file.size(),
                                         file.write_time(),
-                                        number,
+                                        file.file_id()
                                     );
                                     let inode = FileInode {
                                         number,
@@ -390,7 +390,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                 if let Some(inode) = self.inodes.get(index) {
                     match inode {
                         Inode::Dir(dir) => {
-                            trace!(
+                            debug!(
                                 "adding to reply: inode {}, offset {}, Directory, name {}",
                                 dir.number,
                                 i + 1,
@@ -400,7 +400,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
                             reply.add(dir.number, (i + 1) as i64, FileType::Directory, name);
                         }
                         Inode::File(file) => {
-                            trace!(
+                            debug!(
                                 "adding to reply: inode {}, offset {}, File, name {}",
                                 file.number,
                                 i + 1,
@@ -583,6 +583,28 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         }
     }
 
+    // Remove a directory from the file system
+    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        debug!("--------");
+        debug!("`rmdir`: {:?}, parent: {}", name, parent);
+
+        if let Some(Inode::Dir(parent_ino)) = self.inodes.get_mut(&parent) {
+            let name = name.to_str().unwrap();
+
+            let mut guard = self.file_system.lock().expect("poisoned ufs lock");
+            match guard.remove_directory(parent_ino.id, name) {
+                Ok(_) => reply.ok(),
+                Err(e) => {
+                    error!("unlinking file {}", e);
+                    reply.error(ENOENT);
+                }
+            }
+        } else {
+            warn!("can't find parent inode {}", parent);
+            reply.error(ENOENT);
+        }
+    }
+
     fn release(
         &mut self,
         _req: &Request,
@@ -619,7 +641,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         );
 
         let guard = self.file_system.lock().expect("poisoned ufs lock");
-        match &mut guard.read_file(fh, offset as u64, size as usize) {
+        match &mut guard.read_file(fh, offset as u64, size) {
             Ok(buffer) => {
                 debug!("read {} bytes", buffer.len());
                 trace!("{:?}", &buffer);

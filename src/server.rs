@@ -107,7 +107,7 @@ impl<B: BlockStorage> FileSystemOps for UfsRemoteServer<B> {
         &mut self,
         handle: FileHandle,
         offset: u64,
-        size: usize,
+        size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.ufs.lock().expect("poisoned ufs lock");
         guard.read_file(handle, offset, size)
@@ -159,7 +159,9 @@ mod test {
     fn list_files() {
         let mut connection = connect();
         let msg = UfsRemoteServerMessage::ListFiles;
-        connection.write(bincode::serialize(&msg).unwrap().as_slice()).unwrap();
+        connection
+            .write(bincode::serialize(&msg).unwrap().as_slice())
+            .unwrap();
         let mut buffer = [0; 256];
         connection.read(&mut buffer).unwrap();
         let response = bincode::deserialize::<UfsRemoteServerMessage>(&buffer).unwrap();

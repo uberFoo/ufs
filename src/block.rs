@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 //! Logical File Blocks
 //!
 //! This file system is comprised of blocks; file contents and metadata are stored in blocks.  The
@@ -211,21 +210,25 @@ impl Block {
     }
 
     /// Check if a block is free
+    #[allow(dead_code)]
     pub(in crate::block) fn is_free(&self) -> bool {
         self.block_type.is_free()
     }
 
     /// Check if a block contains data
+    #[allow(dead_code)]
     pub(in crate::block) fn is_data(&self) -> bool {
         self.block_type.is_data()
     }
 
     /// Check if a block contains metadata
+    #[allow(dead_code)]
     pub(in crate::block) fn is_map(&self) -> bool {
         self.block_type.is_map()
     }
 
     /// Check if a block contains metadata
+    #[allow(dead_code)]
     pub(in crate::block) fn is_metadata(&self) -> bool {
         self.block_type.is_metadata()
     }
@@ -251,6 +254,7 @@ impl Block {
     }
 
     /// Return the SHA-256 hash of this block
+    #[allow(dead_code)]
     pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
         self.hash
     }
