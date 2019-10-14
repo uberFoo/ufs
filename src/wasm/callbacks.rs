@@ -126,7 +126,6 @@ pub(crate) fn __write_file<B>(
     ctx: &mut Ctx,
     id_ptr: u32,
     handle: u64,
-    offset: u32,
     data_ptr: u32,
     data_len: u32,
 ) -> u32
@@ -149,7 +148,7 @@ where
         .map(|cell| cell.get())
         .collect();
 
-    let bytes_written = wc.write_file(id.into(), handle, &bytes, offset as u64);
+    let bytes_written = wc.write_file(id.into(), handle, &bytes);
     debug!("\twrote {:?} bytes", bytes_written);
 
     match bytes_written {

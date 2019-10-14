@@ -37,6 +37,14 @@ use {
     wasmer_runtime::{func, imports, instantiate},
 };
 
+const WRITE_BUF_SIZE: usize = 2048;
+
+struct FileWriteBuffer {
+    buffer: [u8; WRITE_BUF_SIZE],
+    len: usize,
+    file_offset: u64,
+}
+
 /// The main interface between the file system and WASM
 ///
 /// One of these is created when the file system loads a new WASM program. This struct maintains a
@@ -59,6 +67,13 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     iofs: Arc<Mutex<UberFileSystem<B>>>,
     /// Notification delivery registration tracking.
     pub notifications: HashMap<WasmMessage, bool>,
+    // /// Write buffer for write_file
+    // write_buffer: [u8; WRITE_BUF_SIZE],
+    // /// Number of bytes in write buffer
+    // write_buffer_len: usize,
+    // /// Current write offset in file being written
+    // write_file_offset: u64,
+    write_buffers: HashMap<FileHandle, FileWriteBuffer>,
 }
 
 impl<B: BlockStorage> WasmProcess<B> {
@@ -88,6 +103,10 @@ impl<B: BlockStorage> WasmProcess<B> {
             sync_func_ids: vec![],
             iofs,
             notifications,
+            // write_buffer: [0; 2048],
+            // write_buffer_len: 0,
+            // write_file_offset: 0,
+            write_buffers: HashMap::new(),
         }
     }
 
@@ -156,6 +175,13 @@ impl<B: BlockStorage> WasmProcess<B> {
 
         self.sync_func_ids.push(id);
 
+        // Flush the write buffer if necessary before closing the file.
+        if let Some(buffer) = self.write_buffers.remove(&handle) {
+            if buffer.len != 0 {
+                guard.write_file(handle, &buffer.buffer[0..buffer.len], buffer.file_offset);
+            }
+        }
+
         guard.close_file(handle);
     }
 
@@ -179,14 +205,38 @@ impl<B: BlockStorage> WasmProcess<B> {
         id: UfsUuid,
         handle: FileHandle,
         bytes: T,
-        offset: u64,
     ) -> Result<usize, failure::Error> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
         self.sync_func_ids.push(id);
 
-        guard.write_file(handle, bytes.as_ref(), offset)
+        let bytes = bytes.as_ref();
+
+        let buffer = self.write_buffers.entry(handle).or_insert(FileWriteBuffer {
+            buffer: [0; WRITE_BUF_SIZE],
+            len: 0,
+            file_offset: 0,
+        });
+
+        let mut bytes_written = 0;
+        while bytes_written < bytes.len() {
+            let write_len = std::cmp::min(WRITE_BUF_SIZE - buffer.len, bytes.len() - bytes_written);
+            buffer.buffer[buffer.len..buffer.len + write_len]
+                .copy_from_slice(&bytes[bytes_written..bytes_written + write_len]);
+            buffer.len += write_len;
+            bytes_written += write_len;
+
+            if buffer.len == WRITE_BUF_SIZE {
+                guard
+                    .write_file(handle, &buffer.buffer, buffer.file_offset)
+                    .expect("error writing bytes in WasmProcess::write_file");
+                buffer.file_offset += WRITE_BUF_SIZE as u64;
+                buffer.len = 0;
+            }
+        }
+
+        Ok(bytes_written)
     }
 
     pub(crate) fn create_file(

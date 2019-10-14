@@ -34,8 +34,7 @@ extern "C" {
     #[doc(hidden)]
     pub fn __read_file(id_ptr: u32, handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
     #[doc(hidden)]
-    pub fn __write_file(id_ptr: u32, handle: u64, offset: u32, data_ptr: u32, data_len: u32)
-        -> u32;
+    pub fn __write_file(id_ptr: u32, handle: u64, data_ptr: u32, data_len: u32) -> u32;
     #[doc(hidden)]
     pub fn __create_file(id_ptr: u32, name_ptr: u32) -> i32;
     #[doc(hidden)]
@@ -208,15 +207,14 @@ pub fn read_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
 
 /// Write bytes to a file
 ///
-/// This function takes a FileHandle, returned by a previous call to open_file, or create_file, an
-/// offset and a `&[u8]` buffer of bytes. The offset is the location in the file being written to
-/// which the bytes should be written.
-pub fn write_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
+/// This function takes a FileHandle, returned by a previous call to open_file, or create_file, and
+/// a `&[u8]` buffer of bytes.
+pub fn write_file(handle: &FileHandle, data: &[u8]) -> u32 {
     let id = Box::into_raw(Box::new(handle.id.as_str()));
 
     let ptr = data.as_ptr();
     let len = data.len();
-    unsafe { __write_file(id as u32, handle.handle, offset, ptr as _, len as _) }
+    unsafe { __write_file(id as u32, handle.handle, ptr as _, len as _) }
 }
 
 /// Create a new file
