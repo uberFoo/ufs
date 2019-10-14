@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Functions exported to the WASM environment
 //!
 //! These are functions needed to interface with the IOFS, and are linked into the user's WASM
@@ -10,48 +11,74 @@ use {
 };
 
 lazy_static! {
+    #[doc(hidden)]
     pub static ref LOOKUP: MutStatic<MessageHandler> = { MutStatic::from(MessageHandler::new()) };
 }
 
 /// These are exports that are available to be called by the WASM program.
 extern "C" {
+    #[doc(hidden)]
     pub fn pong();
 }
 
 /// These are imports used by the functions here, and resolved in Rust.
 extern "C" {
+    #[doc(hidden)]
     pub fn __register_for_callback(message: u32);
+    #[doc(hidden)]
     pub fn __print(ptr: u32);
+    #[doc(hidden)]
     pub fn __open_file(id_ptr: u32) -> u64;
+    #[doc(hidden)]
     pub fn __close_file(id_ptr: u32, handle: u64);
+    #[doc(hidden)]
     pub fn __read_file(id_ptr: u32, handle: u64, offset: u32, data_ptr: u32, data_len: u32) -> u32;
+    #[doc(hidden)]
     pub fn __write_file(id_ptr: u32, handle: u64, offset: u32, data_ptr: u32, data_len: u32)
         -> u32;
+    #[doc(hidden)]
     pub fn __create_file(id_ptr: u32, name_ptr: u32) -> i32;
+    #[doc(hidden)]
     pub fn __create_directory(id_ptr: u32, name_ptr: u32) -> i32;
+    #[doc(hidden)]
     pub fn __open_directory(id_ptr: u32, name_ptr: u32) -> i32;
 }
 
 /// This is the sole function expected to exist in the user's WASM program
 extern "C" {
+    #[doc(hidden)]
     pub fn init(root_id: RefStr);
 }
 
+/// Messages sent from the file system that may be acted upon by the user's program
+///
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[repr(C)]
 pub enum WasmMessage {
+    /// The file system is being unmounted.
+    ///
+    /// This is the opportunity to shutdown; perform cleanup, etc.
     Shutdown,
     Ping,
+    /// A new file has been created.
     FileCreate,
+    /// A new directory has been created.
     DirCreate,
+    /// A file has been deleted.
     FileDelete,
+    /// A directory has been deleted.
     DirDelete,
+    /// A file has been opened.
     FileOpen,
+    /// A file has been closed.
     FileClose,
+    /// A file is being read from.
     FileRead,
+    /// A file is being written to.
     FileWrite,
 }
 
+#[doc(hidden)]
 pub struct MessageHandler {
     callbacks: HashMap<WasmMessage, extern "C" fn(Option<MessagePayload>)>,
 }
@@ -68,19 +95,24 @@ impl MessageHandler {
     }
 }
 
+/// Returned from the `create_file` function
+///
+/// This structure must be used in subsequent file operations on the opened file.
 #[derive(Debug)]
 pub struct FileHandle {
     pub handle: u64,
     pub id: String,
 }
 
+/// File System Function Call Return Type
+///
+/// We wrap the return types in a MessagePayload to simplify handler callback registration.
 pub enum MessagePayload {
-    Path(RefStr),
     PathAndId(RefStr, RefStr),
-    PathAndIdAndPid(RefStr, RefStr, RefStr),
     FileCreate(__FileCreate),
 }
 
+#[doc(hidden)]
 pub struct __FileCreate {
     path: RefStr,
     id: RefStr,
@@ -119,11 +151,17 @@ impl RefStr {
 //
 // The following functions are called from WASM
 //
+
+/// Print a string to the IOFS output console
+///
 pub fn print(msg: &str) {
     let msg = Box::into_raw(Box::new(msg));
     unsafe { __print(msg as u32) };
 }
 
+/// Register a callback
+///
+///
 pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePayload>)) {
     let mut lookup = LOOKUP.write().unwrap();
     lookup.callbacks.entry(msg.clone()).or_insert(func);
@@ -132,36 +170,59 @@ pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePay
     unsafe { __register_for_callback(msg as u32) };
 }
 
-pub fn open_file(id: &str) -> Option<u64> {
-    let id = Box::into_raw(Box::new(id));
-    let handle = unsafe { __open_file(id as u32) };
+/// Open a file
+///
+/// This function opens a file identified by a `UfsUuid`, and returns a `Option<FileHandle>`.
+pub fn open_file(id: &str) -> Option<FileHandle> {
+    let id_box = Box::into_raw(Box::new(id));
+    let handle = unsafe { __open_file(id_box as u32) };
     if handle == 0 {
         None
     } else {
-        Some(handle)
+        Some(FileHandle {
+            handle,
+            id: id.to_string(),
+        })
     }
 }
 
-pub fn close_file(id: &str, handle: u64) {
-    let id = Box::into_raw(Box::new(id));
-    unsafe { __close_file(id as u32, handle) }
+/// Close an open file
+///
+/// This function takes a FileHandle, returned by a previous call to open_file.
+pub fn close_file(handle: &FileHandle) {
+    let id = Box::into_raw(Box::new(handle.id.as_str()));
+    unsafe { __close_file(id as u32, handle.handle) }
 }
 
-pub fn read_file(id: &str, handle: u64, offset: u32, data: &[u8]) -> u32 {
-    let id = Box::into_raw(Box::new(id));
+/// Read bytes from a file
+///
+/// This function takes a FileHandle, returned by a previous call to open_file, an offset and a
+/// `&[u8]` buffer. The offset is the location in the file being read at which the read should
+/// begin. The bytes are returned in the `&[u8]` buffer.
+pub fn read_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
+    let id = Box::into_raw(Box::new(handle.id.as_str()));
     let ptr = data.as_ptr();
     let len = data.len();
-    unsafe { __read_file(id as u32, handle, offset, ptr as _, len as _) }
+    unsafe { __read_file(id as u32, handle.handle, offset, ptr as _, len as _) }
 }
 
-pub fn write_file(id: &str, handle: u64, offset: u32, data: &[u8]) -> u32 {
-    let id = Box::into_raw(Box::new(id));
+/// Write bytes to a file
+///
+/// This function takes a FileHandle, returned by a previous call to open_file, or create_file, an
+/// offset and a `&[u8]` buffer of bytes. The offset is the location in the file being written to
+/// which the bytes should be written.
+pub fn write_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
+    let id = Box::into_raw(Box::new(handle.id.as_str()));
 
     let ptr = data.as_ptr();
     let len = data.len();
-    unsafe { __write_file(id as u32, handle, offset, ptr as _, len as _) }
+    unsafe { __write_file(id as u32, handle.handle, offset, ptr as _, len as _) }
 }
 
+/// Create a new file
+///
+/// This function takes the `UfsUuid` of a directory, and a name. A new file will be created with
+/// `name`, under the directory identified by the ID. An `Option<FileHandle>` is returned.
 pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
     let parent_id = Box::into_raw(Box::new(parent_id));
     let name = Box::into_raw(Box::new(name));
@@ -184,6 +245,11 @@ pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
     }
 }
 
+/// Create a new directory
+///
+/// This function takes the `UfsUuid` of a directory, and a name. A new directory will be created
+/// with `name`, under the directory identified by the ID. An `Option<String>` is returned
+/// containing the ID of the new directory.
 pub fn create_directory(parent_id: &str, name: &str) -> Option<String> {
     let parent_id = Box::into_raw(Box::new(parent_id));
     let name = Box::into_raw(Box::new(name));
@@ -198,6 +264,11 @@ pub fn create_directory(parent_id: &str, name: &str) -> Option<String> {
     }
 }
 
+/// Open a directory
+///
+/// This function takes the `UfsUuid` of a parent directory (possibly the root directory) and the
+/// `name` of a subdirectory to open. The returned `Option<String>` is the id belonging to the
+/// `name`d directory.
 pub fn open_directory(parent_id: &str, name: &str) -> Option<String> {
     let parent_id = Box::into_raw(Box::new(parent_id));
     let name = Box::into_raw(Box::new(name));
@@ -216,10 +287,13 @@ pub fn open_directory(parent_id: &str, name: &str) -> Option<String> {
 // The following functions are called from Rust. They manipulate data coming across the WASM
 // boundary, and make things nicer for the person writing a WASM program.
 //
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __init(ptr: i32, len: i32) {
     unsafe { init(RefStr { ptr, len }) };
 }
+
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_shutdown() {
     let lookup = LOOKUP.read().unwrap();
@@ -228,6 +302,7 @@ pub extern "C" fn __handle_shutdown() {
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_ping() {
     let lookup = LOOKUP.read().unwrap();
@@ -236,6 +311,7 @@ pub extern "C" fn __handle_ping() {
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_create(
     path_ptr: i32,
@@ -267,6 +343,7 @@ pub extern "C" fn __handle_file_create(
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
@@ -286,6 +363,7 @@ pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32,
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
@@ -305,6 +383,7 @@ pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
@@ -324,6 +403,7 @@ pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32,
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
@@ -343,6 +423,7 @@ pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, 
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
@@ -362,6 +443,7 @@ pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32,
     }
 }
 
+#[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_write(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = LOOKUP.read().unwrap();
