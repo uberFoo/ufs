@@ -276,7 +276,7 @@ fn read_wrapper_block<BS: BlockReader>(
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(in crate::block) enum BlockType {
+pub(in crate) enum BlockType {
     Free,
     Data,
     Map,

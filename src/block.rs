@@ -234,28 +234,39 @@ impl Block {
     }
 
     /// Return the block number
+    ///
     pub(crate) fn number(&self) -> BlockNumber {
         self.number
     }
 
+    /// Return the block type
+    ///
+    pub(crate) fn block_type(&self) -> &BlockType {
+        &self.block_type
+    }
+
     /// Return the number of bytes stored in this block
+    ///
     pub(crate) fn size(&self) -> BlockSizeType {
         self.byte_count
     }
 
     /// Set the number of bytes in this block
+    ///
     pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {
         self.byte_count = size
     }
 
     /// Set the SHA-256 hash of this block
+    ///
     pub(in crate::block) fn set_hash(&mut self, hash: BlockHash) {
         self.hash = Some(hash);
     }
 
     /// Return the SHA-256 hash of this block
+    ///
     #[allow(dead_code)]
-    pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
+    pub(in crate) fn hash(&self) -> Option<BlockHash> {
         self.hash
     }
 }

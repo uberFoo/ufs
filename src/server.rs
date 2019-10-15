@@ -39,17 +39,20 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
 
     pub(crate) fn start(server: UfsRemoteServer<B>) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
-            let template = include_str!("./static/index.html");
+            let index_tmpl = include_str!("./static/index.html");
+            let block_tmpl = include_str!("./static/block.html");
 
             let mut hb = Handlebars::new();
-            hb.register_template_string("index.html", template)
+            hb.register_template_string("index.html", index_tmpl)
                 .expect("unable to register handlebars template");
-            let hb = Arc::new(hb);
+            hb.register_template_string("block.html", block_tmpl)
+                .expect("unable to register handlebars template");
 
-            let foo = hb.clone();
-            let handlebars = move |with_template| render(with_template, foo.clone());
-            let foo = hb.clone();
-            let handlebars1 = move |with_template| render(with_template, foo.clone());
+            let hb = Arc::new(hb);
+            let hb_clone = hb.clone();
+            let handlebars = move |with_template| render(with_template, hb_clone.clone());
+            let hb_clone = hb.clone();
+            let handlebars1 = move |with_template| render(with_template, hb_clone.clone());
 
             let iofs = server.iofs.clone();
             let index_values = move || get_index_values(iofs.clone());
@@ -69,12 +72,12 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let block = path!("block" / BlockNumber)
                 .map(block_values)
                 .map(|a| WithTemplate {
-                    name: "index.html",
+                    name: "block.html",
                     value: a,
                 })
                 .map(handlebars1);
 
-            let routes = warp::get2().and(index);
+            let routes = warp::get2().and(index.or(block));
 
             warp::serve(routes).run(([0, 0, 0, 0], server.port));
             Ok(())
@@ -105,15 +108,12 @@ where
     let guard = iofs.lock().expect("poisoned iofs lock");
     let manager = guard.block_manager();
 
-    let fs_id = format!("{}", manager.id());
-    let block_size = format!("{}", manager.block_size());
-
     json!({
-        "iofs_id": fs_id,
-        "block_size": block_size,
+        "iofs_id": format!("{}", manager.id()),
+        "block_size": format!("{}", manager.block_size()),
         "block_count": manager.block_count(),
         "free_blocks": manager.free_block_count(),
-        "root_block": manager.root_block()
+        "root_block": manager.root_block(),
     })
 }
 
@@ -124,5 +124,14 @@ fn get_block_values<B>(
 where
     B: BlockStorage,
 {
-    json!({})
+    let guard = iofs.lock().expect("poisoned iofs lock");
+    match guard.block_manager().get_block(block) {
+        Some(block) => json!({
+            "block_number": block.number(),
+            "block_type": block.block_type(),
+            "block_hash": format!("{:?}", block.hash()),
+            "block_size": block.size(),
+        }),
+        None => json!({}),
+    }
 }
