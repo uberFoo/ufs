@@ -460,7 +460,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         name: &str,
     ) -> Result<(), failure::Error> {
         if let Ok(dir) = self
-            .block_manager()
+            .block_manager
             .metadata()
             .get_dir_metadata_from_dir_and_name(parent_id, name)
         {
