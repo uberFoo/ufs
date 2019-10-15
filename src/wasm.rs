@@ -193,7 +193,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.iofs.clone();
-        let mut guard = guard.lock().expect("poisoned iofs lock");
+        let guard = guard.lock().expect("poisoned iofs lock");
 
         self.sync_func_ids.push(id);
 

@@ -38,6 +38,9 @@ sha2 = "0.8"
 pbkdf2 = "0.3"
 wasmer-runtime = "0.8"
 wasm_exports = { path = "wasm_exports" }
+warp = "0.1.20"
+handlebars = "2.0.2"
+serde_json = "1.0.41"
 
 [dependencies.chrono]
 version = "0.4"

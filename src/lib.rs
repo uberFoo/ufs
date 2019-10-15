@@ -114,7 +114,6 @@
 mod block;
 mod crypto;
 mod fsimpl;
-mod fsops;
 mod fuse;
 mod metadata;
 mod server;

@@ -143,7 +143,6 @@ impl<B: BlockStorage> RuntimeManager<B> {
                 }
             }
 
-            let ufs = runtime.ufs.lock().expect("poisoned ufs lock");
             info!("Shutting down WASM programs");
             runtime.notify_listeners(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown));
 

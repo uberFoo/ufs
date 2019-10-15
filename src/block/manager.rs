@@ -100,8 +100,14 @@ where
         }
     }
 
+    /// The file system UUID
+    ///
     pub(crate) fn id(&self) -> &UfsUuid {
         &self.id
+    }
+
+    pub(crate) fn root_block(&self) -> Option<BlockNumber> {
+        self.store.map().root_block()
     }
 
     pub(crate) fn metadata(&self) -> &Metadata {
