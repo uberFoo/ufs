@@ -925,8 +925,8 @@ mod test {
     fn read_and_write_file_networked() {
         init();
 
-        let mut ufs =
-            UberFileSystem::new_networked("test", "test", "test", "http://localhost:8888").unwrap();
+        // User and password on test file system are both empty
+        UberFileSystem::new_networked("", "", "test", "http://localhost:8888").unwrap();
         let test = include_str!("wasm.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();
