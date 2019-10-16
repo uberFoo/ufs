@@ -10,6 +10,7 @@ use {
 
 use crate::{
     block::{
+        map::BlockMap,
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
@@ -108,6 +109,14 @@ where
 
     pub(crate) fn root_block(&self) -> Option<BlockNumber> {
         self.store.map().root_block()
+    }
+
+    pub(crate) fn store(&self) -> &BS {
+        &self.store
+    }
+
+    pub(crate) fn map(&self) -> &BlockMap {
+        &self.store.map()
     }
 
     pub(crate) fn metadata(&self) -> &Metadata {

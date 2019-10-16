@@ -1,6 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
+        <style>
+            body {
+                background-color: #353535;
+            }
+
+            h1 {
+                color: white;
+            }
+
+            p {
+                color: #ccc;
+            }
+            pre {
+                color: #ccc;
+            }
+            a {
+                color: #d2991d;
+            }
+        </style>
         <title>IOFS Dashboard</title>
     </head>
 
@@ -9,6 +28,10 @@
         <p>block size: {{ block_size }}</p>
         <p>block count: {{ block_count }}</p>
         <p>free blocks: {{ free_blocks }}</p>
-        <p>root block: {{ root_block }}</p>
+        <p>
+            root block: <a href="block/{{ root_block }}">{{ root_block }}</a>
+        </p>
+        <!-- <p>block map: {{ block_map }}</p> -->
+        <p>metadata: <pre>{{metadata}}</pre></p>
     </body>
 </html>
