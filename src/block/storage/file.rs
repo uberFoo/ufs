@@ -265,27 +265,27 @@ impl FileStore {
 
         let reader = FileReader::new(key, &path);
 
-        let metadata = match BlockMap::deserialize(&reader) {
-            Ok(metadata) => metadata,
+        let map = match BlockMap::deserialize(&reader) {
+            Ok(map) => map,
             Err(e) => {
                 error!(
-                    "Unable to load metadata -- possibly incorrect password?\nError: {}",
+                    "Unable to load block map -- possibly incorrect password?\nError: {}",
                     e
                 );
                 return Err(format_err!(
-                    "Unable to load metadata -- possibly incorrect password?"
+                    "Unable to load block map -- possibly incorrect password?"
                 ));
             }
         };
 
         Ok(FileStore {
-            id: metadata.id().clone(),
+            id: map.id().clone(),
             key: reader.key,
             nonce: reader.nonce,
-            block_size: metadata.block_size(),
-            block_count: metadata.block_count(),
+            block_size: map.block_size(),
+            block_count: map.block_count(),
             root_path,
-            map: metadata,
+            map,
         })
     }
 
