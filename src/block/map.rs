@@ -173,6 +173,10 @@ impl BlockMap {
                     None => return Err(format_err!("No free blocks.")),
                 };
                 debug!("Allocating new blockmap wrapper block {}", meta_block);
+
+                // We can tag this block as containing block map data, but we can't give it a size
+                // nor a hash, because we don't know that information now. By the time we do know
+                // that information, we've already serialized the block.
                 self.map[meta_block as usize].tag_map();
                 self.block_map_blocks.push(meta_block);
             }
