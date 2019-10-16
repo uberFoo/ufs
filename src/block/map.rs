@@ -2,6 +2,10 @@
 //!
 //! Mapping from block number to block type.
 //!
+//! The block map stores the file system id, the block size, and count, the list of free blocks, the
+//! root block (where the file system metadata is located), as well as the list of blocks in the
+//! file system.
+//!
 //! At this time block 0 is reserved as the starting place for the block map.  Blocks are then
 //! dynamically allocated, and written with the Block Map as necessary.
 //!
@@ -135,6 +139,8 @@ impl BlockMap {
         &mut self,
         store: &mut BS,
     ) -> Result<(), failure::Error> {
+        // Determine the amount of data that we can store in each Block -- its the block size minus
+        // the amount of data it takes to encode a BlockMapWrapper with no data.
         let zero_wrapper = BlockMapWrapper {
             data: vec![0; 0],
             hash: BlockHash::new(b""),
@@ -183,7 +189,7 @@ impl BlockMap {
                 };
         }
 
-        // Iterate over the chunks of serialized block map, and writing them to the block store.
+        // Iterate over the chunks of serialized block map, and write them to the block store.
         bytes
             .chunks(chunk_size as usize)
             .enumerate()
