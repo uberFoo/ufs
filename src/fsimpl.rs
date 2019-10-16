@@ -1,32 +1,33 @@
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
-};
-
-use crossbeam::crossbeam_channel;
-use failure::format_err;
-use log::{debug, error, info, trace, warn};
-use reqwest::IntoUrl;
-
-use crate::{
-    block::{
-        manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage, FileStore,
-        MemoryStore, NetworkStore,
+use {
+    crate::{
+        block::{
+            manager::BlockManager, map::BlockMap, BlockCardinality, BlockSize, BlockStorage,
+            FileStore, MemoryStore, NetworkStore,
+        },
+        crypto::make_fs_key,
+        metadata::{
+            DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileSize, Metadata,
+            WASM_EXT,
+        },
+        server::UfsRemoteServer,
+        wasm::{
+            IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, RuntimeManager,
+            RuntimeManagerMsg, WasmProgram,
+        },
+        UfsUuid,
     },
-    crypto::make_fs_key,
-    metadata::{
-        DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileSize, Metadata,
-        WASM_EXT,
+    crossbeam::crossbeam_channel,
+    failure::format_err,
+    futures::sync::oneshot,
+    log::{debug, error, info, trace, warn},
+    reqwest::IntoUrl,
+    std::{
+        collections::HashMap,
+        ops::{Deref, DerefMut},
+        path::{Path, PathBuf},
+        sync::{Arc, Mutex},
+        thread::JoinHandle,
     },
-    server::UfsRemoteServer,
-    wasm::{
-        IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, RuntimeManager,
-        RuntimeManagerMsg, WasmProgram,
-    },
-    UfsUuid,
 };
 
 /// File mode for `open` call.
@@ -55,7 +56,8 @@ pub enum OpenFileMode {
 pub struct UfsMounter<B: BlockStorage + 'static> {
     // FIXME: I think that the Mutex can be an RwLock...
     inner: Arc<Mutex<UberFileSystem<B>>>,
-    remote: Option<JoinHandle<Result<(), failure::Error>>>,
+    remote_stop_signal: Option<oneshot::Sender<()>>,
+    remote_thread: Option<JoinHandle<Result<(), failure::Error>>>,
     runtime_mgr_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
     runtime_mgr_thread: Option<JoinHandle<Result<(), failure::Error>>>,
 }
@@ -77,22 +79,21 @@ impl<B: BlockStorage> UfsMounter<B> {
         let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
 
         // Start the remote FS listener
-        let remote = if let Some(port) = remote_port {
-            info!("Initializing remote file system listener");
-            match UfsRemoteServer::new(inner.clone(), port) {
-                Ok(listener) => Some(UfsRemoteServer::start(listener)),
-                Err(e) => {
-                    error!("Error starting remote listener: {}", e);
-                    None
-                }
+        let (remote_stop_signal, remote_thread) = match remote_port {
+            Some(port) => {
+                info!("Initializing remote file system listener");
+                let (tx, rx) = oneshot::channel();
+                let remote = UfsRemoteServer::new(inner.clone(), port);
+                let remote_thread = UfsRemoteServer::start(remote, rx);
+                (Some(tx), Some(remote_thread))
             }
-        } else {
-            None
+            None => (None, None),
         };
 
         let mounter = UfsMounter {
             inner,
-            remote,
+            remote_stop_signal,
+            remote_thread,
             runtime_mgr_channel: sender,
             runtime_mgr_thread: Some(runtime_mgr_thread),
         };
@@ -108,7 +109,21 @@ impl<B: BlockStorage> UfsMounter<B> {
             .unwrap();
         if let Some(thread) = self.runtime_mgr_thread.take() {
             info!("Waiting for RuntimeManager to shutdown.");
-            thread.join().unwrap().unwrap();
+            thread
+                .join()
+                .expect("unable to join RuntimeManager thread")
+                .expect("error running RuntimeManager thread");
+        }
+
+        if let Some(oneshot) = self.remote_stop_signal.take() {
+            oneshot.send(()).unwrap();
+        }
+        if let Some(thread) = self.remote_thread.take() {
+            info!("Waiting for HTTP Server to shutdown.");
+            thread
+                .join()
+                .expect("unable to join HTTP Server thread")
+                .expect("error running HTTP Server thread");
         }
 
         Ok(())

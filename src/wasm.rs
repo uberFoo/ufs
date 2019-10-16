@@ -103,9 +103,6 @@ impl<B: BlockStorage> WasmProcess<B> {
             sync_func_ids: vec![],
             iofs,
             notifications,
-            // write_buffer: [0; 2048],
-            // write_buffer_len: 0,
-            // write_file_offset: 0,
             write_buffers: HashMap::new(),
         }
     }

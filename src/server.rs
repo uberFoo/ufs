@@ -7,7 +7,9 @@ use {
         metadata::{DirectoryEntry, File, FileHandle},
         BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
     },
+    crossbeam::crossbeam_channel,
     failure::format_err,
+    futures::sync::oneshot,
     handlebars::Handlebars,
     log::info,
     serde::{Deserialize, Serialize},
@@ -30,14 +32,14 @@ pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
 }
 
 impl<B: BlockStorage> UfsRemoteServer<B> {
-    pub(crate) fn new(
-        iofs: Arc<Mutex<UberFileSystem<B>>>,
-        port: u16,
-    ) -> Result<(Self), failure::Error> {
-        Ok(UfsRemoteServer { iofs, port })
+    pub(crate) fn new(iofs: Arc<Mutex<UberFileSystem<B>>>, port: u16) -> Self {
+        UfsRemoteServer { iofs, port }
     }
 
-    pub(crate) fn start(server: UfsRemoteServer<B>) -> JoinHandle<Result<(), failure::Error>> {
+    pub(crate) fn start(
+        server: UfsRemoteServer<B>,
+        stop_signal: oneshot::Receiver<()>,
+    ) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
             let index_tmpl = include_str!("./static/index.html");
             let block_tmpl = include_str!("./static/block.html");
@@ -79,7 +81,11 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
 
             let routes = warp::get2().and(index.or(block));
 
-            warp::serve(routes).run(([0, 0, 0, 0], server.port));
+            let (addr, warp) = warp::serve(routes)
+                .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
+
+            hyper::rt::run(warp);
+
             Ok(())
         })
     }
