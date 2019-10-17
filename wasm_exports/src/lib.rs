@@ -51,7 +51,7 @@ extern "C" {
 /// This is the sole function expected to exist in the user's WASM program
 extern "C" {
     #[doc(hidden)]
-    pub fn init(root_id: RefStr);
+    pub fn init(root_id: String);
 }
 
 /// Messages sent from the file system that may be acted upon by the user's program
@@ -133,51 +133,14 @@ pub struct FileHandle {
 ///
 /// We wrap the return types in a MessagePayload to simplify handler callback registration.
 pub enum MessagePayload {
-    PathAndId(RefStr, RefStr),
-    FileCreate(__FileCreate),
-}
-
-#[doc(hidden)]
-pub struct __FileCreate {
-    path: RefStr,
-    id: RefStr,
-    dir_id: RefStr,
+    PathAndId(String, String),
+    FileCreate(FileCreate),
 }
 
 pub struct FileCreate {
     pub path: String,
     pub id: String,
     pub dir_id: String,
-}
-
-impl __FileCreate {
-    pub fn unpack(self) -> FileCreate {
-        FileCreate {
-            path: self.path.get_str().to_owned(),
-            id: self.id.get_str().to_owned(),
-            dir_id: self.dir_id.get_str().to_owned(),
-        }
-    }
-}
-
-/// A structure to pass String values into Wasm
-///
-/// Strings are represented as a pointer and a length. These pieces are passed to Wasm, and stored
-/// here and reconstituted using `get_str` in the Wasm program.
-///
-/// TODO: I think that we could just as easily pass Strings to wasm by creating them in the callback
-/// functions.
-#[repr(C)]
-pub struct RefStr {
-    ptr: i32,
-    len: i32,
-}
-
-impl RefStr {
-    pub fn get_str(&self) -> &str {
-        let slice = unsafe { slice::from_raw_parts(self.ptr as _, self.len as _) };
-        str::from_utf8(&slice).unwrap()
-    }
 }
 
 //
@@ -329,13 +292,24 @@ pub fn open_directory(parent_id: &str, name: &str) -> Option<String> {
 }
 
 //
+// Helpers
+//
+#[doc(hidden)]
+fn unbox_string(ptr: i32, len: i32) -> String {
+    let slice = unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) };
+    str::from_utf8(&slice)
+        .expect("unable to unbox string")
+        .to_owned()
+}
+
+//
 // The following functions are called from Rust. They manipulate data coming across the WASM
 // boundary, and make things nicer for the person writing a WASM program.
 //
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __init(ptr: i32, len: i32) {
-    unsafe { init(RefStr { ptr, len }) };
+    unsafe { init(unbox_string(ptr, len)) };
 }
 
 #[doc(hidden)]
@@ -368,22 +342,10 @@ pub extern "C" fn __handle_file_create(
 ) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileCreate) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
-        let parent_id_from_host = RefStr {
-            ptr: parent_id_ptr,
-            len: parent_id_len,
-        };
-        func(Some(MessagePayload::FileCreate(__FileCreate {
-            path: path_from_host,
-            id: id_from_host,
-            dir_id: parent_id_from_host,
+        func(Some(MessagePayload::FileCreate(FileCreate {
+            path: unbox_string(path_ptr, path_len),
+            id: unbox_string(id_ptr, id_len),
+            dir_id: unbox_string(parent_id_ptr, parent_id_len),
         })));
     }
 }
@@ -393,17 +355,9 @@ pub extern "C" fn __handle_file_create(
 pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirCreate) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }
@@ -413,17 +367,9 @@ pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32,
 pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileDelete) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }
@@ -433,17 +379,9 @@ pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32
 pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirDelete) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }
@@ -453,17 +391,9 @@ pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32,
 pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileOpen) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }
@@ -473,17 +403,9 @@ pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, 
 pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileClose) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }
@@ -493,17 +415,9 @@ pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32,
 pub extern "C" fn __handle_file_write(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileWrite) {
-        let path_from_host = RefStr {
-            ptr: path_ptr,
-            len: path_len,
-        };
-        let id_from_host = RefStr {
-            ptr: id_ptr,
-            len: id_len,
-        };
         func(Some(MessagePayload::PathAndId(
-            path_from_host,
-            id_from_host,
+            unbox_string(path_ptr, path_len),
+            unbox_string(id_ptr, id_len),
         )));
     }
 }

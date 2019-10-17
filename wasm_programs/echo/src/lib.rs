@@ -15,12 +15,11 @@ impl Echo {
 }
 
 #[no_mangle]
-pub extern "C" fn init(root_id: RefStr) {
+pub extern "C" fn init(root_id: String) {
     // Initialize our main struct
     let mut pgm = PROGRAM.write().unwrap();
     // Store the root id
-    let root_id = root_id.get_str();
-    pgm.root_id = Some(root_id.to_string());
+    pgm.root_id = Some(root_id);
 
     print(&format!("Starting at root directory {:?}.", pgm.root_id));
 
@@ -57,7 +56,6 @@ pub extern "C" fn shutdown(_payload: Option<MessagePayload>) {
 #[no_mangle]
 pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::FileCreate(file)) = payload {
-        let file = file.unpack();
         print(&format!(
             "handle new file: {:?} ({}) under directory {}",
             file.path, file.id, file.dir_id
@@ -68,33 +66,21 @@ pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
 #[no_mangle]
 pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!(
-            "handle new dir: {:?} ({})",
-            path.get_str(),
-            id.get_str()
-        ));
+        print(&format!("handle new dir: {:?} ({})", path, id));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!(
-            "handle file deleted: {:?} ({})",
-            path.get_str(),
-            id.get_str()
-        ));
+        print(&format!("handle file deleted: {:?} ({})", path, id));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_opened(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!(
-            "handle file opened: {:?} ({})",
-            path.get_str(),
-            id.get_str()
-        ));
+        print(&format!("handle file opened: {:?} ({})", path, id));
     }
 }
 
@@ -103,11 +89,7 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
         let pgm = PROGRAM.read().unwrap();
 
-        print(&format!(
-            "handle file closed: {:?} ({})",
-            path.get_str(),
-            id.get_str()
-        ));
+        print(&format!("handle file closed: {:?} ({})", path, id));
 
         // let id = id.get_str();
         // let handle = open_file(id).unwrap();
@@ -152,10 +134,6 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
 #[no_mangle]
 pub extern "C" fn handle_file_write(payload: Option<MessagePayload>) {
     if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!(
-            "handle file write: {:?} ({})",
-            path.get_str(),
-            id.get_str()
-        ));
+        print(&format!("handle file write: {:?} ({})", path, id));
     }
 }
