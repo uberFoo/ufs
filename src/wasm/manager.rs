@@ -48,6 +48,12 @@ pub(crate) struct WasmProgram {
     pub(in crate::wasm) program: Vec<u8>,
 }
 
+impl WasmProgram {
+    pub(crate) fn new(name: PathBuf, program: Vec<u8>) -> Self {
+        WasmProgram { name, program }
+    }
+}
+
 struct RuntimeProcess {
     channel: crossbeam_channel::Sender<IofsMessage>,
     handle: JoinHandle<Result<(), failure::Error>>,
@@ -62,17 +68,11 @@ impl RuntimeProcess {
     }
 }
 
-impl WasmProgram {
-    pub(crate) fn new(name: PathBuf, program: Vec<u8>) -> Self {
-        WasmProgram { name, program }
-    }
-}
-
 /// WASM Thread Management
 ///
-/// The sole purpose of this struct is to provide a means by which the `IOFileSystem` may start
-/// and stop WASM programs. There is a channel that the UFS uses to send start and stop messages to
-/// the `RuntimeManager`. This then handles the work of doing so.
+/// This struct is the interface between the `IOFileSystem` and Wasm programs running inside of the
+/// file system. There is a channel that the IOFS uses to start and stop Wasm programs, as well as
+/// sending file system messages to the programs.
 ///
 /// The `UfsMounter` will also send a shutdown message, on the same channel, when the file system is
 /// going away. Here, we use that message to nicely stop the WASM programs before exiting.

@@ -6,23 +6,25 @@ use {
     crate::{uuid::UfsUuid, wasm::RuntimeErrorKind},
     failure,
     log::error,
+    serde_json,
     wasmer_runtime::{Instance, Value},
 };
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IofsMessage {
     SystemMessage(IofsSystemMessage),
     FileMessage(IofsFileMessage),
     DirMessage(IofsDirMessage),
+    NetworkMessage(IofsNetworkMessage),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IofsSystemMessage {
     Shutdown,
     Ping,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IofsFileMessage {
     Create(IofsMessagePayload),
     Delete(IofsMessagePayload),
@@ -31,18 +33,45 @@ pub(crate) enum IofsFileMessage {
     Write(IofsMessagePayload),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IofsDirMessage {
     Create(IofsMessagePayload),
     Delete(IofsMessagePayload),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IofsMessagePayload {
     pub(crate) target_id: UfsUuid,
     pub(crate) target_path: String,
     pub(crate) parent_id: UfsUuid,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum IofsNetworkMessage {
+    Post(IofsNetworkValue),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct IofsNetworkValue {
+    route: String,
+    inner: serde_json::Value,
+}
+
+impl IofsNetworkValue {
+    pub(crate) fn new(route: String, inner: serde_json::Value) -> Self {
+        IofsNetworkValue { route, inner }
+    }
+
+    pub(crate) fn route(&self) -> &str {
+        &self.route
+    }
+
+    pub(crate) fn json(&self) -> &serde_json::Value {
+        &self.inner
+    }
+}
+
+impl Eq for IofsNetworkValue {}
 
 pub(crate) struct WasmMessageSender<'a> {
     instance: &'a mut Instance,
@@ -240,6 +269,22 @@ impl<'a> WasmMessageSender<'a> {
                 Value::I32(path.len() as i32),
                 Value::I32(path.len() as i32),
                 Value::I32(id_str.len() as i32),
+            ]),
+        )
+    }
+
+    pub(crate) fn send_http_post(&mut self, msg: &IofsNetworkValue) -> Result<(), failure::Error> {
+        let json_str =
+            serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_post");
+        self.write_wasm_memory(0, &msg.route());
+        self.write_wasm_memory(msg.route().len(), &json_str);
+        self.call_wasm_func(
+            "__handle_http_post",
+            Some(&[
+                Value::I32(0),
+                Value::I32(msg.route().len() as i32),
+                Value::I32(msg.route().len() as i32),
+                Value::I32(json_str.len() as i32),
             ]),
         )
     }

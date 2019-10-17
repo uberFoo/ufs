@@ -5,6 +5,7 @@
 use {
     crate::{
         metadata::{DirectoryEntry, File, FileHandle},
+        wasm::{IofsMessage, IofsNetworkMessage, IofsNetworkValue, RuntimeManagerMsg},
         BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
     },
     crossbeam::crossbeam_channel,
@@ -28,12 +29,21 @@ use {
 
 pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
     iofs: Arc<Mutex<UberFileSystem<B>>>,
+    wasm_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
     port: u16,
 }
 
 impl<B: BlockStorage> UfsRemoteServer<B> {
-    pub(crate) fn new(iofs: Arc<Mutex<UberFileSystem<B>>>, port: u16) -> Self {
-        UfsRemoteServer { iofs, port }
+    pub(crate) fn new(
+        iofs: Arc<Mutex<UberFileSystem<B>>>,
+        wasm_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
+        port: u16,
+    ) -> Self {
+        UfsRemoteServer {
+            iofs,
+            wasm_channel,
+            port,
+        }
     }
 
     pub(crate) fn start(
@@ -62,6 +72,9 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
 
+            let channel = server.wasm_channel.clone();
+            let to_wasm = move |receiver, json| send_json_to_wasm(receiver, json, channel.clone());
+
             let index = warp::get2()
                 .and(warp::path::end())
                 .map(index_values)
@@ -79,7 +92,14 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 })
                 .map(handlebars1);
 
-            let routes = warp::get2().and(index.or(block));
+            let wasm_post = warp::post2()
+                .and(warp::path("wasm"))
+                .and(warp::path::param())
+                .and(warp::body::content_length_limit(1024 * 16))
+                .and(warp::body::json())
+                .map(to_wasm);
+
+            let routes = index.or(block).or(wasm_post);
 
             let (addr, warp) = warp::serve(routes)
                 .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
@@ -142,4 +162,15 @@ where
         }),
         None => json!({}),
     }
+}
+
+fn send_json_to_wasm(
+    receiver: String,
+    json: serde_json::Value,
+    channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
+) -> impl warp::Reply {
+    channel.send(RuntimeManagerMsg::IofsMessage(IofsMessage::NetworkMessage(
+        IofsNetworkMessage::Post(IofsNetworkValue::new(receiver, json)),
+    )));
+    warp::reply::reply()
 }

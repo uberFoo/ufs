@@ -81,9 +81,9 @@ impl<B: BlockStorage> UfsMounter<B> {
         // Start the remote FS listener
         let (remote_stop_signal, remote_thread) = match remote_port {
             Some(port) => {
-                info!("Initializing remote file system listener");
+                info!("Initializing Web Server");
                 let (tx, rx) = oneshot::channel();
-                let remote = UfsRemoteServer::new(inner.clone(), port);
+                let remote = UfsRemoteServer::new(inner.clone(), sender.clone(), port);
                 let remote_thread = UfsRemoteServer::start(remote, rx);
                 (Some(tx), Some(remote_thread))
             }

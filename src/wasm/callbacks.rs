@@ -21,6 +21,16 @@ where
     wc.set_handles_message(message);
 }
 
+pub(crate) fn __register_post_handler<B>(ctx: &mut Ctx, post_route_ptr: u32)
+where
+    B: BlockStorage + 'static,
+{
+    let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
+    let route = unbox_str(ctx, post_route_ptr);
+    info!("register POST handler {:?}", route);
+    wc.register_post_callback(route);
+}
+
 pub(crate) fn pong(_ctx: &mut Ctx) {
     debug!("pong");
 }

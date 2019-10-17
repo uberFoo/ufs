@@ -9,8 +9,8 @@ pub(crate) mod message;
 pub(crate) use {
     manager::{RuntimeManager, RuntimeManagerMsg, WasmProgram},
     message::{
-        IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, IofsSystemMessage,
-        WasmMessageSender,
+        IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, IofsNetworkMessage,
+        IofsNetworkValue, IofsSystemMessage, WasmMessageSender,
     },
 };
 
@@ -25,7 +25,7 @@ use {
     failure::{Backtrace, Context, Fail},
     log::{debug, error, info},
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         ffi::c_void,
         fmt::{self, Display},
         path::PathBuf,
@@ -66,14 +66,11 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     /// IOFS access
     iofs: Arc<Mutex<UberFileSystem<B>>>,
     /// Notification delivery registration tracking.
-    pub notifications: HashMap<WasmMessage, bool>,
-    // /// Write buffer for write_file
-    // write_buffer: [u8; WRITE_BUF_SIZE],
-    // /// Number of bytes in write buffer
-    // write_buffer_len: usize,
-    // /// Current write offset in file being written
-    // write_file_offset: u64,
+    pub notifications: HashSet<WasmMessage>,
+    /// Write buffers for write_file
     write_buffers: HashMap<FileHandle, FileWriteBuffer>,
+    /// HTTP PUT callbacks
+    post_callbacks: HashSet<String>,
 }
 
 impl<B: BlockStorage> WasmProcess<B> {
@@ -84,17 +81,6 @@ impl<B: BlockStorage> WasmProcess<B> {
     ) -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded::<IofsMessage>();
 
-        let mut notifications = HashMap::new();
-        notifications.insert(WasmMessage::Shutdown, false);
-        notifications.insert(WasmMessage::Ping, false);
-        notifications.insert(WasmMessage::FileCreate, false);
-        notifications.insert(WasmMessage::DirCreate, false);
-        notifications.insert(WasmMessage::FileDelete, false);
-        notifications.insert(WasmMessage::DirDelete, false);
-        notifications.insert(WasmMessage::DirDelete, false);
-        notifications.insert(WasmMessage::FileClose, false);
-        notifications.insert(WasmMessage::FileWrite, false);
-
         WasmProcess {
             path,
             program,
@@ -102,8 +88,9 @@ impl<B: BlockStorage> WasmProcess<B> {
             receiver,
             sync_func_ids: vec![],
             iofs,
-            notifications,
+            notifications: HashSet::new(),
             write_buffers: HashMap::new(),
+            post_callbacks: HashSet::new(),
         }
     }
 
@@ -120,16 +107,15 @@ impl<B: BlockStorage> WasmProcess<B> {
     }
 
     pub(crate) fn does_handle_message(&mut self, msg: WasmMessage) -> bool {
-        // If the entry does not exist, insert the default bool value (false).
-        *self.notifications.entry(msg).or_default()
+        self.notifications.contains(&msg)
     }
 
     pub(crate) fn set_handles_message(&mut self, msg: WasmMessage) {
-        self.notifications.insert(msg, true);
+        self.notifications.insert(msg);
     }
 
-    pub(crate) fn unset_handles_message(&mut self, msg: WasmMessage) {
-        self.notifications.entry(msg).and_modify(|e| *e = true);
+    pub(crate) fn register_post_callback(&mut self, route: String) {
+        self.post_callbacks.insert(route);
     }
 
     /// Check incoming message to see if we're the source.
@@ -272,6 +258,7 @@ impl<B: BlockStorage> WasmProcess<B> {
             let import_object = imports! {
                 "env" => {
                     "__register_for_callback" => func!(__register_for_callback<B>),
+                    "__register_post_handler" => func!(__register_post_handler<B>),
                     "__print" => func!(__print<B>),
                     "__open_file" => func!(__open_file<B>),
                     "__close_file" => func!(__close_file<B>),
@@ -390,6 +377,13 @@ impl<B: BlockStorage> WasmProcess<B> {
                             {
                                 msg_sender
                                     .send_dir_delete(&payload.target_path, &payload.target_id)?
+                            }
+                        }
+                    },
+                    IofsMessage::NetworkMessage(m) => match m {
+                        IofsNetworkMessage::Post(msg) => {
+                            if process.post_callbacks.contains(msg.route()) {
+                                msg_sender.send_http_post(msg);
                             }
                         }
                     },

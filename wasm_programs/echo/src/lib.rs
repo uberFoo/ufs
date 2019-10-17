@@ -33,6 +33,13 @@ pub extern "C" fn init(root_id: RefStr) {
     register_callback(WasmMessage::FileOpen, handle_file_opened);
     register_callback(WasmMessage::FileClose, handle_file_closed);
     register_callback(WasmMessage::FileWrite, handle_file_write);
+
+    register_post_route("foo", post);
+}
+
+#[no_mangle]
+pub extern "C" fn post(json: serde_json::Value) {
+    print(&format!("post called with {:?}", json));
 }
 
 #[no_mangle]

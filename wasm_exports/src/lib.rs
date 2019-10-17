@@ -12,7 +12,10 @@ use {
 
 lazy_static! {
     #[doc(hidden)]
-    pub static ref LOOKUP: MutStatic<MessageHandler> = { MutStatic::from(MessageHandler::new()) };
+    static ref CALLBACK_HANDLERS: MutStatic<MessageHandlers> =
+        { MutStatic::from(MessageHandlers::new()) };
+    #[doc(hidden)]
+    static ref POST_HANDLERS: MutStatic<PostCallbacks> = { MutStatic::from(PostCallbacks::new()) };
 }
 
 /// These are exports that are available to be called by the WASM program.
@@ -25,6 +28,8 @@ extern "C" {
 extern "C" {
     #[doc(hidden)]
     pub fn __register_for_callback(message: u32);
+    #[doc(hidden)]
+    pub fn __register_post_handler(route: u32);
     #[doc(hidden)]
     pub fn __print(ptr: u32);
     #[doc(hidden)]
@@ -77,20 +82,41 @@ pub enum WasmMessage {
     FileWrite,
 }
 
+/// Local storage for mapping file system events to message handlers.
+///
 #[doc(hidden)]
-pub struct MessageHandler {
+struct MessageHandlers {
     callbacks: HashMap<WasmMessage, extern "C" fn(Option<MessagePayload>)>,
 }
 
-impl MessageHandler {
+impl MessageHandlers {
     fn new() -> Self {
-        MessageHandler {
+        MessageHandlers {
             callbacks: HashMap::new(),
         }
     }
 
     fn lookup(&self, msg: &WasmMessage) -> Option<&extern "C" fn(Option<MessagePayload>)> {
         self.callbacks.get(msg)
+    }
+}
+
+/// Local storage for mapping HTTP POST routes to callbacks.
+///
+#[doc(hidden)]
+struct PostCallbacks {
+    callbacks: HashMap<String, extern "C" fn(serde_json::Value)>,
+}
+
+impl PostCallbacks {
+    fn new() -> Self {
+        PostCallbacks {
+            callbacks: HashMap::new(),
+        }
+    }
+
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(serde_json::Value)> {
+        self.callbacks.get(route)
     }
 }
 
@@ -134,6 +160,13 @@ impl __FileCreate {
     }
 }
 
+/// A structure to pass String values into Wasm
+///
+/// Strings are represented as a pointer and a length. These pieces are passed to Wasm, and stored
+/// here and reconstituted using `get_str` in the Wasm program.
+///
+/// TODO: I think that we could just as easily pass Strings to wasm by creating them in the callback
+/// functions.
 #[repr(C)]
 pub struct RefStr {
     ptr: i32,
@@ -158,15 +191,29 @@ pub fn print(msg: &str) {
     unsafe { __print(msg as u32) };
 }
 
-/// Register a callback
-///
+/// Register a file system message callback
 ///
 pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePayload>)) {
-    let mut lookup = LOOKUP.write().unwrap();
+    let mut lookup = CALLBACK_HANDLERS.write().unwrap();
     lookup.callbacks.entry(msg.clone()).or_insert(func);
 
     let msg = Box::into_raw(Box::new(msg));
     unsafe { __register_for_callback(msg as u32) };
+}
+
+/// Register an HTTP POST route
+///
+/// HTTP POST requests sent to http://hostname/wasm/<route> will be routed to this function. The
+/// <route> is a single string, and not a path.
+pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(serde_json::Value)) {
+    let mut lookup = POST_HANDLERS.write().unwrap();
+    lookup
+        .callbacks
+        .entry(route.as_ref().to_owned())
+        .or_insert(func);
+
+    let route = Box::into_raw(Box::new(route.as_ref()));
+    unsafe { __register_post_handler(route as u32) };
 }
 
 /// Open a file
@@ -294,7 +341,7 @@ pub extern "C" fn __init(ptr: i32, len: i32) {
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_shutdown() {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::Shutdown) {
         func(None);
     }
@@ -303,7 +350,7 @@ pub extern "C" fn __handle_shutdown() {
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_ping() {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::Ping) {
         func(None);
     }
@@ -319,7 +366,7 @@ pub extern "C" fn __handle_file_create(
     parent_id_ptr: i32,
     parent_id_len: i32,
 ) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileCreate) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -344,7 +391,7 @@ pub extern "C" fn __handle_file_create(
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirCreate) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -364,7 +411,7 @@ pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32,
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileDelete) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -384,7 +431,7 @@ pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirDelete) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -404,7 +451,7 @@ pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32,
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileOpen) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -424,7 +471,7 @@ pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, 
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileClose) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -444,7 +491,7 @@ pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32,
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_file_write(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
-    let lookup = LOOKUP.read().unwrap();
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileWrite) {
         let path_from_host = RefStr {
             ptr: path_ptr,
@@ -458,5 +505,20 @@ pub extern "C" fn __handle_file_write(path_ptr: i32, path_len: i32, id_ptr: i32,
             path_from_host,
             id_from_host,
         )));
+    }
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn __handle_http_post(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
+    let slice = unsafe { slice::from_raw_parts(route_ptr as *const u8, route_len as usize) };
+    let route = str::from_utf8(&slice).unwrap();
+
+    let lookup = POST_HANDLERS.read().unwrap();
+    if let Some(func) = lookup.lookup(&route.to_owned()) {
+        let slice = unsafe { slice::from_raw_parts(json_ptr as *const u8, json_len as usize) };
+        let json: serde_json::Value =
+            serde_json::from_slice(&slice).expect("unable to serialize JSON in __handle_http_post");
+        func(json);
     }
 }
