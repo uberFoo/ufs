@@ -622,7 +622,7 @@ impl<B: BlockStorage> Filesystem for UberFSFuse<B> {
         );
 
         let mut guard = self.file_system.lock().expect("poisoned ufs lock");
-        &mut guard.close_file(fh);
+        &mut guard.close_file(fh).unwrap();
         reply.ok();
     }
 

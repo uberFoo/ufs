@@ -131,6 +131,10 @@ impl<B: BlockStorage> WasmProcess<B> {
     /// types. So if two messages have the same ID, then it's possible that one notification is due
     /// to something we did, and the other to another process in the file system.
     fn should_send_notification(&mut self, id: &UfsUuid) -> bool {
+        debug!(
+            "should_send_notifications: id: {}, list: {:#?}",
+            id, self.sync_func_ids
+        );
         if self.sync_func_ids.len() > 0 && *id == self.sync_func_ids[0] {
             self.sync_func_ids.remove(0);
             false
@@ -147,25 +151,35 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        self.sync_func_ids.push(id);
-
-        guard.open_file(id, mode)
+        match guard.open_file(id, mode) {
+            Ok(handle) => {
+                self.sync_func_ids.push(id);
+                Ok(handle)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn close_file(&mut self, id: UfsUuid, handle: FileHandle) {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        self.sync_func_ids.push(id);
-
         // Flush the write buffer if necessary before closing the file.
         if let Some(buffer) = self.write_buffers.remove(&handle) {
             if buffer.len != 0 {
-                guard.write_file(handle, &buffer.buffer[0..buffer.len], buffer.file_offset);
+                // What should we do if the write fails, but the close succeeds?
+                guard
+                    .write_file(handle, &buffer.buffer[0..buffer.len], buffer.file_offset)
+                    .unwrap();
             }
         }
 
-        guard.close_file(handle);
+        match guard.close_file(handle) {
+            Ok(_) => {
+                self.sync_func_ids.push(id);
+            }
+            Err(_) => (),
+        };
     }
 
     pub(crate) fn read_file(
@@ -178,9 +192,13 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let guard = guard.lock().expect("poisoned iofs lock");
 
-        self.sync_func_ids.push(id);
-
-        guard.read_file(handle, offset, size)
+        match guard.read_file(handle, offset, size) {
+            Ok(v) => {
+                self.sync_func_ids.push(id);
+                Ok(v)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn write_file<T: AsRef<[u8]>>(
@@ -191,8 +209,6 @@ impl<B: BlockStorage> WasmProcess<B> {
     ) -> Result<usize, failure::Error> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
-
-        self.sync_func_ids.push(id);
 
         let bytes = bytes.as_ref();
 
@@ -216,6 +232,9 @@ impl<B: BlockStorage> WasmProcess<B> {
                     .expect("error writing bytes in WasmProcess::write_file");
                 buffer.file_offset += WRITE_BUF_SIZE as u64;
                 buffer.len = 0;
+
+                // Only post this if we actually did a write, and it was successful.
+                self.sync_func_ids.push(id);
             }
         }
 
@@ -230,9 +249,13 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        self.sync_func_ids.push(dir_id);
-
-        guard.create_file(dir_id, name)
+        match guard.create_file(dir_id, name) {
+            Ok((h, f)) => {
+                self.sync_func_ids.push(dir_id);
+                Ok((h, f))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn create_directory(
@@ -243,9 +266,13 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        self.sync_func_ids.push(dir_id);
-
-        guard.create_directory(dir_id, name)
+        match guard.create_directory(dir_id, name) {
+            Ok(dm) => {
+                self.sync_func_ids.push(dir_id);
+                Ok(dm)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -321,43 +348,42 @@ impl<B: BlockStorage> WasmProcess<B> {
                             if process.does_handle_message(WasmMessage::FileCreate)
                                 && process.should_send_notification(&payload.parent_id)
                             {
-                                msg_sender.send_file_create(
-                                    &payload.target_path,
-                                    &payload.target_id,
-                                    &payload.parent_id,
-                                )?;
+                                msg_sender.send_file_create(&payload)?;
                             }
                         }
                         IofsFileMessage::Delete(payload) => {
                             if process.does_handle_message(WasmMessage::FileDelete)
                                 && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender
-                                    .send_file_delete(&payload.target_path, &payload.target_id)?;
+                                msg_sender.send_file_delete(&payload)?;
                             }
                         }
                         IofsFileMessage::Open(payload) => {
-                            if process.does_handle_message(WasmMessage::FileClose)
+                            if process.does_handle_message(WasmMessage::FileOpen)
                                 && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender
-                                    .send_file_open(&payload.target_path, &payload.target_id)?;
+                                msg_sender.send_file_open(&payload)?;
                             }
                         }
                         IofsFileMessage::Close(payload) => {
                             if process.does_handle_message(WasmMessage::FileClose)
                                 && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender
-                                    .send_file_close(&payload.target_path, &payload.target_id)?;
+                                msg_sender.send_file_close(&payload)?;
                             }
                         }
                         IofsFileMessage::Write(payload) => {
                             if process.does_handle_message(WasmMessage::FileWrite)
                                 && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender
-                                    .send_file_write(&payload.target_path, &payload.target_id)?;
+                                msg_sender.send_file_write(&payload)?;
+                            }
+                        }
+                        IofsFileMessage::Read(payload) => {
+                            if process.does_handle_message(WasmMessage::FileWrite)
+                                && process.should_send_notification(&payload.target_id)
+                            {
+                                msg_sender.send_file_read(&payload)?;
                             }
                         }
                         _ => unimplemented!(),
@@ -367,16 +393,14 @@ impl<B: BlockStorage> WasmProcess<B> {
                             if process.does_handle_message(WasmMessage::DirCreate)
                                 && process.should_send_notification(&payload.parent_id)
                             {
-                                msg_sender
-                                    .send_dir_create(&payload.target_path, &payload.target_id)?;
+                                msg_sender.send_dir_create(&payload)?;
                             }
                         }
                         IofsDirMessage::Delete(payload) => {
                             if process.does_handle_message(WasmMessage::DirDelete)
                                 && process.should_send_notification(&payload.target_id)
                             {
-                                msg_sender
-                                    .send_dir_delete(&payload.target_path, &payload.target_id)?
+                                msg_sender.send_dir_delete(&payload)?;
                             }
                         }
                     },

@@ -7,7 +7,8 @@ use {
     colored::*,
     log::{debug, error, info},
     std::{convert::TryInto, str},
-    wasm_exports::WasmMessage,
+    uuid::Uuid,
+    wasm_exports::{FileHandle, WasmMessage},
     wasmer_runtime::Ctx,
 };
 
@@ -57,7 +58,8 @@ where
     debug!("__open_file: id_ptr: {}", id_ptr);
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let id = unbox_str(ctx, id_ptr);
+    let id_json = unbox_str(ctx, id_ptr);
+    let id: Uuid = serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
     debug!("\tid: {}", id);
 
     let file = wc.open_file(id.into(), OpenFileMode::Read);
@@ -79,7 +81,8 @@ where
     debug!("__close_file: id_ptr: {}, handle: {}", id_ptr, handle);
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let id = unbox_str(ctx, id_ptr);
+    let id_json = unbox_str(ctx, id_ptr);
+    let id: Uuid = serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
     debug!("\tid: {}", id);
 
     wc.close_file(id.into(), handle);
@@ -103,8 +106,8 @@ where
     );
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-
-    let id = unbox_str(ctx, id_ptr);
+    let id_json = unbox_str(ctx, id_ptr);
+    let id: Uuid = serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
     debug!("\tid: {}", id);
 
     let file_size = {
@@ -149,7 +152,8 @@ where
     );
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let id = unbox_str(ctx, id_ptr);
+    let id_json = unbox_str(ctx, id_ptr);
+    let id: Uuid = serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
     debug!("\tid: {}", id);
 
     let memory = ctx.memory(0);
@@ -175,10 +179,12 @@ where
     debug!("__create_file: name_ptr: {}", name_ptr);
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let parent_id = unbox_str(ctx, parent_id_ptr);
-    let name = unbox_str(ctx, name_ptr);
-    debug!("\tid: {}", parent_id);
+    let id_json = unbox_str(ctx, parent_id_ptr);
+    let parent_id: Uuid =
+        serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
+    debug!("\tparent_id: {}", parent_id);
 
+    let name = unbox_str(ctx, name_ptr);
     let file = wc.create_file(parent_id.into(), &name);
 
     match file {
@@ -187,19 +193,28 @@ where
                 "created file {:?}, handle: {}, id: {}",
                 name, handle, file.file_id
             );
+
+            // Pass the JSON result to Wasm-land by putting the string length at memory address 0,
+            // and then putting the string itself at memory address 8.
+            let json_str = serde_json::to_string(&FileHandle {
+                handle,
+                id: file.file_id.into(),
+            })
+            .expect("unable to serialize JSON in __create_file");
+
             let memory = ctx.memory(0);
-            let ptr = handle.to_le_bytes();
-            for (i, cell) in memory.view()[0..ptr.len()].iter().enumerate() {
-                cell.set(ptr[i]);
+            let len = (json_str.len() as u64).to_le_bytes();
+            for (i, cell) in memory.view()[0..len.len()].iter().enumerate() {
+                cell.set(len[i]);
             }
 
-            let file_id_str = &format!("{}", file.file_id);
-            for (byte, cell) in file_id_str
+            for (byte, cell) in json_str
                 .bytes()
-                .zip(memory.view()[ptr.len()..ptr.len() + file_id_str.len()].iter())
+                .zip(memory.view()[8..8 + json_str.len()].iter())
             {
                 cell.set(byte);
             }
+
             0
         }
         Err(e) => {
@@ -220,7 +235,11 @@ where
     );
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let parent_id = unbox_str(ctx, parent_id_ptr);
+    let id_json = unbox_str(ctx, parent_id_ptr);
+    let parent_id: Uuid =
+        serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
+    debug!("\tparent_id: {}", parent_id);
+
     let name = unbox_str(ctx, name_ptr);
     debug!("\tid: {}", parent_id);
 
@@ -229,11 +248,21 @@ where
     match dir {
         Ok(dir) => {
             debug!("created directory {:?} with id {}", name, dir.id());
+
+            // Pass the JSON result to Wasm-land by putting the string length at memory address 0,
+            // and then putting the string itself at memory address 8.
+            let json_str = serde_json::to_string(&Uuid::from(dir.id()))
+                .expect("unable to serialize JSON in __create_directory");
+
             let memory = ctx.memory(0);
-            let dir_id_str = &format!("{}", dir.id());
-            for (byte, cell) in dir_id_str
+            let len = (json_str.len() as u64).to_le_bytes();
+            for (i, cell) in memory.view()[0..len.len()].iter().enumerate() {
+                cell.set(len[i]);
+            }
+
+            for (byte, cell) in json_str
                 .bytes()
-                .zip(memory.view()[0..dir_id_str.len()].iter())
+                .zip(memory.view()[8..8 + json_str.len()].iter())
             {
                 cell.set(byte);
             }
@@ -243,6 +272,14 @@ where
     }
 }
 
+/// "Open" a directory
+///
+/// Perhaps this should be called __find_directory? What it does is search a parent directory for
+/// a named subdirectory. So it's very much like open_file, which may explain it's name. If the
+/// subdirectory is found, it's ID is returned.
+///
+/// There is no analog when working with the FUSE interface, and thus there is no notification send
+/// to the Wasm programs. Therefore, there's no need to route this through WasmProgram.
 pub(crate) fn __open_directory<B>(ctx: &mut Ctx, parent_id_ptr: u32, name_ptr: u32) -> i32
 where
     B: BlockStorage + 'static,
@@ -254,8 +291,13 @@ where
     );
 
     let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
-    let parent_id = unbox_str(ctx, parent_id_ptr);
+    let id_json = unbox_str(ctx, parent_id_ptr);
+    let parent_id: Uuid =
+        serde_json::from_str(&id_json).expect("unable to deserialize id in __open_file");
+    debug!("\tparent_id: {}", parent_id);
+
     let name = unbox_str(ctx, name_ptr);
+
     let guard = wc.iofs.clone();
     let mut guard = guard.lock().expect("poisoned iofs lock");
 
@@ -266,11 +308,21 @@ where
     match dir {
         Ok(dir) => {
             debug!("found directory {:?} with id {}", name, dir);
+
+            // Pass the JSON result to Wasm-land by putting the string length at memory address 0,
+            // and then putting the string itself at memory address 8.
+            let json_str = serde_json::to_string(&Uuid::from(dir))
+                .expect("unable to serialize JSON in __create_directory");
+
             let memory = ctx.memory(0);
-            let dir_id_str = &format!("{}", dir);
-            for (byte, cell) in dir_id_str
+            let len = (json_str.len() as u64).to_le_bytes();
+            for (i, cell) in memory.view()[0..len.len()].iter().enumerate() {
+                cell.set(len[i]);
+            }
+
+            for (byte, cell) in json_str
                 .bytes()
-                .zip(memory.view()[0..dir_id_str.len()].iter())
+                .zip(memory.view()[8..8 + json_str.len()].iter())
             {
                 cell.set(byte);
             }
@@ -309,15 +361,17 @@ fn unbox_message(ctx: &Ctx, msg_ptr: u32) -> WasmMessage {
 }
 
 fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
+    debug!("unbox_str: str_ptr {}", str_ptr);
     let memory = ctx.memory(0);
 
-    // The string is stored as a u32 pointer, followed by a length. We first extract the pointer
+    // The &str is stored as a u32 pointer, followed by a length. We first extract the pointer
     // from memory.
     let ptr_vec: Vec<_> = memory.view()[str_ptr as usize..(str_ptr + 4) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();
     let ptr = u32::from_le_bytes(ptr_vec.as_slice().try_into().unwrap());
+    debug!("\tptr: {}", ptr);
 
     // And then we extract the length.
     let len_vec: Vec<_> = memory.view()[(str_ptr + 4) as usize..(str_ptr + 8) as usize]
@@ -325,6 +379,7 @@ fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
         .map(|cell| cell.get())
         .collect();
     let len = u32::from_le_bytes(len_vec.as_slice().try_into().unwrap());
+    debug!("\tlen: {}", len);
 
     // Now we dereference the pointer, and read len bytes.
     let bytes: Vec<_> = memory.view()[ptr as usize..(ptr + len) as usize]
@@ -333,5 +388,5 @@ fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
         .collect();
 
     // And finally turn it into a String.
-    str::from_utf8(&bytes).unwrap().to_string()
+    str::from_utf8(&bytes).unwrap().to_owned()
 }

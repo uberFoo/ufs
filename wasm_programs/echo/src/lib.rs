@@ -1,11 +1,11 @@
-use {lazy_static::lazy_static, mut_static::MutStatic, wasm_exports::*};
+use {lazy_static::lazy_static, mut_static::MutStatic, uuid::Uuid, wasm_exports::*};
 
 lazy_static! {
     pub static ref PROGRAM: MutStatic<Echo> = { MutStatic::from(Echo::new()) };
 }
 
 pub struct Echo {
-    root_id: Option<String>,
+    root_id: Option<Uuid>,
 }
 
 impl Echo {
@@ -15,7 +15,7 @@ impl Echo {
 }
 
 #[no_mangle]
-pub extern "C" fn init(root_id: String) {
+pub extern "C" fn init(root_id: Uuid) {
     // Initialize our main struct
     let mut pgm = PROGRAM.write().unwrap();
     // Store the root id
@@ -32,13 +32,14 @@ pub extern "C" fn init(root_id: String) {
     register_callback(WasmMessage::FileOpen, handle_file_opened);
     register_callback(WasmMessage::FileClose, handle_file_closed);
     register_callback(WasmMessage::FileWrite, handle_file_write);
+    register_callback(WasmMessage::FileRead, handle_file_read);
 
     register_post_route("foo", post);
 }
 
 #[no_mangle]
 pub extern "C" fn post(json: serde_json::Value) {
-    print(&format!("post called with {:?}", json));
+    print(&format!("post called with {:#?}", json));
 }
 
 #[no_mangle]
@@ -55,56 +56,67 @@ pub extern "C" fn shutdown(_payload: Option<MessagePayload>) {
 
 #[no_mangle]
 pub extern "C" fn handle_new_file(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::FileCreate(file)) = payload {
-        print(&format!(
-            "handle new file: {:?} ({}) under directory {}",
-            file.path, file.id, file.dir_id
-        ));
+    if let Some(file) = payload {
+        print(&format!("handle new file: {:#?}", file));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_new_dir(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!("handle new dir: {:?} ({})", path, id));
+    if let Some(dir) = payload {
+        print(&format!("handle new dir: {:#?}", dir));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_deleted(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!("handle file deleted: {:?} ({})", path, id));
+    if let Some(file) = payload {
+        print(&format!("handle file deleted: {:#?}", file));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_opened(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!("handle file opened: {:?} ({})", path, id));
+    if let Some(file) = payload {
+        print(&format!("handle file opened: {:#?}", file));
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
+    if let Some(file) = payload {
         let pgm = PROGRAM.read().unwrap();
 
-        print(&format!("handle file closed: {:?} ({})", path, id));
+        print(&format!("handle file closed: {:#?}", file));
 
-        // let id = id.get_str();
-        // let handle = open_file(id).unwrap();
+        let handle = open_file(&file.id).unwrap();
         // print(&format!("open handle: {}", handle));
-        // let mut bytes: [u8; 256] = [0; 256];
-        // let mut offset = 0;
-        // let mut read_len = read_file(id, handle, offset, &mut bytes);
-        // while read_len > 0 {
-        //     offset += read_len;
-        //     let str = String::from_utf8_lossy(&bytes);
-        //     print(&format!("read len: {}\n data: {}", read_len, str));
-        //     read_len = read_file(id, handle, offset, &mut bytes);
-        // }
+        let mut bytes: [u8; 256] = [0; 256];
+        let mut offset = 0;
+        let mut read_len = read_file(&handle, offset, &mut bytes);
+        let str = String::from_utf8_lossy(&bytes);
+        print(&format!("read len: {}\n data: {}", read_len, str));
+        close_file(&handle);
 
-        // // Check for the "fubar" directory
+        // Try creating a file in the directory.
+        if let Some(file_handle) = create_file(pgm.root_id.as_ref().unwrap(), "baz") {
+            print(&format!("File id: {:?}", file_handle));
+            let len = write_file(&file_handle, "Hello World!\n".as_bytes());
+            print(&format!("good write {}", len));
+            close_file(&file_handle);
+        } else {
+            print("file create unsuccessful");
+        }
+
+        // Check for the "fubar" directory
+        if let Some(dir_id) = open_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+            print(&format!("found dir id: {:?}", dir_id));
+        } else {
+            if let Some(dir_id) = create_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
+                print(&format!("created dir id: {:?}", dir_id));
+            }
+        }
+
         // let dir_id = if let Some(dir_id) = open_directory(pgm.root_id.as_ref().unwrap(), "fubar") {
         //     print(&format!("found dir id: {:?}", dir_id));
         //     Some(dir_id)
@@ -128,12 +140,21 @@ pub extern "C" fn handle_file_closed(payload: Option<MessagePayload>) {
         //         print("file create unsuccessful");
         //     }
         // }
+
+        print("done!");
     }
 }
 
 #[no_mangle]
 pub extern "C" fn handle_file_write(payload: Option<MessagePayload>) {
-    if let Some(MessagePayload::PathAndId(path, id)) = payload {
-        print(&format!("handle file write: {:?} ({})", path, id));
+    if let Some(file) = payload {
+        print(&format!("handle file write: {:#?}", file));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn handle_file_read(payload: Option<MessagePayload>) {
+    if let Some(file) = payload {
+        print(&format!("handle file read: {:#?}", file));
     }
 }

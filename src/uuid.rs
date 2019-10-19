@@ -1,10 +1,10 @@
-use std::fmt;
-
-use lazy_static::lazy_static;
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-use serde_derive::{Deserialize, Serialize};
-use uuid::Uuid;
+use {
+    lazy_static::lazy_static,
+    rand::{distributions::Alphanumeric, thread_rng, Rng},
+    serde_derive::{Deserialize, Serialize},
+    std::fmt,
+    uuid::Uuid,
+};
 
 lazy_static! {
 /// The UUID to rule them all
@@ -89,5 +89,17 @@ impl From<String> for UfsUuid {
         UfsUuid {
             inner: Uuid::parse_str(&str).expect("unable to parse Uuid from String"),
         }
+    }
+}
+
+impl From<UfsUuid> for Uuid {
+    fn from(uuid: UfsUuid) -> Self {
+        uuid.inner
+    }
+}
+
+impl From<Uuid> for UfsUuid {
+    fn from(uuid: Uuid) -> Self {
+        UfsUuid { inner: uuid }
     }
 }

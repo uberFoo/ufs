@@ -8,3 +8,6 @@ edition = "2018"
 lazy_static = "1.4"
 mut_static = "5.0"
 serde_json = "1.0.41"
+uuid = { version = "0.8.0", features = ["v5", "serde"] }
+serde = "1.0.101"
+serde_derive = "1.0.101"

@@ -373,13 +373,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
         if let Some(program_mgr) = &self.program_mgr {
             program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
                 IofsDirMessage::Create(IofsMessagePayload {
-                    target_path: self
-                        .block_manager
-                        .metadata()
-                        .path_from_dir_id(dir.id())
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
+                    target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
                     target_id: dir.id(),
                     parent_id,
                 }),
@@ -415,10 +409,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     target_path: self
                         .block_manager
                         .metadata()
-                        .path_from_file_id(file.file_id)
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
+                        .path_from_file_id(file.file_id),
                     target_id: file.file_id,
                     parent_id: dir_id,
                 }),
@@ -482,13 +473,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
                     IofsDirMessage::Delete(IofsMessagePayload {
-                        target_path: self
-                            .block_manager
-                            .metadata()
-                            .path_from_dir_id(dir.id())
-                            .to_str()
-                            .unwrap()
-                            .to_string(),
+                        target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
                         target_id: dir.id(),
                         parent_id,
                     }),
@@ -521,13 +506,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
             if let Some(program_mgr) = &self.program_mgr {
                 program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
                     IofsFileMessage::Delete(IofsMessagePayload {
-                        target_path: self
-                            .block_manager
-                            .metadata()
-                            .path_from_file_id(file.id())
-                            .to_str()
-                            .unwrap()
-                            .to_string(),
+                        target_path: self.block_manager.metadata().path_from_file_id(file.id()),
                         target_id: file.id(),
                         parent_id: dir_id,
                     }),
@@ -586,10 +565,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     target_path: self
                         .block_manager
                         .metadata()
-                        .path_from_file_id(file.file_id)
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
+                        .path_from_file_id(file.file_id),
                     target_id: file.file_id,
                     parent_id: self
                         .block_manager
@@ -615,7 +591,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
     /// Close a file
     ///
-    pub(crate) fn close_file(&mut self, handle: FileHandle) {
+    pub(crate) fn close_file(&mut self, handle: FileHandle) -> Result<(), ()> {
         debug!("-------");
         debug!("`close_file`: {}", handle);
 
@@ -690,10 +666,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                             target_path: self
                                 .block_manager
                                 .metadata()
-                                .path_from_file_id(file.file_id)
-                                .to_str()
-                                .unwrap()
-                                .to_string(),
+                                .path_from_file_id(file.file_id),
                             target_id: file.file_id,
                             parent_id: self
                                 .block_manager
@@ -705,13 +678,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     )));
                 }
 
+                Ok(())
+
                 // self.notify_listeners(UfsMessage::FileClose(
                 //     self.block_manager
                 //         .metadata()
                 //         .path_from_file_id(file.file_id),
                 // ));
             }
-            None => warn!("asked to close a file not in the map {}", handle),
+            None => {
+                warn!("asked to close a file not in the map {}", handle);
+                Err(())
+            }
         }
     }
 
@@ -762,10 +740,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                         target_path: self
                             .block_manager
                             .metadata()
-                            .path_from_file_id(file.file_id)
-                            .to_str()
-                            .unwrap()
-                            .to_string(),
+                            .path_from_file_id(file.file_id),
                         target_id: file.file_id,
                         parent_id: self
                             .block_manager
@@ -851,6 +826,24 @@ impl<B: BlockStorage> UberFileSystem<B> {
             }
 
             if buffer.len() == size as usize {
+                if let Some(program_mgr) = &self.program_mgr {
+                    program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                        IofsFileMessage::Read(IofsMessagePayload {
+                            target_path: self
+                                .block_manager
+                                .metadata()
+                                .path_from_file_id(file.file_id),
+                            target_id: file.file_id,
+                            parent_id: self
+                                .block_manager
+                                .metadata()
+                                .get_file_metadata(file.file_id)
+                                .expect("should not fail in write_file")
+                                .dir_id(),
+                        }),
+                    )));
+                }
+
                 // self.notify_listeners(UfsMessage::FileRead(
                 //     self.block_manager
                 //         .metadata()

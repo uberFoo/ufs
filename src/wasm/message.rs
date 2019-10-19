@@ -6,7 +6,11 @@ use {
     crate::{uuid::UfsUuid, wasm::RuntimeErrorKind},
     failure,
     log::error,
+    serde_derive::Serialize,
     serde_json,
+    std::path::PathBuf,
+    uuid::Uuid,
+    wasm_exports::MessagePayload,
     wasmer_runtime::{Instance, Value},
 };
 
@@ -31,6 +35,7 @@ pub(crate) enum IofsFileMessage {
     Open(IofsMessagePayload),
     Close(IofsMessagePayload),
     Write(IofsMessagePayload),
+    Read(IofsMessagePayload),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,11 +44,21 @@ pub(crate) enum IofsDirMessage {
     Delete(IofsMessagePayload),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct IofsMessagePayload {
     pub(crate) target_id: UfsUuid,
-    pub(crate) target_path: String,
+    pub(crate) target_path: PathBuf,
     pub(crate) parent_id: UfsUuid,
+}
+
+impl From<&IofsMessagePayload> for MessagePayload {
+    fn from(imp: &IofsMessagePayload) -> Self {
+        MessagePayload {
+            id: imp.target_id.into(),
+            path: imp.target_path.clone(),
+            parent_id: imp.parent_id.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,8 +96,9 @@ impl<'a> WasmMessageSender<'a> {
     pub(crate) fn new(instance: &'a mut Instance, root_id: UfsUuid) -> Self {
         let mut wms = WasmMessageSender { instance };
 
-        let id_str = &format!("{}", root_id);
-        wms.write_wasm_memory(0, id_str);
+        let root_id: Uuid = root_id.into();
+        let id_str = serde_json::to_string(&root_id).expect("unable to serialize JSON in new");
+        wms.write_wasm_memory(0, &id_str);
 
         wms.call_wasm_func(
             "__init",
@@ -132,144 +148,130 @@ impl<'a> WasmMessageSender<'a> {
 
     pub(crate) fn send_file_create(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
-        parent_id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
+        let payload: MessagePayload = payload.into();
 
-        let id_str_offset = path.len();
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(id_str_offset, id_str);
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_file_create");
 
-        let parent_id_str_offset = id_str_offset + id_str.len();
-        let parent_id_str = &format!("{}", parent_id);
-        self.write_wasm_memory(parent_id_str_offset, parent_id_str);
+        self.write_wasm_memory(0, &json_str);
 
         self.call_wasm_func(
             "__handle_file_create",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str_offset as i32),
-                Value::I32(id_str.len() as i32),
-                Value::I32(parent_id_str_offset as i32),
-                Value::I32(parent_id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_dir_create(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_dir_create");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_dir_create",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_file_delete(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_file_delete");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_file_delete",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_dir_delete(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_dir_delete");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_dir_delete",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_file_open(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_file_open");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_file_open",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_file_close(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str = serde_json::to_string(&payload)
+            .expect("unable to serialize JSON in send_http_post send_file_close");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_file_close",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 
     pub(crate) fn send_file_write(
         &mut self,
-        path: &str,
-        id: &UfsUuid,
+        payload: &IofsMessagePayload,
     ) -> Result<(), failure::Error> {
-        self.write_wasm_memory(0, path);
-        let id_str = &format!("{}", id);
-        self.write_wasm_memory(path.len(), id_str);
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_file_write");
+
+        self.write_wasm_memory(0, &json_str);
+
         self.call_wasm_func(
             "__handle_file_write",
-            Some(&[
-                Value::I32(0),
-                Value::I32(path.len() as i32),
-                Value::I32(path.len() as i32),
-                Value::I32(id_str.len() as i32),
-            ]),
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
+        )
+    }
+
+    pub(crate) fn send_file_read(
+        &mut self,
+        payload: &IofsMessagePayload,
+    ) -> Result<(), failure::Error> {
+        let payload: MessagePayload = payload.into();
+        let json_str =
+            serde_json::to_string(&payload).expect("unable to serialize JSON in send_file_read");
+
+        self.write_wasm_memory(0, &json_str);
+
+        self.call_wasm_func(
+            "__handle_file_read",
+            Some(&[Value::I32(0), Value::I32(json_str.len() as i32)]),
         )
     }
 

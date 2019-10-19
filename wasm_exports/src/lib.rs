@@ -7,7 +7,12 @@
 use {
     lazy_static::lazy_static,
     mut_static::MutStatic,
-    std::{collections::HashMap, convert::TryInto, slice, str},
+    serde_derive::{Deserialize, Serialize},
+    std::{
+        path::PathBuf,
+        {collections::HashMap, convert::TryInto, slice, str},
+    },
+    uuid::Uuid,
 };
 
 lazy_static! {
@@ -48,10 +53,15 @@ extern "C" {
     pub fn __open_directory(id_ptr: u32, name_ptr: u32) -> i32;
 }
 
+/// Wasm Program init function declaration
+///
 /// This is the sole function expected to exist in the user's WASM program
+///
+/// The warning about `Uuid` not being FFI-safe may be ignored, as this function is called from
+/// within the Wasm interpreter, and not used across the FFI boundary.
 extern "C" {
     #[doc(hidden)]
-    pub fn init(root_id: String);
+    pub fn init(root_id: Uuid);
 }
 
 /// Messages sent from the file system that may be acted upon by the user's program
@@ -123,24 +133,20 @@ impl PostCallbacks {
 /// Returned from the `create_file` function
 ///
 /// This structure must be used in subsequent file operations on the opened file.
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FileHandle {
     pub handle: u64,
-    pub id: String,
+    pub id: Uuid,
 }
 
 /// File System Function Call Return Type
 ///
 /// We wrap the return types in a MessagePayload to simplify handler callback registration.
-pub enum MessagePayload {
-    PathAndId(String, String),
-    FileCreate(FileCreate),
-}
-
-pub struct FileCreate {
-    pub path: String,
-    pub id: String,
-    pub dir_id: String,
+#[derive(Debug, Deserialize, Serialize)]
+pub struct MessagePayload {
+    pub path: PathBuf,
+    pub id: Uuid,
+    pub parent_id: Uuid,
 }
 
 //
@@ -182,15 +188,16 @@ pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(serde_js
 /// Open a file
 ///
 /// This function opens a file identified by a `UfsUuid`, and returns a `Option<FileHandle>`.
-pub fn open_file(id: &str) -> Option<FileHandle> {
-    let id_box = Box::into_raw(Box::new(id));
-    let handle = unsafe { __open_file(id_box as u32) };
+pub fn open_file(id: &Uuid) -> Option<FileHandle> {
+    let json_str = serde_json::to_string(&id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
+    let handle = unsafe { __open_file(json_box as u32) };
     if handle == 0 {
         None
     } else {
         Some(FileHandle {
             handle,
-            id: id.to_string(),
+            id: id.clone(),
         })
     }
 }
@@ -199,8 +206,9 @@ pub fn open_file(id: &str) -> Option<FileHandle> {
 ///
 /// This function takes a FileHandle, returned by a previous call to open_file.
 pub fn close_file(handle: &FileHandle) {
-    let id = Box::into_raw(Box::new(handle.id.as_str()));
-    unsafe { __close_file(id as u32, handle.handle) }
+    let json_str = serde_json::to_string(&handle.id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
+    unsafe { __close_file(json_box as u32, handle.handle) }
 }
 
 /// Read bytes from a file
@@ -209,10 +217,11 @@ pub fn close_file(handle: &FileHandle) {
 /// `&[u8]` buffer. The offset is the location in the file being read at which the read should
 /// begin. The bytes are returned in the `&[u8]` buffer.
 pub fn read_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
-    let id = Box::into_raw(Box::new(handle.id.as_str()));
+    let json_str = serde_json::to_string(&handle.id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
     let ptr = data.as_ptr();
     let len = data.len();
-    unsafe { __read_file(id as u32, handle.handle, offset, ptr as _, len as _) }
+    unsafe { __read_file(json_box as u32, handle.handle, offset, ptr as _, len as _) }
 }
 
 /// Write bytes to a file
@@ -220,34 +229,33 @@ pub fn read_file(handle: &FileHandle, offset: u32, data: &[u8]) -> u32 {
 /// This function takes a FileHandle, returned by a previous call to open_file, or create_file, and
 /// a `&[u8]` buffer of bytes.
 pub fn write_file(handle: &FileHandle, data: &[u8]) -> u32 {
-    let id = Box::into_raw(Box::new(handle.id.as_str()));
-
+    let json_str = serde_json::to_string(&handle.id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
     let ptr = data.as_ptr();
     let len = data.len();
-    unsafe { __write_file(id as u32, handle.handle, ptr as _, len as _) }
+    unsafe { __write_file(json_box as u32, handle.handle, ptr as _, len as _) }
 }
-
 /// Create a new file
 ///
 /// This function takes the `UfsUuid` of a directory, and a name. A new file will be created with
 /// `name`, under the directory identified by the ID. An `Option<FileHandle>` is returned.
-pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
-    let parent_id = Box::into_raw(Box::new(parent_id));
+pub fn create_file(parent_id: &Uuid, name: &str) -> Option<FileHandle> {
+    let json_str = serde_json::to_string(parent_id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
+
     let name = Box::into_raw(Box::new(name));
-    let file_id_ptr = unsafe { __create_file(parent_id as u32, name as u32) };
+    let file_handle_ptr = unsafe { __create_file(json_box as u32, name as u32) };
 
-    if file_id_ptr != -1 {
-        let handle_buf = unsafe { slice::from_raw_parts(file_id_ptr as *const u8, 8) };
-        let handle = u64::from_le_bytes(handle_buf.try_into().expect("unable to read file handle"));
-        let slice = unsafe {
-            slice::from_raw_parts((file_id_ptr + 8) as *const u8, file_id_ptr as usize + 36)
-        };
-        let file_id_str = str::from_utf8(&slice).expect("unable to create file_id str");
+    if file_handle_ptr != -1 {
+        // The JSON string is returned as a length at memory location 0, and the string's bytes
+        // located at memory location 8.
+        let len_buf = unsafe { slice::from_raw_parts(file_handle_ptr as *const u8, 8) };
+        let len = u64::from_le_bytes(len_buf.try_into().unwrap());
 
-        Some(FileHandle {
-            handle,
-            id: file_id_str.to_string(),
-        })
+        let json_str = unbox_slice(file_handle_ptr + 8, len as _);
+        let payload: FileHandle = serde_json::from_slice(json_str).unwrap();
+
+        Some(payload)
     } else {
         None
     }
@@ -258,15 +266,23 @@ pub fn create_file(parent_id: &str, name: &str) -> Option<FileHandle> {
 /// This function takes the `UfsUuid` of a directory, and a name. A new directory will be created
 /// with `name`, under the directory identified by the ID. An `Option<String>` is returned
 /// containing the ID of the new directory.
-pub fn create_directory(parent_id: &str, name: &str) -> Option<String> {
-    let parent_id = Box::into_raw(Box::new(parent_id));
-    let name = Box::into_raw(Box::new(name));
-    let dir_id_ptr = unsafe { __create_directory(parent_id as u32, name as u32) };
-    if dir_id_ptr != -1 {
-        let slice = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 36) };
-        let dir_id_str = str::from_utf8(&slice).expect("unable to create dir_id str");
+pub fn create_directory(parent_id: &Uuid, name: &str) -> Option<Uuid> {
+    let json_str = serde_json::to_string(parent_id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
 
-        Some(dir_id_str.to_string())
+    let name = Box::into_raw(Box::new(name));
+    let dir_id_ptr = unsafe { __create_directory(json_box as u32, name as u32) };
+
+    if dir_id_ptr != -1 {
+        // The JSON string is returned as a length at memory location 0, and the string's bytes
+        // located at memory location 8.
+        let len_buf = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 8) };
+        let len = u64::from_le_bytes(len_buf.try_into().unwrap());
+
+        let json_str = unbox_slice(dir_id_ptr + 8, len as _);
+        let dir_id: Uuid = serde_json::from_slice(json_str).unwrap();
+
+        Some(dir_id)
     } else {
         None
     }
@@ -277,15 +293,23 @@ pub fn create_directory(parent_id: &str, name: &str) -> Option<String> {
 /// This function takes the `UfsUuid` of a parent directory (possibly the root directory) and the
 /// `name` of a subdirectory to open. The returned `Option<String>` is the id belonging to the
 /// `name`d directory.
-pub fn open_directory(parent_id: &str, name: &str) -> Option<String> {
-    let parent_id = Box::into_raw(Box::new(parent_id));
-    let name = Box::into_raw(Box::new(name));
-    let dir_id_ptr = unsafe { __open_directory(parent_id as u32, name as u32) };
-    if dir_id_ptr != -1 {
-        let slice = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 36) };
-        let dir_id_str = str::from_utf8(&slice).expect("unable to create dir_id str");
+pub fn open_directory(parent_id: &Uuid, name: &str) -> Option<Uuid> {
+    let json_str = serde_json::to_string(parent_id).unwrap();
+    let json_box = Box::into_raw(Box::new(json_str.as_str()));
 
-        Some(dir_id_str.to_string())
+    let name = Box::into_raw(Box::new(name));
+    let dir_id_ptr = unsafe { __open_directory(json_box as u32, name as u32) };
+
+    if dir_id_ptr != -1 {
+        // The JSON string is returned as a length at memory location 0, and the string's bytes
+        // located at memory location 8.
+        let len_buf = unsafe { slice::from_raw_parts(dir_id_ptr as *const u8, 8) };
+        let len = u64::from_le_bytes(len_buf.try_into().unwrap());
+
+        let json_str = unbox_slice(dir_id_ptr + 8, len as _);
+        let dir_id: Uuid = serde_json::from_slice(json_str).unwrap();
+
+        Some(dir_id)
     } else {
         None
     }
@@ -302,6 +326,10 @@ fn unbox_string(ptr: i32, len: i32) -> String {
         .to_owned()
 }
 
+fn unbox_slice<'a>(ptr: i32, len: i32) -> &'a [u8] {
+    unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) }
+}
+
 //
 // The following functions are called from Rust. They manipulate data coming across the WASM
 // boundary, and make things nicer for the person writing a WASM program.
@@ -309,7 +337,9 @@ fn unbox_string(ptr: i32, len: i32) -> String {
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __init(ptr: i32, len: i32) {
-    unsafe { init(unbox_string(ptr, len)) };
+    let json_str = unbox_slice(ptr, len);
+    let root_id: Uuid = serde_json::from_slice(json_str).unwrap();
+    unsafe { init(root_id) };
 }
 
 #[doc(hidden)]
@@ -332,107 +362,101 @@ pub extern "C" fn __handle_ping() {
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_file_create(
-    path_ptr: i32,
-    path_len: i32,
-    id_ptr: i32,
-    id_len: i32,
-    parent_id_ptr: i32,
-    parent_id_len: i32,
-) {
+pub extern "C" fn __handle_file_create(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileCreate) {
-        func(Some(MessagePayload::FileCreate(FileCreate {
-            path: unbox_string(path_ptr, path_len),
-            id: unbox_string(id_ptr, id_len),
-            dir_id: unbox_string(parent_id_ptr, parent_id_len),
-        })));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_dir_create(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_dir_create(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirCreate) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_file_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_file_delete(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileDelete) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_dir_delete(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_dir_delete(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::DirDelete) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_file_open(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_file_open(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileOpen) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_file_close(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_file_close(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileClose) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_file_write(path_ptr: i32, path_len: i32, id_ptr: i32, id_len: i32) {
+pub extern "C" fn __handle_file_write(payload_ptr: i32, payload_len: i32) {
     let lookup = CALLBACK_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&WasmMessage::FileWrite) {
-        func(Some(MessagePayload::PathAndId(
-            unbox_string(path_ptr, path_len),
-            unbox_string(id_ptr, id_len),
-        )));
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
+    }
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn __handle_file_read(payload_ptr: i32, payload_len: i32) {
+    let lookup = CALLBACK_HANDLERS.read().unwrap();
+    if let Some(func) = lookup.lookup(&WasmMessage::FileRead) {
+        let json_str = unbox_slice(payload_ptr, payload_len);
+        let payload: MessagePayload = serde_json::from_slice(json_str).unwrap();
+        func(Some(payload));
     }
 }
 
 #[doc(hidden)]
 #[no_mangle]
 pub extern "C" fn __handle_http_post(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
-    let slice = unsafe { slice::from_raw_parts(route_ptr as *const u8, route_len as usize) };
-    let route = str::from_utf8(&slice).unwrap();
+    let route = unbox_string(route_ptr, route_len);
 
     let lookup = POST_HANDLERS.read().unwrap();
-    if let Some(func) = lookup.lookup(&route.to_owned()) {
+    if let Some(func) = lookup.lookup(&route) {
         let slice = unsafe { slice::from_raw_parts(json_ptr as *const u8, json_len as usize) };
-        let json: serde_json::Value =
-            serde_json::from_slice(&slice).expect("unable to serialize JSON in __handle_http_post");
+        let json: serde_json::Value = serde_json::from_slice(&slice).unwrap();
         func(json);
     }
 }
