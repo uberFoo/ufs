@@ -74,7 +74,7 @@ impl<B: BlockStorage> UfsMounter<B> {
         let inner = Arc::new(Mutex::new(ufs));
 
         // Start the Runtime
-        info!("Initializing WASM runtime");
+        info!("Initializing Wasm runtime");
         let runtime_mgr = RuntimeManager::new(inner.clone(), receiver);
         let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
 
@@ -371,13 +371,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .new_directory(parent_id, name, self.user)?;
 
         if let Some(program_mgr) = &self.program_mgr {
-            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                IofsDirMessage::Create(IofsMessagePayload {
-                    target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
-                    target_id: dir.id(),
-                    parent_id,
-                }),
-            )));
+            program_mgr
+                .send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
+                    IofsDirMessage::Create(IofsMessagePayload {
+                        target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
+                        target_id: dir.id(),
+                        parent_id,
+                    }),
+                )))
+                .expect("Wasm Runtime went away");
         }
 
         // self.notify_listeners(UfsMessage::DirCreate(
@@ -404,16 +406,18 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_files.insert(fh, file.clone());
 
         if let Some(program_mgr) = &self.program_mgr {
-            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::Create(IofsMessagePayload {
-                    target_path: self
-                        .block_manager
-                        .metadata()
-                        .path_from_file_id(file.file_id),
-                    target_id: file.file_id,
-                    parent_id: dir_id,
-                }),
-            )));
+            program_mgr
+                .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                    IofsFileMessage::Create(IofsMessagePayload {
+                        target_path: self
+                            .block_manager
+                            .metadata()
+                            .path_from_file_id(file.file_id),
+                        target_id: file.file_id,
+                        parent_id: dir_id,
+                    }),
+                )))
+                .expect("Wasm Runtime went away");
         }
 
         // self.notify_listeners(UfsMessage::FileCreate(
@@ -471,13 +475,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .get_dir_metadata_from_dir_and_name(parent_id, name)
         {
             if let Some(program_mgr) = &self.program_mgr {
-                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
-                    IofsDirMessage::Delete(IofsMessagePayload {
-                        target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
-                        target_id: dir.id(),
-                        parent_id,
-                    }),
-                )));
+                program_mgr
+                    .send(RuntimeManagerMsg::IofsMessage(IofsMessage::DirMessage(
+                        IofsDirMessage::Delete(IofsMessagePayload {
+                            target_path: self.block_manager.metadata().path_from_dir_id(dir.id()),
+                            target_id: dir.id(),
+                            parent_id,
+                        }),
+                    )))
+                    .expect("Wasm Runtime went away");
             }
         }
 
@@ -504,13 +510,15 @@ impl<B: BlockStorage> UberFileSystem<B> {
             .get_file_metadata_from_dir_and_name(dir_id, name)
         {
             if let Some(program_mgr) = &self.program_mgr {
-                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::Delete(IofsMessagePayload {
-                        target_path: self.block_manager.metadata().path_from_file_id(file.id()),
-                        target_id: file.id(),
-                        parent_id: dir_id,
-                    }),
-                )));
+                program_mgr
+                    .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                        IofsFileMessage::Delete(IofsMessagePayload {
+                            target_path: self.block_manager.metadata().path_from_file_id(file.id()),
+                            target_id: file.id(),
+                            parent_id: dir_id,
+                        }),
+                    )))
+                    .expect("Wasm Runtime went away");
             }
 
             // self.notify_listeners(UfsMessage::FileRemove(
@@ -560,21 +568,23 @@ impl<B: BlockStorage> UberFileSystem<B> {
         self.open_file_counter = self.open_file_counter.wrapping_add(1);
 
         if let Some(program_mgr) = &self.program_mgr {
-            program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                IofsFileMessage::Open(IofsMessagePayload {
-                    target_path: self
-                        .block_manager
-                        .metadata()
-                        .path_from_file_id(file.file_id),
-                    target_id: file.file_id,
-                    parent_id: self
-                        .block_manager
-                        .metadata()
-                        .get_file_metadata(file.file_id)
-                        .expect("should not fail in open_file")
-                        .dir_id(),
-                }),
-            )));
+            program_mgr
+                .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                    IofsFileMessage::Open(IofsMessagePayload {
+                        target_path: self
+                            .block_manager
+                            .metadata()
+                            .path_from_file_id(file.file_id),
+                        target_id: file.file_id,
+                        parent_id: self
+                            .block_manager
+                            .metadata()
+                            .get_file_metadata(file.file_id)
+                            .expect("should not fail in open_file")
+                            .dir_id(),
+                    }),
+                )))
+                .expect("Wasm Runtime went away");
         }
 
         // self.notify_listeners(UfsMessage::FileOpen(
@@ -661,21 +671,23 @@ impl<B: BlockStorage> UberFileSystem<B> {
         match self.open_files.remove(&handle) {
             Some(file) => {
                 if let Some(program_mgr) = &self.program_mgr {
-                    program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                        IofsFileMessage::Close(IofsMessagePayload {
-                            target_path: self
-                                .block_manager
-                                .metadata()
-                                .path_from_file_id(file.file_id),
-                            target_id: file.file_id,
-                            parent_id: self
-                                .block_manager
-                                .metadata()
-                                .get_file_metadata(file.file_id)
-                                .expect("should not fail in close_file")
-                                .dir_id(),
-                        }),
-                    )));
+                    program_mgr
+                        .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                            IofsFileMessage::Close(IofsMessagePayload {
+                                target_path: self
+                                    .block_manager
+                                    .metadata()
+                                    .path_from_file_id(file.file_id),
+                                target_id: file.file_id,
+                                parent_id: self
+                                    .block_manager
+                                    .metadata()
+                                    .get_file_metadata(file.file_id)
+                                    .expect("should not fail in close_file")
+                                    .dir_id(),
+                            }),
+                        )))
+                        .expect("Wasm Runtime went away");
                 }
 
                 Ok(())
@@ -735,21 +747,23 @@ impl<B: BlockStorage> UberFileSystem<B> {
         // Down here to appease the Borrow Checker Gods
         if let Some(file) = self.open_files.get(&handle) {
             if let Some(program_mgr) = &self.program_mgr {
-                program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                    IofsFileMessage::Write(IofsMessagePayload {
-                        target_path: self
-                            .block_manager
-                            .metadata()
-                            .path_from_file_id(file.file_id),
-                        target_id: file.file_id,
-                        parent_id: self
-                            .block_manager
-                            .metadata()
-                            .get_file_metadata(file.file_id)
-                            .expect("should not fail in write_file")
-                            .dir_id(),
-                    }),
-                )));
+                program_mgr
+                    .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                        IofsFileMessage::Write(IofsMessagePayload {
+                            target_path: self
+                                .block_manager
+                                .metadata()
+                                .path_from_file_id(file.file_id),
+                            target_id: file.file_id,
+                            parent_id: self
+                                .block_manager
+                                .metadata()
+                                .get_file_metadata(file.file_id)
+                                .expect("should not fail in write_file")
+                                .dir_id(),
+                        }),
+                    )))
+                    .expect("Wasm Runtime went away");
             }
 
             // self.notify_listeners(UfsMessage::FileWrite(
@@ -827,21 +841,23 @@ impl<B: BlockStorage> UberFileSystem<B> {
 
             if buffer.len() == size as usize {
                 if let Some(program_mgr) = &self.program_mgr {
-                    program_mgr.send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
-                        IofsFileMessage::Read(IofsMessagePayload {
-                            target_path: self
-                                .block_manager
-                                .metadata()
-                                .path_from_file_id(file.file_id),
-                            target_id: file.file_id,
-                            parent_id: self
-                                .block_manager
-                                .metadata()
-                                .get_file_metadata(file.file_id)
-                                .expect("should not fail in write_file")
-                                .dir_id(),
-                        }),
-                    )));
+                    program_mgr
+                        .send(RuntimeManagerMsg::IofsMessage(IofsMessage::FileMessage(
+                            IofsFileMessage::Read(IofsMessagePayload {
+                                target_path: self
+                                    .block_manager
+                                    .metadata()
+                                    .path_from_file_id(file.file_id),
+                                target_id: file.file_id,
+                                parent_id: self
+                                    .block_manager
+                                    .metadata()
+                                    .get_file_metadata(file.file_id)
+                                    .expect("should not fail in write_file")
+                                    .dir_id(),
+                            }),
+                        )))
+                        .expect("Wasm Runtime went away");
                 }
 
                 // self.notify_listeners(UfsMessage::FileRead(

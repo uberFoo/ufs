@@ -94,12 +94,20 @@ impl<B: BlockStorage> RuntimeManager<B> {
         }
     }
 
-    fn notify_listeners(&self, msg: IofsMessage) {
-        for (_, listener) in &self.threads {
+    fn notify_listeners(&mut self, msg: IofsMessage) {
+        let mut dead_programs = vec![];
+        for (id, listener) in &self.threads {
             match listener.channel.send(msg.clone()) {
                 Ok(_) => (),
-                Err(e) => error!("unable to send on channel {}", e),
+                Err(e) => {
+                    error!("unable to send on channel {}", e);
+                    dead_programs.push(id.clone());
+                }
             }
+        }
+
+        for id in dead_programs {
+            self.threads.remove(&id);
         }
     }
 
