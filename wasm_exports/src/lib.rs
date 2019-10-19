@@ -115,7 +115,7 @@ impl MessageHandlers {
 ///
 #[doc(hidden)]
 struct PostCallbacks {
-    callbacks: HashMap<String, extern "C" fn(serde_json::Value)>,
+    callbacks: HashMap<String, extern "C" fn(&str)>,
 }
 
 impl PostCallbacks {
@@ -125,7 +125,7 @@ impl PostCallbacks {
         }
     }
 
-    fn lookup(&self, route: &String) -> Option<&extern "C" fn(serde_json::Value)> {
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str)> {
         self.callbacks.get(route)
     }
 }
@@ -174,7 +174,7 @@ pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePay
 ///
 /// HTTP POST requests sent to http://hostname/wasm/<route> will be routed to this function. The
 /// <route> is a single string, and not a path.
-pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(serde_json::Value)) {
+pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str)) {
     let mut lookup = POST_HANDLERS.write().unwrap();
     lookup
         .callbacks
@@ -326,6 +326,11 @@ fn unbox_string(ptr: i32, len: i32) -> String {
         .to_owned()
 }
 
+fn unbox_str<'a>(ptr: i32, len: i32) -> &'a str {
+    let slice = unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) };
+    str::from_utf8(&slice).expect("unable to unbox string")
+}
+
 fn unbox_slice<'a>(ptr: i32, len: i32) -> &'a [u8] {
     unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) }
 }
@@ -455,8 +460,8 @@ pub extern "C" fn __handle_http_post(route_ptr: i32, route_len: i32, json_ptr: i
 
     let lookup = POST_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&route) {
-        let slice = unsafe { slice::from_raw_parts(json_ptr as *const u8, json_len as usize) };
-        let json: serde_json::Value = serde_json::from_slice(&slice).unwrap();
-        func(json);
+        let slice = unbox_str(json_ptr, json_len); //unsafe { slice::from_raw_parts(json_ptr as *const u8, json_len as usize) };
+                                                   // let json: serde_json::Value = serde_json::from_slice(&slice).unwrap();
+        func(slice);
     }
 }

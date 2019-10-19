@@ -38,7 +38,7 @@ pub extern "C" fn init(root_id: Uuid) {
 }
 
 #[no_mangle]
-pub extern "C" fn post(json: serde_json::Value) {
+pub extern "C" fn post(json: &str) {
     print(&format!("post called with {:#?}", json));
 }
 
