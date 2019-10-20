@@ -131,7 +131,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         if let Some(thread) = runtime.threads.remove(&name) {
                             thread
                                 .channel
-                                .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown));
+                                .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown))
+                                .expect(&format!(
+                                    "unable to send shutdown to Wasm program {:?}",
+                                    name
+                                ));
                             thread
                                 .handle
                                 .join()
