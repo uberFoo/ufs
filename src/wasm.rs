@@ -407,7 +407,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                     IofsMessage::NetworkMessage(m) => match m {
                         IofsNetworkMessage::Post(msg) => {
                             if process.post_callbacks.contains(msg.route()) {
-                                msg_sender.send_http_post(msg);
+                                msg_sender.send_http_post(msg)?;
                             }
                         }
                     },
