@@ -166,6 +166,43 @@ pub enum DirectoryEntry {
     File(FileMetadata),
 }
 
+impl DirectoryEntry {
+    pub(crate) fn is_dir(&self) -> bool {
+        match self {
+            DirectoryEntry::Directory(_) => true,
+            DirectoryEntry::File(_) => false,
+        }
+    }
+
+    pub(crate) fn is_file(&self) -> bool {
+        match self {
+            DirectoryEntry::Directory(_) => false,
+            DirectoryEntry::File(_) => true,
+        }
+    }
+
+    pub(crate) fn id(&self) -> UfsUuid {
+        match self {
+            DirectoryEntry::Directory(d) => d.id(),
+            DirectoryEntry::File(f) => f.id(),
+        }
+    }
+
+    pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
+        match self {
+            DirectoryEntry::Directory(d) => d.parent_id(),
+            DirectoryEntry::File(f) => Some(f.dir_id()),
+        }
+    }
+
+    pub(crate) fn owner(&self) -> UfsUuid {
+        match self {
+            DirectoryEntry::Directory(d) => d.owner(),
+            DirectoryEntry::File(f) => f.owner(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Metadata {
     /// The dirty flag

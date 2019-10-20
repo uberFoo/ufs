@@ -80,13 +80,21 @@ impl FileMetadata {
     }
 
     /// Return the UUID of this file
+    ///
     pub(crate) fn id(&self) -> UfsUuid {
         self.id
     }
 
     /// Return the directory id of this file
+    ///
     pub(crate) fn dir_id(&self) -> UfsUuid {
         self.dir_id
+    }
+
+    /// Return the owner
+    ///
+    pub(crate) fn owner(&self) -> UfsUuid {
+        self.owner
     }
 
     /// Return the file permissions, as a unix octal number

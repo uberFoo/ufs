@@ -5,13 +5,14 @@
 use {
     crate::{
         metadata::{DirectoryEntry, File, FileHandle},
+        uuid::UfsUuid,
         wasm::{IofsMessage, IofsNetworkMessage, IofsNetworkValue, RuntimeManagerMsg},
         BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
     },
     crossbeam::crossbeam_channel,
     failure::format_err,
     futures::sync::oneshot,
-    handlebars::Handlebars,
+    handlebars::{Context, Handlebars, Helper, JsonRender, Output, RenderContext, RenderError},
     log::info,
     serde::{Deserialize, Serialize},
     serde_json::json,
@@ -52,22 +53,31 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
     ) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
             let index_tmpl = include_str!("./static/index.html");
+            let files_tmpl = include_str!("./static/files.html");
             let block_tmpl = include_str!("./static/block.html");
 
             let mut hb = Handlebars::new();
             hb.register_template_string("index.html", index_tmpl)
                 .expect("unable to register handlebars template");
+            hb.register_template_string("files.html", files_tmpl)
+                .expect("unable to register handlebars template");
             hb.register_template_string("block.html", block_tmpl)
                 .expect("unable to register handlebars template");
+            hb.register_helper("format", Box::new(helper));
 
             let hb = Arc::new(hb);
             let hb_clone = hb.clone();
             let handlebars = move |with_template| render(with_template, hb_clone.clone());
             let hb_clone = hb.clone();
             let handlebars1 = move |with_template| render(with_template, hb_clone.clone());
+            let hb_clone = hb.clone();
+            let handlebars2 = move |with_template| render(with_template, hb_clone.clone());
 
             let iofs = server.iofs.clone();
             let index_values = move || get_index_values(iofs.clone());
+
+            let iofs = server.iofs.clone();
+            let files_values = move |path| get_files_values(path, iofs.clone());
 
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
@@ -92,6 +102,14 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 })
                 .map(handlebars1);
 
+            let files = path!("files" / String)
+                .map(files_values)
+                .map(|a| WithTemplate {
+                    name: "files.html",
+                    value: a,
+                })
+                .map(handlebars2);
+
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
@@ -99,7 +117,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::body::json())
                 .map(to_wasm);
 
-            let routes = index.or(block).or(wasm_post);
+            let routes = index.or(block).or(files).or(wasm_post);
 
             let (addr, warp) = warp::serve(routes)
                 .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
@@ -127,6 +145,28 @@ where
     warp::reply::html(rendered)
 }
 
+fn helper(
+    h: &Helper,
+    _: &Handlebars,
+    _: &Context,
+    _: &mut RenderContext,
+    out: &mut dyn Output,
+) -> Result<(), RenderError> {
+    let entry = h.param(0).ok_or(RenderError::new("param 0 is required"))?;
+    let json = entry.value();
+    let rendered = if json["type"] == "dir" {
+        format!(
+            "<li><a href=\"{}\">{}</a></li>",
+            json["id"].render(),
+            json["name"].render()
+        )
+    } else {
+        format!("<li>{}</li>", json["name"].render())
+    };
+    out.write(rendered.as_ref())?;
+    Ok(())
+}
+
 fn get_index_values<B>(iofs: Arc<Mutex<UberFileSystem<B>>>) -> serde_json::value::Value
 where
     B: BlockStorage,
@@ -140,9 +180,90 @@ where
         "block_count": manager.block_count(),
         "free_blocks": manager.free_block_count(),
         "root_block": manager.root_block(),
-        "block_map": format!("{:?}", manager.map()),
-        "metadata": format!("{:#?}", manager.metadata()),
+        "root_dir_id": manager.metadata().root_directory().id().to_string()
+        // "block_map": format!("{:?}", manager.map()),
+        // "metadata": format!("{:#?}", manager.metadata()),
     })
+}
+
+fn get_files_values<B>(
+    dir_id: String,
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> serde_json::value::Value
+where
+    B: BlockStorage,
+{
+    use std::cmp::Ordering;
+
+    let guard = iofs.lock().expect("poisoned iofs lock");
+    let manager = guard.block_manager();
+
+    let mut dir_id: UfsUuid = dir_id.into();
+    if let Ok(dir) = manager.metadata().get_directory(dir_id) {
+        let mut tree = vec![];
+        // Add files and directories under this one for display.
+        for (name, entry) in dir.entries() {
+            tree.push(json!({
+                "type": if entry.is_dir(){ "dir" } else { "file"},
+                "name": name,
+                "id": entry.id().to_string(),
+                "owner": entry.owner().to_string(),
+            }));
+        }
+
+        // Sort lexicographically, with directories first.
+        tree.sort_unstable_by(|a, b| {
+            if a["type"].as_str() == Some("dir") {
+                if b["type"].as_str() == Some("dir") {
+                    if a["name"].as_str() < b["name"].as_str() {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+                } else {
+                    Ordering::Less
+                }
+            } else {
+                if b["type"].as_str() == Some("dir") {
+                    Ordering::Greater
+                } else {
+                    if a["name"].as_str() < b["name"].as_str() {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+                }
+            }
+        });
+
+        // Build a path to this directory for display
+        let mut dir_path_components = vec![];
+        let mut parent_id_option = dir.parent_id();
+        while let Some(parent_id) = parent_id_option {
+            if let Ok(parent_dir) = manager.metadata().get_directory(parent_id) {
+                for (name, entry) in parent_dir.entries() {
+                    if entry.id() == dir_id {
+                        dir_path_components.push(name.to_string());
+                        break;
+                    }
+                }
+                dir_id = parent_dir.id();
+                parent_id_option = parent_dir.parent_id();
+            }
+        }
+        dir_path_components.push("/".to_string());
+
+        let dir_path: PathBuf = dir_path_components.iter().rev().collect();
+
+        json!({
+            "directory": dir_path.to_str(),
+            "files": tree,
+        })
+    } else {
+        json!({
+            "directory": "invalid directory id"
+        })
+    }
 }
 
 fn get_block_values<B>(
