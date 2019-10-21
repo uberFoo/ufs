@@ -53,13 +53,13 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
     ) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
             let index_tmpl = include_str!("./static/index.html");
-            let files_tmpl = include_str!("./static/files.html");
+            let dir_tmpl = include_str!("./static/dir.html");
             let block_tmpl = include_str!("./static/block.html");
 
             let mut hb = Handlebars::new();
             hb.register_template_string("index.html", index_tmpl)
                 .expect("unable to register handlebars template");
-            hb.register_template_string("files.html", files_tmpl)
+            hb.register_template_string("dir.html", dir_tmpl)
                 .expect("unable to register handlebars template");
             hb.register_template_string("block.html", block_tmpl)
                 .expect("unable to register handlebars template");
@@ -77,7 +77,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let index_values = move || get_index_values(iofs.clone());
 
             let iofs = server.iofs.clone();
-            let files_values = move |path| get_files_values(path, iofs.clone());
+            let dir_values = move |path| get_dir_values(path, iofs.clone());
 
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
@@ -102,10 +102,10 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 })
                 .map(handlebars1);
 
-            let files = path!("files" / String)
-                .map(files_values)
+            let dir = path!("dir" / String)
+                .map(dir_values)
                 .map(|a| WithTemplate {
-                    name: "files.html",
+                    name: "dir.html",
                     value: a,
                 })
                 .map(handlebars2);
@@ -117,7 +117,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::body::json())
                 .map(to_wasm);
 
-            let routes = index.or(block).or(files).or(wasm_post);
+            let routes = index.or(block).or(dir).or(wasm_post);
 
             let (addr, warp) = warp::serve(routes)
                 .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
@@ -186,7 +186,7 @@ where
     })
 }
 
-fn get_files_values<B>(
+fn get_dir_values<B>(
     dir_id: String,
     iofs: Arc<Mutex<UberFileSystem<B>>>,
 ) -> serde_json::value::Value
