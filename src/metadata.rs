@@ -245,16 +245,16 @@ impl Metadata {
         self.users.new_user(user, password);
     }
 
-    /// Validate a user with a password
+    /// Get a user
     ///
     /// If successful, return a tuple of the user's id and their key.
     ///
-    pub(crate) fn validate_user<S: AsRef<str>>(
+    pub(crate) fn get_user<S: AsRef<str>>(
         &self,
         user: S,
         password: S,
     ) -> Option<(UfsUuid, [u8; 32])> {
-        self.users.validate_user(&user, &password)
+        self.users.get_user(&user, &password)
     }
 
     /// Return a list of existing users

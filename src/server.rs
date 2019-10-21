@@ -180,9 +180,9 @@ where
         "block_count": manager.block_count(),
         "free_blocks": manager.free_block_count(),
         "root_block": manager.root_block(),
-        "root_dir_id": manager.metadata().root_directory().id().to_string()
+        "root_dir_id": manager.metadata().root_directory().id().to_string(),
         // "block_map": format!("{:?}", manager.map()),
-        // "metadata": format!("{:#?}", manager.metadata()),
+        "metadata": format!("{:#?}", manager.metadata()),
     })
 }
 

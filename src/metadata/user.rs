@@ -15,32 +15,19 @@ use crate::uuid::UfsUuid;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(in crate::metadata) struct User {
     id: UfsUuid,
-    key: [u8; 32],
-    nonce: Vec<u8>,
+    nonce: [u8; 16],
 }
 
 impl User {
     pub(crate) fn new<S: AsRef<str>>(user_name: S, password: S) -> Self {
-        let mut nonce = Vec::with_capacity(16);
+        let mut nonce: [u8; 16] = [0; 16];
         rand::thread_rng().fill_bytes(&mut nonce);
 
-        let key = hash_password(password, &nonce);
+        println!("user nonce {:?}", nonce);
+
         let id = UfsUuid::new_user(user_name.as_ref());
 
-        User { id, key, nonce }
-    }
-
-    pub(crate) fn validate<S: AsRef<str>>(&self, password: S) -> Option<[u8; 32]> {
-        debug!("*******");
-        debug!("validate");
-
-        let key = hash_password(password, &self.nonce);
-        if key == self.key {
-            Some(self.key)
-        } else {
-            error!("Mismatched keys.");
-            None
-        }
+        User { id, nonce }
     }
 }
 
@@ -65,7 +52,7 @@ impl UserMetadata {
         self.inner.keys().cloned().collect()
     }
 
-    pub(crate) fn validate_user<S: AsRef<str>>(
+    pub(crate) fn get_user<S: AsRef<str>>(
         &self,
         id: S,
         password: S,
@@ -74,10 +61,7 @@ impl UserMetadata {
         debug!("validate_user");
 
         match self.inner.get(id.as_ref()) {
-            Some(u) => match u.validate(password.as_ref()) {
-                Some(key) => Some((u.id, key)),
-                None => None,
-            },
+            Some(u) => Some((u.id, hash_password(password, &u.nonce))),
             None => None,
         }
     }

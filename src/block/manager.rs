@@ -82,7 +82,7 @@ where
                     Ok(metadata) => {
                         debug!("loaded metadata");
                         let md: &Metadata = &metadata;
-                        if let Some((user_id, key)) = md.validate_user(&user, &password) {
+                        if let Some((user_id, key)) = md.get_user(&user, &password) {
                             Ok(BlockManager {
                                 id: store.id().clone(),
                                 metadata,
@@ -91,7 +91,7 @@ where
                                 store,
                             })
                         } else {
-                            Err(format_err!("Invalid user id, and/or password."))
+                            Err(format_err!("Invalid user id."))
                         }
                     }
                     Err(e) => Err(format_err!("Problem loading file system metadata: {}", e)),
