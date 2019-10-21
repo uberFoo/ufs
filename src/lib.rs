@@ -126,14 +126,14 @@ use {
     std::fmt::{self, Display},
 };
 
-pub use crate::fuse::UberFSFuse;
-pub use crate::uuid::UfsUuid;
-pub use block::{
-    manager::BlockManager, map::BlockMap, BlockAddress, BlockCardinality, BlockNumber, BlockReader,
-    BlockSize, BlockStorage, BlockWriter, FileStore,
+pub use {
+    crate::{crypto::make_fs_key, fuse::UberFSFuse, uuid::UfsUuid},
+    block::{
+        manager::BlockManager, map::BlockMap, BlockAddress, BlockCardinality, BlockNumber,
+        BlockReader, BlockSize, BlockStorage, BlockWriter, FileStore,
+    },
+    fsimpl::{OpenFileMode, UberFileSystem, UfsMounter},
 };
-pub use crypto::make_fs_key;
-pub use fsimpl::{OpenFileMode, UberFileSystem, UfsMounter};
 
 #[derive(Debug)]
 pub(crate) struct IOFSError {

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use {
-    hmac::Hmac,
+    crate::crypto::{hash_password, ITERATION_COUNT},
     log::{debug, error},
     rand::prelude::*,
     serde_derive::{Deserialize, Serialize},
@@ -24,9 +24,7 @@ impl User {
         let mut nonce = Vec::with_capacity(16);
         rand::thread_rng().fill_bytes(&mut nonce);
 
-        let mut key = [0; 32];
-        pbkdf2::pbkdf2::<Hmac<Sha256>>(password.as_ref().as_bytes(), &nonce, 271828, &mut key);
-
+        let key = hash_password(password, &nonce);
         let id = UfsUuid::new_user(user_name.as_ref());
 
         User { id, key, nonce }
@@ -35,9 +33,8 @@ impl User {
     pub(crate) fn validate<S: AsRef<str>>(&self, password: S) -> Option<[u8; 32]> {
         debug!("*******");
         debug!("validate");
-        let mut key = [0; 32];
-        pbkdf2::pbkdf2::<Hmac<Sha256>>(password.as_ref().as_bytes(), &self.nonce, 271828, &mut key);
 
+        let key = hash_password(password, &self.nonce);
         if key == self.key {
             Some(self.key)
         } else {
