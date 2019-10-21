@@ -54,6 +54,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
         spawn(move || {
             let index_tmpl = include_str!("./static/index.html");
             let dir_tmpl = include_str!("./static/dir.html");
+            let file_tmpl = include_str!("./static/file.html");
             let block_tmpl = include_str!("./static/block.html");
 
             let mut hb = Handlebars::new();
@@ -61,23 +62,31 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .expect("unable to register handlebars template");
             hb.register_template_string("dir.html", dir_tmpl)
                 .expect("unable to register handlebars template");
+            hb.register_template_string("file.html", file_tmpl)
+                .expect("unable to register handlebars template");
             hb.register_template_string("block.html", block_tmpl)
                 .expect("unable to register handlebars template");
-            hb.register_helper("format", Box::new(helper));
+            hb.register_helper("dir_entry_format", Box::new(dir_entry_format));
+            hb.register_helper("block_format", Box::new(block_format));
 
             let hb = Arc::new(hb);
             let hb_clone = hb.clone();
-            let handlebars = move |with_template| render(with_template, hb_clone.clone());
+            let handlebars_index = move |with_template| render(with_template, hb_clone.clone());
             let hb_clone = hb.clone();
-            let handlebars1 = move |with_template| render(with_template, hb_clone.clone());
+            let handlebars_block = move |with_template| render(with_template, hb_clone.clone());
             let hb_clone = hb.clone();
-            let handlebars2 = move |with_template| render(with_template, hb_clone.clone());
+            let handlebars_dir = move |with_template| render(with_template, hb_clone.clone());
+            let hb_clone = hb.clone();
+            let handlebars_file = move |with_template| render(with_template, hb_clone.clone());
 
             let iofs = server.iofs.clone();
             let index_values = move || get_index_values(iofs.clone());
 
             let iofs = server.iofs.clone();
             let dir_values = move |path| get_dir_values(path, iofs.clone());
+
+            let iofs = server.iofs.clone();
+            let file_values = move |path, name| get_file_values(path, name, iofs.clone());
 
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
@@ -92,7 +101,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                     name: "index.html",
                     value: a,
                 })
-                .map(handlebars);
+                .map(handlebars_index);
 
             let block = path!("block" / BlockNumber)
                 .map(block_values)
@@ -100,7 +109,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                     name: "block.html",
                     value: a,
                 })
-                .map(handlebars1);
+                .map(handlebars_block);
 
             let dir = path!("dir" / String)
                 .map(dir_values)
@@ -108,7 +117,15 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                     name: "dir.html",
                     value: a,
                 })
-                .map(handlebars2);
+                .map(handlebars_dir);
+
+            let file = path!("file" / String / String)
+                .map(file_values)
+                .map(|a| WithTemplate {
+                    name: "file.html",
+                    value: a,
+                })
+                .map(handlebars_file);
 
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
@@ -117,9 +134,10 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::body::json())
                 .map(to_wasm);
 
-            let routes = index.or(block).or(dir).or(wasm_post);
+            let routes = index.or(block).or(dir).or(file).or(wasm_post);
 
             let (addr, warp) = warp::serve(routes)
+                // .tls("src/certs/cert.pem", "src/certs/cern.rsa")
                 .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
 
             hyper::rt::run(warp);
@@ -145,7 +163,7 @@ where
     warp::reply::html(rendered)
 }
 
-fn helper(
+fn dir_entry_format(
     h: &Helper,
     _: &Handlebars,
     _: &Context,
@@ -156,13 +174,36 @@ fn helper(
     let json = entry.value();
     let rendered = if json["type"] == "dir" {
         format!(
-            "<li><a href=\"{}\">{}</a></li>",
+            "<li><a href=\"/dir/{}\">{}</a></li>",
             json["id"].render(),
             json["name"].render()
         )
     } else {
-        format!("<li>{}</li>", json["name"].render())
+        format!(
+            "<li><a href=\"/file/{}/{}\">{}</a></li>",
+            json["id"].render(),
+            json["name"].render(),
+            json["name"].render()
+        )
     };
+    out.write(rendered.as_ref())?;
+    Ok(())
+}
+
+fn block_format(
+    h: &Helper,
+    _: &Handlebars,
+    _: &Context,
+    _: &mut RenderContext,
+    out: &mut dyn Output,
+) -> Result<(), RenderError> {
+    let block = h.param(0).ok_or(RenderError::new("param 0 is required"))?;
+    let json = block.value();
+    let rendered = format!(
+        "<a href=\"/block/{}\">{}</a>,",
+        json.render(),
+        json.render()
+    );
     out.write(rendered.as_ref())?;
     Ok(())
 }
@@ -196,10 +237,10 @@ where
     use std::cmp::Ordering;
 
     let guard = iofs.lock().expect("poisoned iofs lock");
-    let manager = guard.block_manager();
+    let metadata = guard.block_manager().metadata();
 
-    let mut dir_id: UfsUuid = dir_id.into();
-    if let Ok(dir) = manager.metadata().get_directory(dir_id) {
+    let mut dir_ufsid: UfsUuid = dir_id.clone().into();
+    if let Ok(dir) = metadata.get_directory(dir_ufsid) {
         let mut tree = vec![];
         // Add files and directories under this one for display.
         for (name, entry) in dir.entries() {
@@ -240,14 +281,14 @@ where
         let mut dir_path_components = vec![];
         let mut parent_id_option = dir.parent_id();
         while let Some(parent_id) = parent_id_option {
-            if let Ok(parent_dir) = manager.metadata().get_directory(parent_id) {
+            if let Ok(parent_dir) = metadata.get_directory(parent_id) {
                 for (name, entry) in parent_dir.entries() {
-                    if entry.id() == dir_id {
+                    if entry.id() == dir_ufsid {
                         dir_path_components.push(name.to_string());
                         break;
                     }
                 }
-                dir_id = parent_dir.id();
+                dir_ufsid = parent_dir.id();
                 parent_id_option = parent_dir.parent_id();
             }
         }
@@ -256,12 +297,41 @@ where
         let dir_path: PathBuf = dir_path_components.iter().rev().collect();
 
         json!({
-            "directory": dir_path.to_str(),
+            "name": dir_path.to_str(),
+            "id": dir_id,
             "files": tree,
         })
     } else {
         json!({
-            "directory": "invalid directory id"
+            "name": "invalid directory id"
+        })
+    }
+}
+
+fn get_file_values<B>(
+    file_id: String,
+    file_name: String,
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> serde_json::value::Value
+where
+    B: BlockStorage,
+{
+    let guard = iofs.lock().expect("poisoned iofs lock");
+    let metadata = guard.block_manager().metadata();
+
+    let file_ufsid: UfsUuid = file_id.clone().into();
+    if let Ok(file) = metadata.get_file_metadata(file_ufsid) {
+        let latest = file.get_latest();
+
+        json!({
+            "name": file_name,
+            "id": file_id,
+            "size": latest.size(),
+            "blocks": latest.blocks()
+        })
+    } else {
+        json!({
+            "name": "invalid file id"
         })
     }
 }

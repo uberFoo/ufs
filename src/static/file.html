@@ -26,12 +26,14 @@
     </head>
 
     <body>
-        <h1>Directory: {{ name }}</h1>
+        <h1>File: {{ name }}</h1>
         <p>ID: {{ id }}</p>
-        <ul>
-            {{#each files as |f|}}
-            {{dir_entry_format f}}
+        <p>size: {{ size }}</p>
+        <p>
+            Blocks:
+            {{#each blocks as |b|}}
+            {{block_format b}}
             {{/each}}
-        </ul>
+        </p>
     </body>
 </html>
