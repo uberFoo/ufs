@@ -23,8 +23,6 @@ impl User {
         let mut nonce: [u8; 16] = [0; 16];
         rand::thread_rng().fill_bytes(&mut nonce);
 
-        println!("user nonce {:?}", nonce);
-
         let id = UfsUuid::new_user(user_name.as_ref());
 
         User { id, nonce }
