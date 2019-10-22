@@ -9,6 +9,7 @@ use {
         wasm::{IofsMessage, IofsNetworkMessage, IofsNetworkValue, RuntimeManagerMsg},
         BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
     },
+    chrono::prelude::*,
     crossbeam::crossbeam_channel,
     failure::format_err,
     futures::sync::oneshot,
@@ -92,7 +93,11 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let block_values = move |number| get_block_values(number, iofs.clone());
 
             let channel = server.wasm_channel.clone();
-            let to_wasm = move |receiver, json| send_json_to_wasm(receiver, json, channel.clone());
+            let to_wasm_get = move |receiver| send_get_to_wasm(receiver, channel.clone());
+
+            let channel = server.wasm_channel.clone();
+            let to_wasm_post =
+                move |receiver, json| send_json_to_wasm(receiver, json, channel.clone());
 
             let index = warp::get2()
                 .and(warp::path::end())
@@ -127,12 +132,17 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 })
                 .map(handlebars_file);
 
+            let wasm_get = warp::get2()
+                .and(warp::path("wasm"))
+                .and(warp::path::param())
+                .and(to_wasm_get);
+
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
                 .and(warp::body::content_length_limit(1024 * 16))
                 .and(warp::body::json())
-                .map(to_wasm);
+                .map(to_wasm_post);
 
             let routes = index.or(block).or(dir).or(file).or(wasm_post);
 
@@ -353,6 +363,15 @@ where
         }),
         None => json!({}),
     }
+}
+
+fn send_get_to_wasm(receiver: String, channel: crossbeam_channel::Sender<RuntimeManagerMsg>) {
+    channel.send(RuntimeManagerMsg::IofsMessage(IofsMessage::NetworkMessage(
+        IofsNetworkMessage::Get(IofsNetworkValue::new(
+            receiver,
+            json!({ "post_id": Utc::now() }),
+        )),
+    )));
 }
 
 fn send_json_to_wasm(

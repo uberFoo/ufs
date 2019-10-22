@@ -64,6 +64,7 @@ impl From<&IofsMessagePayload> for MessagePayload {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IofsNetworkMessage {
     Post(IofsNetworkValue),
+    Get(IofsNetworkValue),
 }
 
 #[derive(Clone, Debug, PartialEq)]
