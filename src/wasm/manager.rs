@@ -3,6 +3,7 @@
 use {
     crate::{
         block::BlockStorage,
+        server::IofsNetworkMessage,
         wasm::{IofsMessage, IofsSystemMessage, WasmProcess},
         UberFileSystem,
     },
@@ -78,6 +79,7 @@ impl RuntimeProcess {
 /// going away. Here, we use that message to nicely stop the WASM programs before exiting.
 pub(crate) struct RuntimeManager<B: BlockStorage + 'static> {
     ufs: Arc<Mutex<UberFileSystem<B>>>,
+    http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
     receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
     threads: HashMap<PathBuf, RuntimeProcess>,
 }
@@ -89,9 +91,17 @@ impl<B: BlockStorage> RuntimeManager<B> {
     ) -> Self {
         RuntimeManager {
             ufs,
+            http_receiver: None,
             receiver,
             threads: HashMap::new(),
         }
+    }
+
+    pub(crate) fn set_http_receiver(
+        &mut self,
+        sender: crossbeam_channel::Receiver<IofsNetworkMessage>,
+    ) {
+        self.http_receiver.replace(sender);
     }
 
     fn notify_listeners(&mut self, msg: IofsMessage) {
@@ -146,8 +156,12 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // Start the WASM program and add it to the listeners map.
                     RuntimeManagerMsg::Start(wasm) => {
                         info!("Starting WASM program {:?}", wasm.name);
-                        let process =
-                            WasmProcess::new(wasm.name.clone(), wasm.program, runtime.ufs.clone());
+                        let process = WasmProcess::new(
+                            wasm.name.clone(),
+                            wasm.program,
+                            runtime.http_receiver.clone(),
+                            runtime.ufs.clone(),
+                        );
                         runtime
                             .threads
                             .insert(wasm.name, RuntimeProcess::new(process));

@@ -35,11 +35,17 @@ pub extern "C" fn init(root_id: Uuid) {
     register_callback(WasmMessage::FileRead, handle_file_read);
 
     register_post_route("foo", post);
+    // register_get_route("foo");
 }
 
 #[no_mangle]
 pub extern "C" fn post(json: &str) {
     print(&format!("post called with {:#?}", json));
+}
+
+#[no_mangle]
+pub extern "C" fn get(route: &str) {
+    print(&format!("get called with {:#?}", route));
 }
 
 #[no_mangle]

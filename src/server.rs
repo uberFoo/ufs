@@ -6,13 +6,13 @@ use {
     crate::{
         metadata::{DirectoryEntry, File, FileHandle},
         uuid::UfsUuid,
-        wasm::{IofsMessage, IofsNetworkMessage, IofsNetworkValue, RuntimeManagerMsg},
+        wasm::{IofsMessage, RuntimeManagerMsg},
         BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
     },
     chrono::prelude::*,
     crossbeam::crossbeam_channel,
     failure::format_err,
-    futures::sync::oneshot,
+    futures::{future::Future, sync::oneshot},
     handlebars::{Context, Handlebars, Helper, JsonRender, Output, RenderContext, RenderError},
     log::info,
     serde::{Deserialize, Serialize},
@@ -26,26 +26,92 @@ use {
         sync::{Arc, Mutex},
         thread::{spawn, JoinHandle},
     },
-    warp::{path, Filter},
+    warp::{filters::BoxedFilter, path, Filter, Reply},
 };
+
+/// Messages sent in response to HTTP events
+///
+pub(crate) enum HTTPServerMessage {
+    /// HTTP GET response
+    GetResponse(GetPayload),
+}
+
+pub(crate) enum GetPayload {
+    HTTP(String),
+    JSON(String),
+}
+
+#[derive(Debug)]
+pub(crate) enum IofsNetworkMessage {
+    Post(IofsPostValue),
+    Get(IofsGetValue),
+}
+
+#[derive(Debug)]
+pub(crate) struct IofsPostValue {
+    route: String,
+    inner: serde_json::Value,
+}
+
+impl IofsPostValue {
+    pub(crate) fn new(route: String, inner: serde_json::Value) -> Self {
+        IofsPostValue { route, inner }
+    }
+
+    pub(crate) fn route(&self) -> &str {
+        &self.route
+    }
+
+    pub(crate) fn json(&self) -> &serde_json::Value {
+        &self.inner
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct IofsGetValue {
+    route: String,
+    response_channel: Option<oneshot::Sender<String>>,
+}
+
+impl IofsGetValue {
+    pub(crate) fn new(route: String, response_channel: oneshot::Sender<String>) -> Self {
+        IofsGetValue {
+            route,
+            response_channel: Some(response_channel),
+        }
+    }
+
+    pub(crate) fn response(&mut self, value: String) {
+        if let Some(channel) = self.response_channel.take() {
+            channel.send(value);
+        }
+    }
+
+    pub(crate) fn route(&self) -> &str {
+        &self.route
+    }
+}
 
 pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
     iofs: Arc<Mutex<UberFileSystem<B>>>,
-    wasm_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
+    http_sender: crossbeam_channel::Sender<IofsNetworkMessage>,
+    http_receiver: crossbeam_channel::Receiver<IofsNetworkMessage>,
     port: u16,
 }
 
 impl<B: BlockStorage> UfsRemoteServer<B> {
-    pub(crate) fn new(
-        iofs: Arc<Mutex<UberFileSystem<B>>>,
-        wasm_channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
-        port: u16,
-    ) -> Self {
+    pub(crate) fn new(iofs: Arc<Mutex<UberFileSystem<B>>>, port: u16) -> Self {
+        let (http_sender, http_receiver) = crossbeam_channel::unbounded::<IofsNetworkMessage>();
         UfsRemoteServer {
             iofs,
-            wasm_channel,
+            http_sender,
+            http_receiver,
             port,
         }
+    }
+
+    pub(crate) fn get_http_receiver(&self) -> crossbeam_channel::Receiver<IofsNetworkMessage> {
+        self.http_receiver.clone()
     }
 
     pub(crate) fn start(
@@ -92,10 +158,10 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
 
-            let channel = server.wasm_channel.clone();
-            let to_wasm_get = move |receiver| send_get_to_wasm(receiver, channel.clone());
+            let channel = server.http_sender.clone();
+            let to_wasm_get = move |receiver| send_get_filter(receiver, channel.clone());
 
-            let channel = server.wasm_channel.clone();
+            let channel = server.http_sender.clone();
             let to_wasm_post =
                 move |receiver, json| send_json_to_wasm(receiver, json, channel.clone());
 
@@ -135,7 +201,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_get = warp::get2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
-                .and(to_wasm_get);
+                .map(to_wasm_get);
 
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
@@ -144,7 +210,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::body::json())
                 .map(to_wasm_post);
 
-            let routes = index.or(block).or(dir).or(file).or(wasm_post);
+            let routes = index.or(block).or(dir).or(file).or(wasm_get).or(wasm_post);
 
             let (addr, warp) = warp::serve(routes)
                 // .tls("src/certs/cert.pem", "src/certs/cern.rsa")
@@ -365,22 +431,27 @@ where
     }
 }
 
-fn send_get_to_wasm(receiver: String, channel: crossbeam_channel::Sender<RuntimeManagerMsg>) {
-    channel.send(RuntimeManagerMsg::IofsMessage(IofsMessage::NetworkMessage(
-        IofsNetworkMessage::Get(IofsNetworkValue::new(
-            receiver,
-            json!({ "post_id": Utc::now() }),
-        )),
-    )));
+fn send_get_filter(
+    receiver: String,
+    channel: crossbeam_channel::Sender<IofsNetworkMessage>,
+) -> impl warp::Reply {
+    let (tx, rx) = oneshot::channel::<String>();
+    channel.send(IofsNetworkMessage::Get(IofsGetValue::new(receiver, tx)));
+
+    // let bar = rx.map(|result| warp::reply::html(result));
+    // let result = rx.wait().unwrap();
+    // let baz = warp::reply::html(result);
+    // warp::reply::reply()
+
+    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    // rx.map(|result| warp::reply::html(result))
 }
 
 fn send_json_to_wasm(
     receiver: String,
     json: serde_json::Value,
-    channel: crossbeam_channel::Sender<RuntimeManagerMsg>,
+    channel: crossbeam_channel::Sender<IofsNetworkMessage>,
 ) -> impl warp::Reply {
-    channel.send(RuntimeManagerMsg::IofsMessage(IofsMessage::NetworkMessage(
-        IofsNetworkMessage::Post(IofsNetworkValue::new(receiver, json)),
-    )));
+    channel.send(IofsNetworkMessage::Post(IofsPostValue::new(receiver, json)));
     warp::reply::reply()
 }

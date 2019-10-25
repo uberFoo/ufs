@@ -75,20 +75,23 @@ impl<B: BlockStorage> UfsMounter<B> {
 
         // Start the Runtime
         info!("Initializing Wasm runtime");
-        let runtime_mgr = RuntimeManager::new(inner.clone(), receiver);
-        let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
+        let mut runtime_mgr = RuntimeManager::new(inner.clone(), receiver);
 
         // Start the remote FS listener
         let (remote_stop_signal, remote_thread) = match remote_port {
             Some(port) => {
                 info!("Initializing Web Server");
                 let (tx, rx) = oneshot::channel();
-                let remote = UfsRemoteServer::new(inner.clone(), sender.clone(), port);
+                let remote = UfsRemoteServer::new(inner.clone(), port);
+                runtime_mgr.set_http_receiver(remote.get_http_receiver());
+
                 let remote_thread = UfsRemoteServer::start(remote, rx);
                 (Some(tx), Some(remote_thread))
             }
             None => (None, None),
         };
+
+        let runtime_mgr_thread = RuntimeManager::start(runtime_mgr);
 
         let mounter = UfsMounter {
             inner,

@@ -20,6 +20,8 @@ lazy_static! {
     static ref CALLBACK_HANDLERS: MutStatic<MessageHandlers> =
         { MutStatic::from(MessageHandlers::new()) };
     #[doc(hidden)]
+    static ref GET_HANDLERS: MutStatic<GetCallbacks> = { MutStatic::from(GetCallbacks::new()) };
+    #[doc(hidden)]
     static ref POST_HANDLERS: MutStatic<PostCallbacks> = { MutStatic::from(PostCallbacks::new()) };
 }
 
@@ -108,6 +110,25 @@ impl MessageHandlers {
 
     fn lookup(&self, msg: &WasmMessage) -> Option<&extern "C" fn(Option<MessagePayload>)> {
         self.callbacks.get(msg)
+    }
+}
+
+/// Local storage for mapping HTTP GET routes to callbacks.
+///
+#[doc(hidden)]
+struct GetCallbacks {
+    callbacks: HashMap<String, extern "C" fn(&str)>,
+}
+
+impl GetCallbacks {
+    fn new() -> Self {
+        GetCallbacks {
+            callbacks: HashMap::new(),
+        }
+    }
+
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str)> {
+        self.callbacks.get(route)
     }
 }
 
@@ -455,13 +476,24 @@ pub extern "C" fn __handle_file_read(payload_ptr: i32, payload_len: i32) {
 
 #[doc(hidden)]
 #[no_mangle]
+pub extern "C" fn __handle_http_get(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
+    let route = unbox_string(route_ptr, route_len);
+
+    let lookup = POST_HANDLERS.read().unwrap();
+    if let Some(func) = lookup.lookup(&route) {
+        let slice = unbox_str(json_ptr, json_len);
+        func(slice);
+    }
+}
+
+#[doc(hidden)]
+#[no_mangle]
 pub extern "C" fn __handle_http_post(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
     let route = unbox_string(route_ptr, route_len);
 
     let lookup = POST_HANDLERS.read().unwrap();
     if let Some(func) = lookup.lookup(&route) {
-        let slice = unbox_str(json_ptr, json_len); //unsafe { slice::from_raw_parts(json_ptr as *const u8, json_len as usize) };
-                                                   // let json: serde_json::Value = serde_json::from_slice(&slice).unwrap();
+        let slice = unbox_str(json_ptr, json_len);
         func(slice);
     }
 }

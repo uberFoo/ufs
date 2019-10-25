@@ -19,7 +19,6 @@ pub(crate) enum IofsMessage {
     SystemMessage(IofsSystemMessage),
     FileMessage(IofsFileMessage),
     DirMessage(IofsDirMessage),
-    NetworkMessage(IofsNetworkMessage),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,34 +59,6 @@ impl From<&IofsMessagePayload> for MessagePayload {
         }
     }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum IofsNetworkMessage {
-    Post(IofsNetworkValue),
-    Get(IofsNetworkValue),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IofsNetworkValue {
-    route: String,
-    inner: serde_json::Value,
-}
-
-impl IofsNetworkValue {
-    pub(crate) fn new(route: String, inner: serde_json::Value) -> Self {
-        IofsNetworkValue { route, inner }
-    }
-
-    pub(crate) fn route(&self) -> &str {
-        &self.route
-    }
-
-    pub(crate) fn json(&self) -> &serde_json::Value {
-        &self.inner
-    }
-}
-
-impl Eq for IofsNetworkValue {}
 
 pub(crate) struct WasmMessageSender<'a> {
     instance: &'a mut Instance,
@@ -276,19 +247,35 @@ impl<'a> WasmMessageSender<'a> {
         )
     }
 
-    pub(crate) fn send_http_post(&mut self, msg: &IofsNetworkValue) -> Result<(), failure::Error> {
-        let json_str =
-            serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_post");
-        self.write_wasm_memory(0, &msg.route());
-        self.write_wasm_memory(msg.route().len(), &json_str);
-        self.call_wasm_func(
-            "__handle_http_post",
-            Some(&[
-                Value::I32(0),
-                Value::I32(msg.route().len() as i32),
-                Value::I32(msg.route().len() as i32),
-                Value::I32(json_str.len() as i32),
-            ]),
-        )
-    }
+    // pub(crate) fn send_http_get(&mut self, msg: &IofsGetValue) -> Result<(), failure::Error> {
+    //     let json_str =
+    //         serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_get");
+    //     self.write_wasm_memory(0, &msg.route());
+    //     self.write_wasm_memory(msg.route().len(), &json_str);
+    //     self.call_wasm_func(
+    //         "__handle_http_get",
+    //         Some(&[
+    //             Value::I32(0),
+    //             Value::I32(msg.route().len() as i32),
+    //             Value::I32(msg.route().len() as i32),
+    //             Value::I32(json_str.len() as i32),
+    //         ]),
+    //     )
+    // }
+
+    // pub(crate) fn send_http_post(&mut self, msg: &IofsPostValue) -> Result<(), failure::Error> {
+    //     let json_str =
+    //         serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_post");
+    //     self.write_wasm_memory(0, &msg.route());
+    //     self.write_wasm_memory(msg.route().len(), &json_str);
+    //     self.call_wasm_func(
+    //         "__handle_http_post",
+    //         Some(&[
+    //             Value::I32(0),
+    //             Value::I32(msg.route().len() as i32),
+    //             Value::I32(msg.route().len() as i32),
+    //             Value::I32(json_str.len() as i32),
+    //         ]),
+    //     )
+    // }
 }

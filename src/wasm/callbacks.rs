@@ -22,6 +22,16 @@ where
     wc.set_handles_message(message);
 }
 
+pub(crate) fn __register_get_handler<B>(ctx: &mut Ctx, get_route_ptr: u32)
+where
+    B: BlockStorage + 'static,
+{
+    let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
+    let route = unbox_str(ctx, get_route_ptr);
+    info!("register GET handler {:?}", route);
+    wc.register_get_callback(route);
+}
+
 pub(crate) fn __register_post_handler<B>(ctx: &mut Ctx, post_route_ptr: u32)
 where
     B: BlockStorage + 'static,
