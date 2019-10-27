@@ -11,33 +11,39 @@
 //! Metadata is versioned. Each time a file is written, a new copy in created.
 //!
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
-use std::collections::HashMap;
-use std::path::{Component, Components, Path, PathBuf};
-
-use failure::format_err;
-use log::{debug, trace, warn};
-use serde_derive::{Deserialize, Serialize};
+use {
+    crate::{
+        block::{
+            wrapper::{MetadataDeserialize, MetadataSerialize},
+            BlockNumber,
+        },
+        uuid::UfsUuid,
+    },
+    failure::format_err,
+    log::{debug, trace, warn},
+    serde_derive::{Deserialize, Serialize},
+    std::{
+        collections::HashMap,
+        path::{Component, Components, Path, PathBuf},
+    },
+};
 
 pub(crate) mod dir;
 pub(crate) mod file;
+pub(crate) mod permissions;
 pub(crate) mod user;
-
-use crate::uuid::UfsUuid;
 
 pub(crate) type FileSize = u64;
 
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
-pub(crate) use dir::DirectoryMetadata;
-pub(crate) use dir::WASM_EXT;
-pub(crate) use file::{FileMetadata, FileVersion};
-
-pub(crate) use user::UserMetadata;
-
-use crate::block::{
-    wrapper::{MetadataDeserialize, MetadataSerialize},
-    BlockNumber,
+pub(crate) use {
+    dir::DirectoryMetadata,
+    dir::WASM_EXT,
+    file::{FileMetadata, FileVersion},
+    permissions::{Grant, GrantType, WasmPermissions},
+    user::UserMetadata,
 };
 
 /// UFS internal definition of a File
@@ -219,6 +225,9 @@ pub(crate) struct Metadata {
     /// File system user information
     ///
     users: UserMetadata,
+    /// File system permissions for Wasm programs
+    ///
+    grants: WasmPermissions,
 }
 
 impl Metadata {
@@ -232,6 +241,7 @@ impl Metadata {
             id: file_system_id.clone(),
             root_directory: DirectoryMetadata::new(file_system_id.new("/"), None, owner),
             users: UserMetadata::new(),
+            grants: WasmPermissions::new(),
         }
     }
 
@@ -261,6 +271,28 @@ impl Metadata {
     ///
     pub(crate) fn get_users(&self) -> Vec<String> {
         self.users.get_users()
+    }
+
+    /// Add a Wasm program to the grants
+    ///
+    pub(crate) fn add_wasm_program_grants(&mut self, program: PathBuf) {
+        self.grants.add_program(program);
+    }
+
+    /// Remove the grants for a Wasm program
+    ///
+    pub(crate) fn remove_wasm_program_grants(&mut self, program: &PathBuf) {
+        self.grants.remove_program(program);
+    }
+
+    /// Check Wasm program grant
+    ///
+    pub(crate) fn check_wasm_program_grant(
+        &mut self,
+        program: &PathBuf,
+        grant_type: GrantType,
+    ) -> Option<Grant> {
+        self.grants.check_grant(program, grant_type)
     }
 
     /// Create a new directory

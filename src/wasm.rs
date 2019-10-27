@@ -7,7 +7,7 @@ pub(crate) mod manager;
 pub(crate) mod message;
 
 pub(crate) use {
-    manager::{RuntimeManager, RuntimeManagerMsg, WasmProgram},
+    manager::{MessageRegistration, ProtoWasmProgram, RuntimeManager, RuntimeManagerMsg},
     message::{
         IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, IofsSystemMessage,
         WasmMessageSender,
@@ -18,7 +18,7 @@ use {
     self::callbacks::*,
     crate::{
         block::BlockStorage,
-        metadata::{DirectoryMetadata, File, FileHandle},
+        metadata::{DirectoryMetadata, File, FileHandle, Grant, GrantType, WasmPermissions},
         server::{HTTPServerMessage, IofsNetworkMessage},
         OpenFileMode, UberFileSystem, UfsUuid,
     },
@@ -76,6 +76,8 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     get_callbacks: HashSet<String>,
     /// HTTP POST callbacks
     post_callbacks: HashSet<String>,
+    /// Message registration channel sender
+    message_registration_sender: crossbeam_channel::Sender<MessageRegistration>,
 }
 
 impl<B: BlockStorage> WasmProcess<B> {
@@ -83,6 +85,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         path: PathBuf,
         program: Vec<u8>,
         http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
+        message_registration_sender: crossbeam_channel::Sender<MessageRegistration>,
         iofs: Arc<Mutex<UberFileSystem<B>>>,
     ) -> Self {
         let (sender, receiver) = crossbeam_channel::unbounded::<IofsMessage>();
@@ -99,6 +102,7 @@ impl<B: BlockStorage> WasmProcess<B> {
             http_receiver,
             get_callbacks: HashSet::new(),
             post_callbacks: HashSet::new(),
+            message_registration_sender,
         }
     }
 
@@ -114,7 +118,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         self.sender.clone()
     }
 
-    pub(crate) fn does_handle_message(&mut self, msg: WasmMessage) -> bool {
+    pub(crate) fn does_handle_message(&self, msg: WasmMessage) -> bool {
         self.notifications.contains(&msg)
     }
 
@@ -165,12 +169,19 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        match guard.open_file(id, mode) {
-            Ok(handle) => {
-                self.sync_func_ids.push(id);
-                Ok(handle)
-            }
-            Err(e) => Err(e),
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::open_file)
+        {
+            Some(Grant::Allow) => match guard.open_file(id, mode) {
+                Ok(handle) => {
+                    self.sync_func_ids.push(id);
+                    Ok(handle)
+                }
+                Err(e) => Err(e),
+            },
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
         }
     }
 
@@ -181,18 +192,26 @@ impl<B: BlockStorage> WasmProcess<B> {
         // Flush the write buffer if necessary before closing the file.
         if let Some(buffer) = self.write_buffers.remove(&handle) {
             if buffer.len != 0 {
-                // What should we do if the write fails, but the close succeeds?
+                // FIXME: What should we do if the write fails, but the close succeeds?
+                // We'll just assume that since we have a write_buffer that we've got a write grant.
                 guard
                     .write_file(handle, &buffer.buffer[0..buffer.len], buffer.file_offset)
                     .unwrap();
             }
         }
 
-        match guard.close_file(handle) {
-            Ok(_) => {
-                self.sync_func_ids.push(id);
-            }
-            Err(_) => (),
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::close_file)
+        {
+            Some(Grant::Allow) => match guard.close_file(handle) {
+                Ok(_) => {
+                    self.sync_func_ids.push(id);
+                }
+                Err(_) => (),
+            },
+            _ => {}
         };
     }
 
@@ -204,14 +223,21 @@ impl<B: BlockStorage> WasmProcess<B> {
         size: u32,
     ) -> Result<Vec<u8>, failure::Error> {
         let guard = self.iofs.clone();
-        let guard = guard.lock().expect("poisoned iofs lock");
+        let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        match guard.read_file(handle, offset, size) {
-            Ok(v) => {
-                self.sync_func_ids.push(id);
-                Ok(v)
-            }
-            Err(e) => Err(e),
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::read_file)
+        {
+            Some(Grant::Allow) => match guard.read_file(handle, offset, size) {
+                Ok(v) => {
+                    self.sync_func_ids.push(id);
+                    Ok(v)
+                }
+                Err(e) => Err(e),
+            },
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
         }
     }
 
@@ -224,35 +250,45 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        let bytes = bytes.as_ref();
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::write_file)
+        {
+            Some(Grant::Allow) => {
+                let bytes = bytes.as_ref();
 
-        let buffer = self.write_buffers.entry(handle).or_insert(FileWriteBuffer {
-            buffer: [0; WRITE_BUF_SIZE],
-            len: 0,
-            file_offset: 0,
-        });
+                let buffer = self.write_buffers.entry(handle).or_insert(FileWriteBuffer {
+                    buffer: [0; WRITE_BUF_SIZE],
+                    len: 0,
+                    file_offset: 0,
+                });
 
-        let mut bytes_written = 0;
-        while bytes_written < bytes.len() {
-            let write_len = std::cmp::min(WRITE_BUF_SIZE - buffer.len, bytes.len() - bytes_written);
-            buffer.buffer[buffer.len..buffer.len + write_len]
-                .copy_from_slice(&bytes[bytes_written..bytes_written + write_len]);
-            buffer.len += write_len;
-            bytes_written += write_len;
+                let mut bytes_written = 0;
+                while bytes_written < bytes.len() {
+                    let write_len =
+                        std::cmp::min(WRITE_BUF_SIZE - buffer.len, bytes.len() - bytes_written);
+                    buffer.buffer[buffer.len..buffer.len + write_len]
+                        .copy_from_slice(&bytes[bytes_written..bytes_written + write_len]);
+                    buffer.len += write_len;
+                    bytes_written += write_len;
 
-            if buffer.len == WRITE_BUF_SIZE {
-                guard
-                    .write_file(handle, &buffer.buffer, buffer.file_offset)
-                    .expect("error writing bytes in WasmProcess::write_file");
-                buffer.file_offset += WRITE_BUF_SIZE as u64;
-                buffer.len = 0;
+                    if buffer.len == WRITE_BUF_SIZE {
+                        guard
+                            .write_file(handle, &buffer.buffer, buffer.file_offset)
+                            .expect("error writing bytes in WasmProcess::write_file");
+                        buffer.file_offset += WRITE_BUF_SIZE as u64;
+                        buffer.len = 0;
 
-                // Only post this if we actually did a write, and it was successful.
-                self.sync_func_ids.push(id);
+                        // Only post this if we actually did a write, and it was successful.
+                        self.sync_func_ids.push(id);
+                    }
+                }
+
+                Ok(bytes_written)
             }
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
         }
-
-        Ok(bytes_written)
     }
 
     pub(crate) fn create_file(
@@ -263,12 +299,19 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        match guard.create_file(dir_id, name) {
-            Ok((h, f)) => {
-                self.sync_func_ids.push(dir_id);
-                Ok((h, f))
-            }
-            Err(e) => Err(e),
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::create_file)
+        {
+            Some(Grant::Allow) => match guard.create_file(dir_id, name) {
+                Ok((h, f)) => {
+                    self.sync_func_ids.push(dir_id);
+                    Ok((h, f))
+                }
+                Err(e) => Err(e),
+            },
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
         }
     }
 
@@ -280,12 +323,37 @@ impl<B: BlockStorage> WasmProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        match guard.create_directory(dir_id, name) {
-            Ok(dm) => {
-                self.sync_func_ids.push(dir_id);
-                Ok(dm)
-            }
-            Err(e) => Err(e),
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::create_directory)
+        {
+            Some(Grant::Allow) => match guard.create_directory(dir_id, name) {
+                Ok(dm) => {
+                    self.sync_func_ids.push(dir_id);
+                    Ok(dm)
+                }
+                Err(e) => Err(e),
+            },
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+        }
+    }
+
+    pub(crate) fn open_directory(
+        &mut self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<UfsUuid, failure::Error> {
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        match guard
+            .block_manager_mut()
+            .metadata_mut()
+            .check_wasm_program_grant(&self.path, GrantType::open_directory)
+        {
+            Some(Grant::Allow) => guard.open_sub_directory(dir_id, name),
+            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
         }
     }
 }
@@ -473,6 +541,8 @@ impl<B: BlockStorage> WasmProcess<B> {
     }
 }
 
+fn process_iofs_message<B: BlockStorage>(process: WasmProcess<B>, message: IofsNetworkMessage) {}
+
 #[derive(Debug)]
 struct RuntimeError {
     inner: Context<RuntimeErrorKind>,
@@ -508,6 +578,8 @@ enum RuntimeErrorKind {
     FunctionInvocation,
     #[fail(display = "Error invoking IOFS function in WASM.")]
     IOFSInvocation,
+    #[fail(display = "Insufficient permissions to execute function.")]
+    IOFSPermission,
 }
 
 impl From<RuntimeErrorKind> for RuntimeError {

@@ -308,12 +308,9 @@ where
 
     let name = unbox_str(ctx, name_ptr);
 
-    let guard = wc.iofs.clone();
-    let mut guard = guard.lock().expect("poisoned iofs lock");
-
     debug!("\tid: {}", parent_id);
 
-    let dir = guard.open_sub_directory(parent_id.into(), &name);
+    let dir = wc.open_directory(parent_id.into(), &name);
 
     match dir {
         Ok(dir) => {

@@ -11,8 +11,8 @@ use {
         },
         server::UfsRemoteServer,
         wasm::{
-            IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, RuntimeManager,
-            RuntimeManagerMsg, WasmProgram,
+            IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, ProtoWasmProgram,
+            RuntimeManager, RuntimeManagerMsg,
         },
         UfsUuid,
     },
@@ -324,7 +324,9 @@ impl<B: BlockStorage> UberFileSystem<B> {
                     if let Ok(program) = self.read_file(fh, 0, size as u32) {
                         info!("Adding existing program {:?} to runtime.", path);
                         program_mgr
-                            .send(RuntimeManagerMsg::Start(WasmProgram::new(path, program)))
+                            .send(RuntimeManagerMsg::Start(ProtoWasmProgram::new(
+                                path, program,
+                            )))
                             .unwrap()
                     }
                 }
@@ -336,6 +338,12 @@ impl<B: BlockStorage> UberFileSystem<B> {
     ///
     pub(crate) fn block_manager(&self) -> &BlockManager<B> {
         &self.block_manager
+    }
+
+    /// Return a mutable reference to the `BlockManager`
+    ///
+    pub(crate) fn block_manager_mut(&mut self) -> &mut BlockManager<B> {
+        &mut self.block_manager
     }
 
     /// List the contents of a Directory
@@ -531,11 +539,13 @@ impl<B: BlockStorage> UberFileSystem<B> {
             if let Some(program_mgr) = &self.program_mgr {
                 if let Ok(dir) = self.block_manager.metadata().get_directory(dir_id) {
                     if dir.is_wasm_dir() {
+                        let path = self.block_manager.metadata().path_from_file_id(file.id());
                         program_mgr
-                            .send(RuntimeManagerMsg::Stop(
-                                self.block_manager.metadata().path_from_file_id(file.id()),
-                            ))
+                            .send(RuntimeManagerMsg::Stop(path.clone()))
                             .expect("unable to send message to Runtime Manager");
+                        self.block_manager
+                            .metadata_mut()
+                            .remove_wasm_program_grants(&path)
                     }
                 }
             }
@@ -652,9 +662,13 @@ impl<B: BlockStorage> UberFileSystem<B> {
                                             if let Ok(program) =
                                                 self.read_file(handle, 0, size as u32)
                                             {
+                                                // Add the Wasm program to the runtime
+                                                self.block_manager
+                                                    .metadata_mut()
+                                                    .add_wasm_program_grants(path.to_path_buf());
                                                 program_mgr
                                                     .send(RuntimeManagerMsg::Start(
-                                                        WasmProgram::new(
+                                                        ProtoWasmProgram::new(
                                                             path.to_path_buf(),
                                                             program,
                                                         ),

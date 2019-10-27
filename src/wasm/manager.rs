@@ -7,10 +7,10 @@ use {
         wasm::{IofsMessage, IofsSystemMessage, WasmProcess},
         UberFileSystem,
     },
-    crossbeam::crossbeam_channel,
+    crossbeam::{crossbeam_channel, Select},
     log::{error, info},
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         path::PathBuf,
         sync::{Arc, Mutex},
         thread::{spawn, JoinHandle},
@@ -29,7 +29,7 @@ pub(crate) enum RuntimeManagerMsg {
     /// Add a new WASM Program
     ///
     /// The file system contains a WASM program, and wishes it to be loaded and run.
-    Start(WasmProgram),
+    Start(ProtoWasmProgram),
     /// Stop a running WASM Program
     ///
     /// There is a running program that must needs be stopped.
@@ -42,30 +42,46 @@ pub(crate) enum RuntimeManagerMsg {
 /// Information necessary to start running a WASM program
 ///
 /// This is the contents of the RuntimeManagerMsg::Start message.
-pub(crate) struct WasmProgram {
+pub(crate) struct ProtoWasmProgram {
     /// A unique identifier for the WASM program -- it's the path, and there can be only one.
     pub(in crate::wasm) name: PathBuf,
     /// The bytes that comprise the program.
     pub(in crate::wasm) program: Vec<u8>,
 }
 
-impl WasmProgram {
+impl ProtoWasmProgram {
     pub(crate) fn new(name: PathBuf, program: Vec<u8>) -> Self {
-        WasmProgram { name, program }
+        ProtoWasmProgram { name, program }
     }
+}
+
+pub(crate) enum MessageRegistration {
+    Register(IofsMessage),
+    UnRegister(IofsMessage),
 }
 
 struct RuntimeProcess {
     channel: crossbeam_channel::Sender<IofsMessage>,
     handle: JoinHandle<Result<(), failure::Error>>,
+    handled_messages: HashSet<IofsMessage>,
+    receiver: crossbeam_channel::Receiver<MessageRegistration>,
 }
 
 impl RuntimeProcess {
-    fn new<B: BlockStorage>(process: WasmProcess<B>) -> Self {
+    fn new<B: BlockStorage>(
+        process: WasmProcess<B>,
+        receiver: crossbeam_channel::Receiver<MessageRegistration>,
+    ) -> Self {
         RuntimeProcess {
             channel: process.get_sender(),
             handle: WasmProcess::start(process),
+            handled_messages: HashSet::new(),
+            receiver,
         }
+    }
+
+    fn does_handle_message(&self, msg: &IofsMessage) -> bool {
+        true
     }
 }
 
@@ -81,7 +97,8 @@ pub(crate) struct RuntimeManager<B: BlockStorage + 'static> {
     ufs: Arc<Mutex<UberFileSystem<B>>>,
     http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
     receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
-    threads: HashMap<PathBuf, RuntimeProcess>,
+    threads_table: HashMap<PathBuf, usize>,
+    threads: Vec<RuntimeProcess>,
 }
 
 impl<B: BlockStorage> RuntimeManager<B> {
@@ -93,7 +110,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
             ufs,
             http_receiver: None,
             receiver,
-            threads: HashMap::new(),
+            threads_table: HashMap::new(),
+            threads: Vec::new(),
         }
     }
 
@@ -106,12 +124,14 @@ impl<B: BlockStorage> RuntimeManager<B> {
 
     fn notify_listeners(&mut self, msg: IofsMessage) {
         let mut dead_programs = vec![];
-        for (id, listener) in &self.threads {
-            match listener.channel.send(msg.clone()) {
-                Ok(_) => (),
-                Err(e) => {
-                    error!("unable to send on channel {}", e);
-                    dead_programs.push(id.clone());
+        for listener in &self.threads {
+            if listener.does_handle_message(&msg) {
+                match listener.channel.send(msg.clone()) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("unable to send on channel {}", e);
+                        dead_programs.push(id.clone());
+                    }
                 }
             }
         }
@@ -126,6 +146,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
     /// Note that this does not take `self`, but has access via `runtime`.
     pub(crate) fn start(mut runtime: RuntimeManager<B>) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
+            let mut select = Select::new();
+
             loop {
                 let msg = runtime.receiver.recv().unwrap();
                 match msg {
@@ -138,7 +160,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // Stop the WASM program and remove it from the listeners map.
                     RuntimeManagerMsg::Stop(name) => {
                         info!("Stopping WASM program {:?}", name);
-                        if let Some(thread) = runtime.threads.remove(&name) {
+                        if let Some(thread_idx) = runtime.threads_table.remove(&name) {
+                            let thread = runtime.threads.remove(thread_idx);
                             thread
                                 .channel
                                 .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown))
@@ -156,15 +179,19 @@ impl<B: BlockStorage> RuntimeManager<B> {
                     // Start the WASM program and add it to the listeners map.
                     RuntimeManagerMsg::Start(wasm) => {
                         info!("Starting WASM program {:?}", wasm.name);
+                        let (sender, receiver) =
+                            crossbeam_channel::unbounded::<MessageRegistration>();
                         let process = WasmProcess::new(
                             wasm.name.clone(),
                             wasm.program,
                             runtime.http_receiver.clone(),
+                            sender,
                             runtime.ufs.clone(),
                         );
                         runtime
-                            .threads
-                            .insert(wasm.name, RuntimeProcess::new(process));
+                            .threads_table
+                            .insert(wasm.name, runtime.threads.len());
+                        runtime.threads.push(RuntimeProcess::new(process, receiver));
                     }
                 }
             }
@@ -172,7 +199,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
             info!("Shutting down WASM programs");
             runtime.notify_listeners(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown));
 
-            for (_, thread) in runtime.threads {
+            for thread in runtime.threads {
                 thread
                     .handle
                     .join()

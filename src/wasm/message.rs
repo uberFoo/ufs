@@ -14,20 +14,20 @@ use {
     wasmer_runtime::{Instance, Value},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IofsMessage {
     SystemMessage(IofsSystemMessage),
     FileMessage(IofsFileMessage),
     DirMessage(IofsDirMessage),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IofsSystemMessage {
     Shutdown,
     Ping,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IofsFileMessage {
     Create(IofsMessagePayload),
     Delete(IofsMessagePayload),
@@ -37,13 +37,13 @@ pub(crate) enum IofsFileMessage {
     Read(IofsMessagePayload),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IofsDirMessage {
     Create(IofsMessagePayload),
     Delete(IofsMessagePayload),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub(crate) struct IofsMessagePayload {
     pub(crate) target_id: UfsUuid,
     pub(crate) target_path: PathBuf,

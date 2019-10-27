@@ -1,16 +1,16 @@
 //! User Data Blocks
 //!
-use std::collections::HashMap;
 
 use {
-    crate::crypto::{hash_password, ITERATION_COUNT},
+    crate::{
+        crypto::{hash_password, ITERATION_COUNT},
+        uuid::UfsUuid,
+    },
     log::{debug, error},
     rand::prelude::*,
     serde_derive::{Deserialize, Serialize},
-    sha2::Sha256,
+    std::collections::HashMap,
 };
-
-use crate::uuid::UfsUuid;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(in crate::metadata) struct User {
