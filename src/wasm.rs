@@ -66,8 +66,6 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     sync_func_ids: Vec<UfsUuid>,
     /// IOFS access
     iofs: Arc<Mutex<UberFileSystem<B>>>,
-    /// Notification delivery registration tracking.
-    pub notifications: HashSet<WasmMessage>,
     /// Write buffers for write_file
     write_buffers: HashMap<FileHandle, FileWriteBuffer>,
     /// Messages sent from HTTP Server
@@ -97,7 +95,6 @@ impl<B: BlockStorage> WasmProcess<B> {
             receiver,
             sync_func_ids: vec![],
             iofs,
-            notifications: HashSet::new(),
             write_buffers: HashMap::new(),
             http_receiver,
             get_callbacks: HashSet::new(),
@@ -118,12 +115,9 @@ impl<B: BlockStorage> WasmProcess<B> {
         self.sender.clone()
     }
 
-    pub(crate) fn does_handle_message(&self, msg: WasmMessage) -> bool {
-        self.notifications.contains(&msg)
-    }
-
     pub(crate) fn set_handles_message(&mut self, msg: WasmMessage) {
-        self.notifications.insert(msg);
+        self.message_registration_sender
+            .send(MessageRegistration::Register(msg));
     }
 
     pub(crate) fn register_get_callback(&mut self, route: String) {
@@ -426,6 +420,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                 debug!("channel {} is ready", channel);
 
                 if channel == 0 {
+                    // FIXME: This should not return, but instead check for an error, and retry.
                     let message = process.receiver.try_recv()?;
                     debug!(
                         "{:?} dispatching file system message {:#?}",
@@ -434,56 +429,40 @@ impl<B: BlockStorage> WasmProcess<B> {
                     match &message {
                         IofsMessage::SystemMessage(m) => match m {
                             IofsSystemMessage::Shutdown => {
-                                if process.does_handle_message(WasmMessage::Shutdown) {
-                                    msg_sender.send_shutdown()?;
-                                }
+                                msg_sender.send_shutdown()?;
                             }
                             IofsSystemMessage::Ping => {
-                                if process.does_handle_message(WasmMessage::Ping) {
-                                    msg_sender.send_ping()?;
-                                }
+                                msg_sender.send_ping()?;
                             }
                         },
                         IofsMessage::FileMessage(m) => match m {
                             IofsFileMessage::Create(payload) => {
-                                if process.does_handle_message(WasmMessage::FileCreate)
-                                    && process.should_send_notification(&payload.parent_id)
-                                {
+                                if process.should_send_notification(&payload.parent_id) {
                                     msg_sender.send_file_create(&payload)?;
                                 }
                             }
                             IofsFileMessage::Delete(payload) => {
-                                if process.does_handle_message(WasmMessage::FileDelete)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_file_delete(&payload)?;
                                 }
                             }
                             IofsFileMessage::Open(payload) => {
-                                if process.does_handle_message(WasmMessage::FileOpen)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_file_open(&payload)?;
                                 }
                             }
                             IofsFileMessage::Close(payload) => {
-                                if process.does_handle_message(WasmMessage::FileClose)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_file_close(&payload)?;
                                 }
                             }
                             IofsFileMessage::Write(payload) => {
-                                if process.does_handle_message(WasmMessage::FileWrite)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_file_write(&payload)?;
                                 }
                             }
                             IofsFileMessage::Read(payload) => {
-                                if process.does_handle_message(WasmMessage::FileWrite)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_file_read(&payload)?;
                                 }
                             }
@@ -491,16 +470,12 @@ impl<B: BlockStorage> WasmProcess<B> {
                         },
                         IofsMessage::DirMessage(m) => match m {
                             IofsDirMessage::Create(payload) => {
-                                if process.does_handle_message(WasmMessage::DirCreate)
-                                    && process.should_send_notification(&payload.parent_id)
-                                {
+                                if process.should_send_notification(&payload.parent_id) {
                                     msg_sender.send_dir_create(&payload)?;
                                 }
                             }
                             IofsDirMessage::Delete(payload) => {
-                                if process.does_handle_message(WasmMessage::DirDelete)
-                                    && process.should_send_notification(&payload.target_id)
-                                {
+                                if process.should_send_notification(&payload.target_id) {
                                     msg_sender.send_dir_delete(&payload)?;
                                 }
                             }

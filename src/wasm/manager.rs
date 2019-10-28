@@ -4,10 +4,10 @@ use {
     crate::{
         block::BlockStorage,
         server::IofsNetworkMessage,
-        wasm::{IofsMessage, IofsSystemMessage, WasmProcess},
+        wasm::{IofsDirMessage, IofsFileMessage, IofsMessage, IofsSystemMessage, WasmProcess},
         UberFileSystem,
     },
-    crossbeam::{crossbeam_channel, Select},
+    crossbeam::{crossbeam_channel, RecvError, Select},
     log::{error, info},
     std::{
         collections::{HashMap, HashSet},
@@ -15,6 +15,7 @@ use {
         sync::{Arc, Mutex},
         thread::{spawn, JoinHandle},
     },
+    wasm_exports::WasmMessage,
 };
 
 /// Runtime Manager Messages
@@ -55,15 +56,16 @@ impl ProtoWasmProgram {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum MessageRegistration {
-    Register(IofsMessage),
-    UnRegister(IofsMessage),
+    Register(WasmMessage),
+    UnRegister(WasmMessage),
 }
 
 struct RuntimeProcess {
     channel: crossbeam_channel::Sender<IofsMessage>,
     handle: JoinHandle<Result<(), failure::Error>>,
-    handled_messages: HashSet<IofsMessage>,
+    handled_messages: HashSet<WasmMessage>,
     receiver: crossbeam_channel::Receiver<MessageRegistration>,
 }
 
@@ -80,8 +82,27 @@ impl RuntimeProcess {
         }
     }
 
-    fn does_handle_message(&self, msg: &IofsMessage) -> bool {
-        true
+    fn does_handle_message(&self, iofs_msg: &IofsMessage) -> bool {
+        let msg = match iofs_msg {
+            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) => WasmMessage::Shutdown,
+            IofsMessage::SystemMessage(IofsSystemMessage::Ping) => WasmMessage::Ping,
+            IofsMessage::FileMessage(IofsFileMessage::Create(_)) => WasmMessage::FileCreate,
+            IofsMessage::FileMessage(IofsFileMessage::Delete(_)) => WasmMessage::FileDelete,
+            IofsMessage::FileMessage(IofsFileMessage::Open(_)) => WasmMessage::FileOpen,
+            IofsMessage::FileMessage(IofsFileMessage::Close(_)) => WasmMessage::FileClose,
+            IofsMessage::FileMessage(IofsFileMessage::Write(_)) => WasmMessage::FileWrite,
+            IofsMessage::FileMessage(IofsFileMessage::Read(_)) => WasmMessage::FileRead,
+            IofsMessage::DirMessage(IofsDirMessage::Create(_)) => WasmMessage::FileCreate,
+            IofsMessage::DirMessage(IofsDirMessage::Delete(_)) => WasmMessage::DirDelete,
+        };
+        self.handled_messages.contains(&msg)
+    }
+
+    fn handle_registration(&mut self, msg: MessageRegistration) {
+        match msg {
+            MessageRegistration::Register(m) => self.handled_messages.insert(m),
+            MessageRegistration::UnRegister(m) => self.handled_messages.remove(&m),
+        };
     }
 }
 
@@ -124,7 +145,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
 
     fn notify_listeners(&mut self, msg: IofsMessage) {
         let mut dead_programs = vec![];
-        for listener in &self.threads {
+        for (id, idx) in &self.threads_table {
+            let listener = &self.threads[*idx];
             if listener.does_handle_message(&msg) {
                 match listener.channel.send(msg.clone()) {
                     Ok(_) => (),
@@ -137,7 +159,8 @@ impl<B: BlockStorage> RuntimeManager<B> {
         }
 
         for id in dead_programs {
-            self.threads.remove(&id);
+            let idx = self.threads_table.remove(&id).unwrap();
+            self.threads.remove(idx);
         }
     }
 
@@ -146,52 +169,57 @@ impl<B: BlockStorage> RuntimeManager<B> {
     /// Note that this does not take `self`, but has access via `runtime`.
     pub(crate) fn start(mut runtime: RuntimeManager<B>) -> JoinHandle<Result<(), failure::Error>> {
         spawn(move || {
-            let mut select = Select::new();
-
+            info!("RuntimeManager Starting");
             loop {
-                let msg = runtime.receiver.recv().unwrap();
+                let msg = receive_message(&runtime).unwrap();
                 match msg {
-                    // Shutdown comes from the UfsMounter, thus we need to shutdown the running
-                    // programs (via our UberFileSystem reference) before joining the threads,
-                    // see below.
-                    RuntimeManagerMsg::Shutdown => break,
-                    // Forward an IofsMessage to listeners
-                    RuntimeManagerMsg::IofsMessage(msg) => runtime.notify_listeners(msg),
-                    // Stop the WASM program and remove it from the listeners map.
-                    RuntimeManagerMsg::Stop(name) => {
-                        info!("Stopping WASM program {:?}", name);
-                        if let Some(thread_idx) = runtime.threads_table.remove(&name) {
-                            let thread = runtime.threads.remove(thread_idx);
-                            thread
-                                .channel
-                                .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown))
-                                .expect(&format!(
-                                    "unable to send shutdown to Wasm program {:?}",
-                                    name
-                                ));
-                            thread
-                                .handle
-                                .join()
-                                .expect("unable to join WasmProcess")
-                                .expect("error during WasmProcess execution");
+                    RuntimeMessage::Runtime(msg) => match msg {
+                        // Shutdown comes from the UfsMounter, thus we need to shutdown the running
+                        // programs (via our UberFileSystem reference) before joining the threads,
+                        // see below.
+                        RuntimeManagerMsg::Shutdown => break,
+                        // Forward an IofsMessage to listeners
+                        RuntimeManagerMsg::IofsMessage(msg) => runtime.notify_listeners(msg),
+                        // Stop the WASM program and remove it from the listeners map.
+                        RuntimeManagerMsg::Stop(name) => {
+                            info!("Stopping WASM program {:?}", name);
+                            if let Some(thread_idx) = runtime.threads_table.remove(&name) {
+                                let thread = runtime.threads.remove(thread_idx);
+                                thread
+                                    .channel
+                                    .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown))
+                                    .expect(&format!(
+                                        "unable to send shutdown to Wasm program {:?}",
+                                        name
+                                    ));
+                                thread
+                                    .handle
+                                    .join()
+                                    .expect("unable to join WasmProcess")
+                                    .expect("error during WasmProcess execution");
+                            }
                         }
-                    }
-                    // Start the WASM program and add it to the listeners map.
-                    RuntimeManagerMsg::Start(wasm) => {
-                        info!("Starting WASM program {:?}", wasm.name);
-                        let (sender, receiver) =
-                            crossbeam_channel::unbounded::<MessageRegistration>();
-                        let process = WasmProcess::new(
-                            wasm.name.clone(),
-                            wasm.program,
-                            runtime.http_receiver.clone(),
-                            sender,
-                            runtime.ufs.clone(),
-                        );
-                        runtime
-                            .threads_table
-                            .insert(wasm.name, runtime.threads.len());
-                        runtime.threads.push(RuntimeProcess::new(process, receiver));
+                        // Start the WASM program and add it to the listeners map.
+                        RuntimeManagerMsg::Start(wasm) => {
+                            info!("Starting WASM program {:?}", wasm.name);
+                            let (sender, receiver) =
+                                crossbeam_channel::unbounded::<MessageRegistration>();
+                            let process = WasmProcess::new(
+                                wasm.name.clone(),
+                                wasm.program,
+                                runtime.http_receiver.clone(),
+                                sender,
+                                runtime.ufs.clone(),
+                            );
+                            runtime
+                                .threads_table
+                                .insert(wasm.name, runtime.threads.len());
+                            runtime.threads.push(RuntimeProcess::new(process, receiver));
+                        }
+                    },
+                    RuntimeMessage::Registration((index, msg)) => {
+                        println!("handling message {:?}", msg);
+                        runtime.threads[index].handle_registration(msg);
                     }
                 }
             }
@@ -209,5 +237,48 @@ impl<B: BlockStorage> RuntimeManager<B> {
 
             Ok(())
         })
+    }
+}
+
+enum RuntimeMessage {
+    Runtime(RuntimeManagerMsg),
+    Registration((usize, MessageRegistration)),
+}
+
+fn receive_message<B: BlockStorage>(
+    runtime: &RuntimeManager<B>,
+) -> Result<RuntimeMessage, RecvError> {
+    let mut select = Select::new();
+    select.recv(&runtime.receiver);
+
+    for t in &runtime.threads {
+        select.recv(&t.receiver);
+    }
+
+    loop {
+        let index = select.ready();
+        if index == 0 {
+            let msg = runtime.receiver.try_recv();
+            if let Err(e) = msg {
+                if e.is_empty() {
+                    continue;
+                }
+            }
+
+            return msg
+                .map(|m| RuntimeMessage::Runtime(m))
+                .map_err(|_| RecvError);
+        } else {
+            let msg = runtime.threads[index - 1].receiver.try_recv();
+            if let Err(e) = msg {
+                if e.is_empty() {
+                    continue;
+                }
+            }
+
+            return msg
+                .map(|m| RuntimeMessage::Registration((index - 1, m)))
+                .map_err(|_| RecvError);
+        }
     }
 }
