@@ -3,6 +3,7 @@
 use {
     crate::{
         block::BlockStorage,
+        metadata::{Grant, GrantType},
         server::IofsNetworkMessage,
         wasm::{IofsDirMessage, IofsFileMessage, IofsMessage, IofsSystemMessage, WasmProcess},
         UberFileSystem,
@@ -62,19 +63,25 @@ pub(crate) enum MessageRegistration {
     UnRegister(WasmMessage),
 }
 
-struct RuntimeProcess {
+struct RuntimeProcess<B: BlockStorage> {
+    path: PathBuf,
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
     channel: crossbeam_channel::Sender<IofsMessage>,
     handle: JoinHandle<Result<(), failure::Error>>,
     handled_messages: HashSet<WasmMessage>,
     receiver: crossbeam_channel::Receiver<MessageRegistration>,
 }
 
-impl RuntimeProcess {
-    fn new<B: BlockStorage>(
+impl<B: BlockStorage> RuntimeProcess<B> {
+    fn new(
+        path: PathBuf,
+        iofs: Arc<Mutex<UberFileSystem<B>>>,
         process: WasmProcess<B>,
         receiver: crossbeam_channel::Receiver<MessageRegistration>,
     ) -> Self {
         RuntimeProcess {
+            path,
+            iofs,
             channel: process.get_sender(),
             handle: WasmProcess::start(process),
             handled_messages: HashSet::new(),
@@ -83,19 +90,105 @@ impl RuntimeProcess {
     }
 
     fn does_handle_message(&self, iofs_msg: &IofsMessage) -> bool {
-        let msg = match iofs_msg {
-            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) => WasmMessage::Shutdown,
-            IofsMessage::SystemMessage(IofsSystemMessage::Ping) => WasmMessage::Ping,
-            IofsMessage::FileMessage(IofsFileMessage::Create(_)) => WasmMessage::FileCreate,
-            IofsMessage::FileMessage(IofsFileMessage::Delete(_)) => WasmMessage::FileDelete,
-            IofsMessage::FileMessage(IofsFileMessage::Open(_)) => WasmMessage::FileOpen,
-            IofsMessage::FileMessage(IofsFileMessage::Close(_)) => WasmMessage::FileClose,
-            IofsMessage::FileMessage(IofsFileMessage::Write(_)) => WasmMessage::FileWrite,
-            IofsMessage::FileMessage(IofsFileMessage::Read(_)) => WasmMessage::FileRead,
-            IofsMessage::DirMessage(IofsDirMessage::Create(_)) => WasmMessage::FileCreate,
-            IofsMessage::DirMessage(IofsDirMessage::Delete(_)) => WasmMessage::DirDelete,
+        let guard = self.iofs.clone();
+        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+        let (can_send, msg) = match iofs_msg {
+            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) => {
+                (true, WasmMessage::Shutdown)
+            }
+            IofsMessage::SystemMessage(IofsSystemMessage::Ping) => (true, WasmMessage::Ping),
+            IofsMessage::FileMessage(IofsFileMessage::Create(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_create_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileCreate)
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Delete(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_delete_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileDelete)
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Open(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_open_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileOpen)
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Close(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_close_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileClose)
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Write(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_write_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileWrite)
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Read(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::file_read_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileRead)
+            }
+            IofsMessage::DirMessage(IofsDirMessage::Create(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::dir_create_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::FileCreate)
+            }
+            IofsMessage::DirMessage(IofsDirMessage::Delete(_)) => {
+                let can_send = match guard
+                    .block_manager_mut()
+                    .metadata_mut()
+                    .check_wasm_program_grant(&self.path, GrantType::dir_delete_event)
+                {
+                    Some(Grant::Allow) => true,
+                    _ => false,
+                };
+                (can_send, WasmMessage::DirDelete)
+            }
         };
-        self.handled_messages.contains(&msg)
+
+        can_send && self.handled_messages.contains(&msg)
     }
 
     fn handle_registration(&mut self, msg: MessageRegistration) {
@@ -119,7 +212,7 @@ pub(crate) struct RuntimeManager<B: BlockStorage + 'static> {
     http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
     receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
     threads_table: HashMap<PathBuf, usize>,
-    threads: Vec<RuntimeProcess>,
+    threads: Vec<RuntimeProcess<B>>,
 }
 
 impl<B: BlockStorage> RuntimeManager<B> {
@@ -213,8 +306,13 @@ impl<B: BlockStorage> RuntimeManager<B> {
                             );
                             runtime
                                 .threads_table
-                                .insert(wasm.name, runtime.threads.len());
-                            runtime.threads.push(RuntimeProcess::new(process, receiver));
+                                .insert(wasm.name.clone(), runtime.threads.len());
+                            runtime.threads.push(RuntimeProcess::new(
+                                wasm.name,
+                                runtime.ufs.clone(),
+                                process,
+                                receiver,
+                            ));
                         }
                     },
                     RuntimeMessage::Registration((index, msg)) => {

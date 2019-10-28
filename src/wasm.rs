@@ -18,7 +18,7 @@ use {
     self::callbacks::*,
     crate::{
         block::BlockStorage,
-        metadata::{DirectoryMetadata, File, FileHandle, Grant, GrantType, WasmPermissions},
+        metadata::{DirectoryMetadata, File, FileHandle, Grant, GrantType},
         server::{HTTPServerMessage, IofsNetworkMessage},
         OpenFileMode, UberFileSystem, UfsUuid,
     },
