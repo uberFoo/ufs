@@ -14,7 +14,7 @@ use {
     serde_derive::{Deserialize, Serialize},
     std::{
         collections::HashMap,
-        io::{self, Read, Write},
+        io::{self, Write},
         path::PathBuf,
     },
 };
@@ -26,47 +26,79 @@ pub(crate) enum Grant {
     Deny,
 }
 
+// #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+// pub(crate) enum HttpGrant {
+//     Unknown,
+//     Allow(String),
+//     Deny,
+// }
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+struct HttpGrant {
+    inner: HashMap<String, Grant>,
+}
+
+impl HttpGrant {
+    fn new() -> Self {
+        HttpGrant {
+            inner: HashMap::new(),
+        }
+    }
+
+    fn check(&mut self, route: String) -> Grant {
+        *self.inner.entry(route).or_insert(Grant::Unknown)
+    }
+
+    fn set(&mut self, route: String, grant: Grant) -> Grant {
+        *self
+            .inner
+            .entry(route)
+            .and_modify(|g| *g = grant)
+            .or_insert(grant)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum GrantType {
-    file_create_event,
-    dir_create_event,
-    file_delete_event,
-    dir_delete_event,
-    file_open_event,
-    file_close_event,
-    file_read_event,
-    file_write_event,
-    http_get_event,
-    http_post_event,
-    open_file,
-    close_file,
-    read_file,
-    write_file,
-    create_file,
-    create_directory,
-    open_directory,
+    FileCreateEvent,
+    DirCreateEvent,
+    FileDeleteEvent,
+    DirDeleteEvent,
+    FileOpenEvent,
+    FileCloseEvent,
+    FileReadEvent,
+    FileWriteEvent,
+    HttpGetEvent,
+    HttpPostEvent,
+    OpenFileInvocation,
+    CloseFileInvocation,
+    ReadFileInvocation,
+    WriteFileInvocation,
+    CreateFileInvocation,
+    CreateDirectoryInvocation,
+    OpenDirectoryInvocation,
 }
 
 impl GrantType {
     pub(crate) fn grant_string(&self) -> &'static str {
         match self {
-            GrantType::file_create_event => "receive file create events",
-            GrantType::dir_create_event => "receive directory create events",
-            GrantType::file_delete_event => "receive file delete events",
-            GrantType::dir_delete_event => "receive directory delete events",
-            GrantType::file_open_event => "receive file open events",
-            GrantType::file_close_event => "receive file close events",
-            GrantType::file_read_event => "receive file read events",
-            GrantType::file_write_event => "receive file write events",
-            GrantType::http_get_event => "receive HTTP GET to",
-            GrantType::http_post_event => "receive HTTP POST to",
-            GrantType::open_file => "open files",
-            GrantType::close_file => "close files",
-            GrantType::read_file => "read files",
-            GrantType::write_file => "write files",
-            GrantType::create_file => "create files",
-            GrantType::create_directory => "create directories",
-            GrantType::open_directory => "open directories",
+            GrantType::FileCreateEvent => "receive file create events",
+            GrantType::DirCreateEvent => "receive directory create events",
+            GrantType::FileDeleteEvent => "receive file delete events",
+            GrantType::DirDeleteEvent => "receive directory delete events",
+            GrantType::FileOpenEvent => "receive file open events",
+            GrantType::FileCloseEvent => "receive file close events",
+            GrantType::FileReadEvent => "receive file read events",
+            GrantType::FileWriteEvent => "receive file write events",
+            GrantType::HttpGetEvent => "receive HTTP GET to",
+            GrantType::HttpPostEvent => "receive HTTP POST to",
+            GrantType::OpenFileInvocation => "open files",
+            GrantType::CloseFileInvocation => "close files",
+            GrantType::ReadFileInvocation => "read files",
+            GrantType::WriteFileInvocation => "write files",
+            GrantType::CreateFileInvocation => "create files",
+            GrantType::CreateDirectoryInvocation => "create directories",
+            GrantType::OpenDirectoryInvocation => "open directories",
         }
     }
 }
@@ -74,17 +106,17 @@ impl GrantType {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ProgramPermissions {
     // File System Events
-    file_create_event: Grant,
-    dir_create_event: Grant,
-    file_delete_event: Grant,
-    dir_delete_event: Grant,
-    file_open_event: Grant,
-    file_close_event: Grant,
-    file_read_event: Grant,
-    file_write_event: Grant,
+    file_create: Grant,
+    dir_create: Grant,
+    file_delete: Grant,
+    dir_delete: Grant,
+    file_open: Grant,
+    file_close: Grant,
+    file_read: Grant,
+    file_write: Grant,
     // HTTP Events
-    http_get_event: Grant,
-    http_post_event: Grant,
+    http_get: HttpGrant,
+    http_post: HttpGrant,
     // Synchronous function calls
     open_file: Grant,
     close_file: Grant,
@@ -98,16 +130,16 @@ pub(crate) struct ProgramPermissions {
 impl ProgramPermissions {
     pub(crate) fn new() -> Self {
         ProgramPermissions {
-            file_create_event: Grant::Unknown,
-            dir_create_event: Grant::Unknown,
-            file_delete_event: Grant::Unknown,
-            dir_delete_event: Grant::Unknown,
-            file_open_event: Grant::Unknown,
-            file_close_event: Grant::Unknown,
-            file_read_event: Grant::Unknown,
-            file_write_event: Grant::Unknown,
-            http_get_event: Grant::Unknown,
-            http_post_event: Grant::Unknown,
+            file_create: Grant::Unknown,
+            dir_create: Grant::Unknown,
+            file_delete: Grant::Unknown,
+            dir_delete: Grant::Unknown,
+            file_open: Grant::Unknown,
+            file_close: Grant::Unknown,
+            file_read: Grant::Unknown,
+            file_write: Grant::Unknown,
+            http_get: HttpGrant::new(),
+            http_post: HttpGrant::new(),
             open_file: Grant::Unknown,
             close_file: Grant::Unknown,
             read_file: Grant::Unknown,
@@ -120,119 +152,135 @@ impl ProgramPermissions {
 
     fn get_grant(&self, grant_type: GrantType) -> Grant {
         match grant_type {
-            GrantType::file_create_event => self.file_create_event,
-            GrantType::dir_create_event => self.dir_create_event,
-            GrantType::file_delete_event => self.file_delete_event,
-            GrantType::dir_delete_event => self.dir_delete_event,
-            GrantType::file_open_event => self.file_open_event,
-            GrantType::file_close_event => self.file_close_event,
-            GrantType::file_read_event => self.file_read_event,
-            GrantType::file_write_event => self.file_write_event,
-            GrantType::http_get_event => self.http_get_event,
-            GrantType::http_post_event => self.http_post_event,
-            GrantType::open_file => self.open_file,
-            GrantType::close_file => self.close_file,
-            GrantType::read_file => self.read_file,
-            GrantType::write_file => self.write_file,
-            GrantType::create_file => self.create_file,
-            GrantType::create_directory => self.create_directory,
-            GrantType::open_directory => self.open_directory,
+            GrantType::FileCreateEvent => self.file_create,
+            GrantType::DirCreateEvent => self.dir_create,
+            GrantType::FileDeleteEvent => self.file_delete,
+            GrantType::DirDeleteEvent => self.dir_delete,
+            GrantType::FileOpenEvent => self.file_open,
+            GrantType::FileCloseEvent => self.file_close,
+            GrantType::FileReadEvent => self.file_read,
+            GrantType::FileWriteEvent => self.file_write,
+            GrantType::OpenFileInvocation => self.open_file,
+            GrantType::CloseFileInvocation => self.close_file,
+            GrantType::ReadFileInvocation => self.read_file,
+            GrantType::WriteFileInvocation => self.write_file,
+            GrantType::CreateFileInvocation => self.create_file,
+            GrantType::CreateDirectoryInvocation => self.create_directory,
+            GrantType::OpenDirectoryInvocation => self.open_directory,
+            _ => panic!("called get_grant with HTTP grant-type"),
+        }
+    }
+
+    fn get_http_grant(&mut self, grant_type: GrantType, route: String) -> Grant {
+        match grant_type {
+            GrantType::HttpGetEvent => self.http_get.check(route),
+            GrantType::HttpPostEvent => self.http_post.check(route),
+            _ => panic!("called get_http_grant with non-HTTP grant-type"),
         }
     }
 
     fn set_grant(&mut self, grant_type: GrantType, grant: Grant) -> Grant {
         match grant_type {
-            GrantType::file_create_event => {
-                self.file_create_event = grant;
+            GrantType::FileCreateEvent => {
+                self.file_create = grant;
                 grant
             }
-            GrantType::dir_create_event => {
-                self.dir_create_event = grant;
+            GrantType::DirCreateEvent => {
+                self.dir_create = grant;
                 grant
             }
-            GrantType::file_delete_event => {
-                self.file_delete_event = grant;
+            GrantType::FileDeleteEvent => {
+                self.file_delete = grant;
                 grant
             }
-            GrantType::dir_delete_event => {
-                self.dir_delete_event = grant;
+            GrantType::DirDeleteEvent => {
+                self.dir_delete = grant;
                 grant
             }
-            GrantType::file_open_event => {
-                self.file_open_event = grant;
+            GrantType::FileOpenEvent => {
+                self.file_open = grant;
                 grant
             }
-            GrantType::file_close_event => {
-                self.file_close_event = grant;
+            GrantType::FileCloseEvent => {
+                self.file_close = grant;
                 grant
             }
-            GrantType::file_read_event => {
-                self.file_read_event = grant;
+            GrantType::FileReadEvent => {
+                self.file_read = grant;
                 grant
             }
-            GrantType::file_write_event => {
-                self.file_write_event = grant;
+            GrantType::FileWriteEvent => {
+                self.file_write = grant;
                 grant
             }
-            GrantType::http_get_event => {
-                self.http_get_event = grant;
-                grant
-            }
-            GrantType::http_post_event => {
-                self.http_post_event = grant;
-                grant
-            }
-            GrantType::open_file => {
+            GrantType::OpenFileInvocation => {
                 self.open_file = grant;
                 grant
             }
-            GrantType::close_file => {
+            GrantType::CloseFileInvocation => {
                 self.close_file = grant;
                 grant
             }
-            GrantType::read_file => {
+            GrantType::ReadFileInvocation => {
                 self.read_file = grant;
                 grant
             }
-            GrantType::write_file => {
+            GrantType::WriteFileInvocation => {
                 self.write_file = grant;
                 grant
             }
-            GrantType::create_file => {
+            GrantType::CreateFileInvocation => {
                 self.create_file = grant;
                 grant
             }
-            GrantType::create_directory => {
+            GrantType::CreateDirectoryInvocation => {
                 self.create_directory = grant;
                 grant
             }
-            GrantType::open_directory => {
+            GrantType::OpenDirectoryInvocation => {
                 self.open_directory = grant;
                 grant
             }
+            _ => panic!("called set_grant with HTTP grant-type"),
+        }
+    }
+
+    fn set_http_grant(&mut self, grant_type: GrantType, route: String, grant: Grant) -> Grant {
+        match grant_type {
+            GrantType::HttpGetEvent => self.http_get.set(route, grant),
+            GrantType::HttpPostEvent => self.http_post.set(route, grant),
+            _ => panic!("called set_http_grant with non-HTTP grant-type"),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct WasmPermissions {
+    dirty: bool,
     inner: HashMap<PathBuf, ProgramPermissions>,
 }
 
 impl WasmPermissions {
     pub(crate) fn new() -> Self {
         WasmPermissions {
+            dirty: true,
             inner: HashMap::new(),
         }
     }
 
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     pub(crate) fn add_program(&mut self, program: PathBuf) {
+        self.dirty = true;
         self.inner
             .entry(program)
             .or_insert(ProgramPermissions::new());
     }
 
     pub(crate) fn remove_program(&mut self, program: &PathBuf) {
+        self.dirty = true;
         self.inner.remove(program);
     }
 
@@ -242,7 +290,28 @@ impl WasmPermissions {
         grant_type: GrantType,
     ) -> Option<Grant> {
         match self.inner.get_mut(program) {
-            Some(mut p) => Some(check_grant_and_get_auth(&mut p, program, grant_type)),
+            Some(mut p) => {
+                let (changed, grant) = check_grant_and_get_auth(&mut p, program, grant_type);
+                self.dirty = changed;
+                Some(grant)
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn check_http_grant(
+        &mut self,
+        program: &PathBuf,
+        grant_type: GrantType,
+        route: &str,
+    ) -> Option<Grant> {
+        match self.inner.get_mut(program) {
+            Some(mut p) => {
+                let (changed, grant) =
+                    check_http_grant_and_get_auth(&mut p, program, grant_type, route);
+                self.dirty = changed;
+                Some(grant)
+            }
             None => None,
         }
     }
@@ -252,22 +321,61 @@ fn check_grant_and_get_auth(
     inner: &mut ProgramPermissions,
     program: &PathBuf,
     grant_type: GrantType,
-) -> Grant {
+) -> (bool, Grant) {
     match inner.get_grant(grant_type) {
-        Grant::Unknown => inner.set_grant(
-            grant_type,
-            get_authorization(&program, grant_type.grant_string()),
+        Grant::Unknown => (
+            true,
+            inner.set_grant(
+                grant_type,
+                get_authorization(&program, grant_type.grant_string()),
+            ),
         ),
-        grant => grant,
+        grant => (false, grant),
     }
 }
 
-fn get_authorization(program: &PathBuf, grant_name: &str) -> Grant {
+fn get_authorization(program: &PathBuf, grant_desc: &str) -> Grant {
     let mut buffer = String::new();
     print!(
-        "Allow {} to {}? (y/N): ",
+        "\nAllow {} to {}? (y/N): ",
         program.to_str().unwrap(),
-        grant_name
+        grant_desc
+    );
+    io::stdout().flush().unwrap();
+    io::stdin().read_line(&mut buffer).unwrap();
+    if buffer == "y\n" || buffer == "Y\n" {
+        Grant::Allow
+    } else {
+        Grant::Deny
+    }
+}
+
+fn check_http_grant_and_get_auth(
+    inner: &mut ProgramPermissions,
+    program: &PathBuf,
+    grant_type: GrantType,
+    route: &str,
+) -> (bool, Grant) {
+    match inner.get_http_grant(grant_type, route.to_string()) {
+        Grant::Unknown => (
+            true,
+            inner.set_http_grant(
+                grant_type,
+                route.to_string(),
+                get_http_authorization(&program, grant_type.grant_string(), route),
+            ),
+        ),
+        grant => (false, grant),
+    }
+}
+
+fn get_http_authorization(program: &PathBuf, grant_desc: &str, route: &str) -> Grant {
+    let mut buffer = String::new();
+    print!(
+        "\nAllow {} to {} /wasm/{}? (y/N): ",
+        program.to_str().unwrap(),
+        grant_desc,
+        route
     );
     io::stdout().flush().unwrap();
     io::stdin().read_line(&mut buffer).unwrap();

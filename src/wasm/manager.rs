@@ -5,7 +5,10 @@ use {
         block::BlockStorage,
         metadata::{Grant, GrantType},
         server::IofsNetworkMessage,
-        wasm::{IofsDirMessage, IofsFileMessage, IofsMessage, IofsSystemMessage, WasmProcess},
+        wasm::{
+            IofsDirMessage, IofsFileMessage, IofsMessage, IofsSystemMessage, WasmProcess,
+            WasmProcessMessage,
+        },
         UberFileSystem,
     },
     crossbeam::{crossbeam_channel, RecvError, Select},
@@ -57,19 +60,13 @@ impl ProtoWasmProgram {
     }
 }
 
-#[derive(Debug)]
-pub(crate) enum MessageRegistration {
-    Register(WasmMessage),
-    UnRegister(WasmMessage),
-}
-
 struct RuntimeProcess<B: BlockStorage> {
     path: PathBuf,
     iofs: Arc<Mutex<UberFileSystem<B>>>,
-    channel: crossbeam_channel::Sender<IofsMessage>,
+    sender: crossbeam_channel::Sender<WasmProcessMessage>,
     handle: JoinHandle<Result<(), failure::Error>>,
     handled_messages: HashSet<WasmMessage>,
-    receiver: crossbeam_channel::Receiver<MessageRegistration>,
+    receiver: crossbeam_channel::Receiver<IofsEventRegistration>,
 }
 
 impl<B: BlockStorage> RuntimeProcess<B> {
@@ -77,12 +74,12 @@ impl<B: BlockStorage> RuntimeProcess<B> {
         path: PathBuf,
         iofs: Arc<Mutex<UberFileSystem<B>>>,
         process: WasmProcess<B>,
-        receiver: crossbeam_channel::Receiver<MessageRegistration>,
+        receiver: crossbeam_channel::Receiver<IofsEventRegistration>,
     ) -> Self {
         RuntimeProcess {
             path,
             iofs,
-            channel: process.get_sender(),
+            sender: process.get_sender(),
             handle: WasmProcess::start(process),
             handled_messages: HashSet::new(),
             receiver,
@@ -102,7 +99,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_create_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileCreateEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -113,7 +110,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_delete_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileDeleteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -124,7 +121,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_open_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileOpenEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -135,7 +132,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_close_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileCloseEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -146,7 +143,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_write_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileWriteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -157,7 +154,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::file_read_event)
+                    .check_wasm_program_grant(&self.path, GrantType::FileReadEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -168,7 +165,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::dir_create_event)
+                    .check_wasm_program_grant(&self.path, GrantType::DirCreateEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -179,7 +176,7 @@ impl<B: BlockStorage> RuntimeProcess<B> {
                 let can_send = match guard
                     .block_manager_mut()
                     .metadata_mut()
-                    .check_wasm_program_grant(&self.path, GrantType::dir_delete_event)
+                    .check_wasm_program_grant(&self.path, GrantType::DirDeleteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
@@ -191,12 +188,27 @@ impl<B: BlockStorage> RuntimeProcess<B> {
         can_send && self.handled_messages.contains(&msg)
     }
 
-    fn handle_registration(&mut self, msg: MessageRegistration) {
-        match msg {
-            MessageRegistration::Register(m) => self.handled_messages.insert(m),
-            MessageRegistration::UnRegister(m) => self.handled_messages.remove(&m),
-        };
+    fn register_for_event(&mut self, event: WasmMessage) {
+        self.handled_messages.insert(event);
     }
+
+    fn unregister_for_event(&mut self, event: WasmMessage) {
+        self.handled_messages.remove(&event);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum IofsEventRegistration {
+    Register(WasmMessage),
+    UnRegister(WasmMessage),
+    RegisterHttpGet(String),
+    RegisterHttpPost(String),
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+enum HttpEndPoint {
+    GET(String),
+    POST(String),
 }
 
 /// WASM Thread Management
@@ -211,6 +223,7 @@ pub(crate) struct RuntimeManager<B: BlockStorage + 'static> {
     ufs: Arc<Mutex<UberFileSystem<B>>>,
     http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
     receiver: crossbeam_channel::Receiver<RuntimeManagerMsg>,
+    http_endpoints: HashMap<HttpEndPoint, usize>,
     threads_table: HashMap<PathBuf, usize>,
     threads: Vec<RuntimeProcess<B>>,
 }
@@ -224,6 +237,7 @@ impl<B: BlockStorage> RuntimeManager<B> {
             ufs,
             http_receiver: None,
             receiver,
+            http_endpoints: HashMap::new(),
             threads_table: HashMap::new(),
             threads: Vec::new(),
         }
@@ -241,7 +255,10 @@ impl<B: BlockStorage> RuntimeManager<B> {
         for (id, idx) in &self.threads_table {
             let listener = &self.threads[*idx];
             if listener.does_handle_message(&msg) {
-                match listener.channel.send(msg.clone()) {
+                match listener
+                    .sender
+                    .send(WasmProcessMessage::IofsEvent(msg.clone()))
+                {
                     Ok(_) => (),
                     Err(e) => {
                         error!("unable to send on channel {}", e);
@@ -279,8 +296,10 @@ impl<B: BlockStorage> RuntimeManager<B> {
                             if let Some(thread_idx) = runtime.threads_table.remove(&name) {
                                 let thread = runtime.threads.remove(thread_idx);
                                 thread
-                                    .channel
-                                    .send(IofsMessage::SystemMessage(IofsSystemMessage::Shutdown))
+                                    .sender
+                                    .send(WasmProcessMessage::IofsEvent(
+                                        IofsMessage::SystemMessage(IofsSystemMessage::Shutdown),
+                                    ))
                                     .expect(&format!(
                                         "unable to send shutdown to Wasm program {:?}",
                                         name
@@ -296,11 +315,10 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         RuntimeManagerMsg::Start(wasm) => {
                             info!("Starting WASM program {:?}", wasm.name);
                             let (sender, receiver) =
-                                crossbeam_channel::unbounded::<MessageRegistration>();
+                                crossbeam_channel::unbounded::<IofsEventRegistration>();
                             let process = WasmProcess::new(
                                 wasm.name.clone(),
                                 wasm.program,
-                                runtime.http_receiver.clone(),
                                 sender,
                                 runtime.ufs.clone(),
                             );
@@ -316,8 +334,79 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         }
                     },
                     RuntimeMessage::Registration((index, msg)) => {
-                        println!("handling message {:?}", msg);
-                        runtime.threads[index].handle_registration(msg);
+                        match msg {
+                            IofsEventRegistration::Register(m) => {
+                                runtime.threads[index].register_for_event(m)
+                            }
+                            IofsEventRegistration::UnRegister(m) => {
+                                runtime.threads[index].unregister_for_event(m)
+                            }
+                            IofsEventRegistration::RegisterHttpGet(r) => {
+                                runtime
+                                    .http_endpoints
+                                    .entry(HttpEndPoint::GET(r))
+                                    .or_insert(index);
+                            }
+                            IofsEventRegistration::RegisterHttpPost(r) => {
+                                runtime
+                                    .http_endpoints
+                                    .entry(HttpEndPoint::POST(r))
+                                    .or_insert(index);
+                            }
+                        };
+                    }
+                    RuntimeMessage::Network(msg) => {
+                        let guard = runtime.ufs.clone();
+                        let mut guard = guard.lock().expect("poisoned iofs lock");
+
+                        match msg {
+                            get @ IofsNetworkMessage::Get(_) => {
+                                let route = get.route();
+                                if let Some(endpoint) = runtime
+                                    .http_endpoints
+                                    .get(&HttpEndPoint::GET(route.to_string()))
+                                {
+                                    let path = &runtime.threads[*endpoint].path;
+                                    if let Some(Grant::Allow) = guard
+                                        .block_manager_mut()
+                                        .metadata_mut()
+                                        .check_wasm_program_http_grant(
+                                            path,
+                                            GrantType::HttpGetEvent,
+                                            route,
+                                        )
+                                    {
+                                        runtime.threads[*endpoint]
+                                            .sender
+                                            .send(WasmProcessMessage::NetworkEvent(get))
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                            post @ IofsNetworkMessage::Post(_) => {
+                                let route = post.route();
+                                if let Some(endpoint) = runtime
+                                    .http_endpoints
+                                    .get(&HttpEndPoint::POST(route.to_string()))
+                                {
+                                    let path = &runtime.threads[*endpoint].path;
+                                    if let Some(Grant::Allow) = guard
+                                        .block_manager_mut()
+                                        .metadata_mut()
+                                        .check_wasm_program_http_grant(
+                                            path,
+                                            GrantType::HttpPostEvent,
+                                            route,
+                                        )
+                                    {
+                                        runtime.threads[*endpoint]
+                                            .sender
+                                            .send(WasmProcessMessage::NetworkEvent(post))
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                        };
                     }
                 }
             }
@@ -340,14 +429,23 @@ impl<B: BlockStorage> RuntimeManager<B> {
 
 enum RuntimeMessage {
     Runtime(RuntimeManagerMsg),
-    Registration((usize, MessageRegistration)),
+    Network(IofsNetworkMessage),
+    Registration((usize, IofsEventRegistration)),
 }
 
 fn receive_message<B: BlockStorage>(
     runtime: &RuntimeManager<B>,
 ) -> Result<RuntimeMessage, RecvError> {
     let mut select = Select::new();
+
     select.recv(&runtime.receiver);
+
+    let thread_offset = if let Some(http_receiver) = &runtime.http_receiver {
+        select.recv(http_receiver);
+        2
+    } else {
+        1
+    };
 
     for t in &runtime.threads {
         select.recv(&t.receiver);
@@ -366,8 +464,8 @@ fn receive_message<B: BlockStorage>(
             return msg
                 .map(|m| RuntimeMessage::Runtime(m))
                 .map_err(|_| RecvError);
-        } else {
-            let msg = runtime.threads[index - 1].receiver.try_recv();
+        } else if index == 1 && thread_offset == 2 {
+            let msg = runtime.http_receiver.as_ref().unwrap().try_recv();
             if let Err(e) = msg {
                 if e.is_empty() {
                     continue;
@@ -375,7 +473,18 @@ fn receive_message<B: BlockStorage>(
             }
 
             return msg
-                .map(|m| RuntimeMessage::Registration((index - 1, m)))
+                .map(|m| RuntimeMessage::Network(m))
+                .map_err(|_| RecvError);
+        } else {
+            let msg = runtime.threads[index - thread_offset].receiver.try_recv();
+            if let Err(e) = msg {
+                if e.is_empty() {
+                    continue;
+                }
+            }
+
+            return msg
+                .map(|m| RuntimeMessage::Registration((thread_offset - 2, m)))
                 .map_err(|_| RecvError);
         }
     }

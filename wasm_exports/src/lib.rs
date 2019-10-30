@@ -36,6 +36,8 @@ extern "C" {
     #[doc(hidden)]
     pub fn __register_for_callback(message: u32);
     #[doc(hidden)]
+    pub fn __register_get_handler(route: u32);
+    #[doc(hidden)]
     pub fn __register_post_handler(route: u32);
     #[doc(hidden)]
     pub fn __print(ptr: u32);
@@ -117,7 +119,7 @@ impl MessageHandlers {
 ///
 #[doc(hidden)]
 struct GetCallbacks {
-    callbacks: HashMap<String, extern "C" fn(&str)>,
+    callbacks: HashMap<String, extern "C" fn() -> String>,
 }
 
 impl GetCallbacks {
@@ -127,7 +129,7 @@ impl GetCallbacks {
         }
     }
 
-    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str)> {
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn() -> String> {
         self.callbacks.get(route)
     }
 }
@@ -136,7 +138,7 @@ impl GetCallbacks {
 ///
 #[doc(hidden)]
 struct PostCallbacks {
-    callbacks: HashMap<String, extern "C" fn(&str)>,
+    callbacks: HashMap<String, extern "C" fn(&str) -> String>,
 }
 
 impl PostCallbacks {
@@ -146,7 +148,7 @@ impl PostCallbacks {
         }
     }
 
-    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str)> {
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str) -> String> {
         self.callbacks.get(route)
     }
 }
@@ -156,7 +158,9 @@ impl PostCallbacks {
 /// This structure must be used in subsequent file operations on the opened file.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FileHandle {
+    /// The IOFS file handle for this file.
     pub handle: u64,
+    /// The UUID of this file.
     pub id: Uuid,
 }
 
@@ -165,8 +169,11 @@ pub struct FileHandle {
 /// We wrap the return types in a MessagePayload to simplify handler callback registration.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MessagePayload {
+    /// The path of the file with which this payload is associated.
     pub path: PathBuf,
+    /// The UUID of the file with which this payload is associated.
     pub id: Uuid,
+    /// The UUID of the parent of the file with which this payload is associated.
     pub parent_id: Uuid,
 }
 
@@ -191,11 +198,26 @@ pub fn register_callback(msg: WasmMessage, func: extern "C" fn(Option<MessagePay
     unsafe { __register_for_callback(msg as u32) };
 }
 
+/// Register an HTTP GET route
+///
+/// HTTP GET requests sent to http://hostname/wasm/<route> will be routed to this function. The
+/// <route> is a single string, and not a path.
+pub fn register_get_route<S: AsRef<str>>(route: S, func: extern "C" fn() -> String) {
+    let mut lookup = GET_HANDLERS.write().unwrap();
+    lookup
+        .callbacks
+        .entry(route.as_ref().to_owned())
+        .or_insert(func);
+
+    let route = Box::into_raw(Box::new(route.as_ref()));
+    unsafe { __register_get_handler(route as u32) };
+}
+
 /// Register an HTTP POST route
 ///
 /// HTTP POST requests sent to http://hostname/wasm/<route> will be routed to this function. The
 /// <route> is a single string, and not a path.
-pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str)) {
+pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str) -> String) {
     let mut lookup = POST_HANDLERS.write().unwrap();
     lookup
         .callbacks
@@ -476,24 +498,42 @@ pub extern "C" fn __handle_file_read(payload_ptr: i32, payload_len: i32) {
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_http_get(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
+pub extern "C" fn __handle_http_get(route_ptr: i32, route_len: i32) -> i32 {
     let route = unbox_string(route_ptr, route_len);
 
-    let lookup = POST_HANDLERS.read().unwrap();
-    if let Some(func) = lookup.lookup(&route) {
-        let slice = unbox_str(json_ptr, json_len);
-        func(slice);
+    let lookup = GET_HANDLERS.read().unwrap();
+    let result = if let Some(func) = lookup.lookup(&route) {
+        func()
+    } else {
+        "function not found in lookup table".to_string()
+    };
+    // Store the length of the string at the bottom of the stack
+    unsafe {
+        ::std::ptr::write(1 as _, result.len());
     }
+    result.as_ptr() as i32
 }
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn __handle_http_post(route_ptr: i32, route_len: i32, json_ptr: i32, json_len: i32) {
+pub extern "C" fn __handle_http_post(
+    route_ptr: i32,
+    route_len: i32,
+    json_ptr: i32,
+    json_len: i32,
+) -> i32 {
     let route = unbox_string(route_ptr, route_len);
 
     let lookup = POST_HANDLERS.read().unwrap();
-    if let Some(func) = lookup.lookup(&route) {
+    let result = if let Some(func) = lookup.lookup(&route) {
         let slice = unbox_str(json_ptr, json_len);
-        func(slice);
+        func(slice)
+    } else {
+        "function not found in lookup table".to_string()
+    };
+    // Store the length of the string at the bottom of the stack
+    unsafe {
+        ::std::ptr::write(1 as _, result.len());
     }
+    result.as_ptr() as i32
 }

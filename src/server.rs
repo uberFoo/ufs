@@ -47,15 +47,33 @@ pub(crate) enum IofsNetworkMessage {
     Get(IofsGetValue),
 }
 
+impl IofsNetworkMessage {
+    pub(crate) fn route(&self) -> &str {
+        match self {
+            IofsNetworkMessage::Post(m) => &m.route,
+            IofsNetworkMessage::Get(m) => &m.route,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct IofsPostValue {
     route: String,
-    inner: serde_json::Value,
+    body: serde_json::Value,
+    response_channel: Option<oneshot::Sender<String>>,
 }
 
 impl IofsPostValue {
-    pub(crate) fn new(route: String, inner: serde_json::Value) -> Self {
-        IofsPostValue { route, inner }
+    pub(crate) fn new(
+        route: String,
+        body: serde_json::Value,
+        response_channel: oneshot::Sender<String>,
+    ) -> Self {
+        IofsPostValue {
+            route,
+            body,
+            response_channel: Some(response_channel),
+        }
     }
 
     pub(crate) fn route(&self) -> &str {
@@ -63,7 +81,13 @@ impl IofsPostValue {
     }
 
     pub(crate) fn json(&self) -> &serde_json::Value {
-        &self.inner
+        &self.body
+    }
+
+    pub(crate) fn respond(&mut self, value: String) {
+        if let Some(channel) = self.response_channel.take() {
+            channel.send(value);
+        }
     }
 }
 
@@ -81,7 +105,7 @@ impl IofsGetValue {
         }
     }
 
-    pub(crate) fn response(&mut self, value: String) {
+    pub(crate) fn respond(&mut self, value: String) {
         if let Some(channel) = self.response_channel.take() {
             channel.send(value);
         }
@@ -452,6 +476,9 @@ fn send_json_to_wasm(
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
 ) -> impl warp::Reply {
-    channel.send(IofsNetworkMessage::Post(IofsPostValue::new(receiver, json)));
-    warp::reply::reply()
+    let (tx, rx) = oneshot::channel::<String>();
+    channel.send(IofsNetworkMessage::Post(IofsPostValue::new(
+        receiver, json, tx,
+    )));
+    rx.map(|result| warp::reply::html(result)).wait().unwrap()
 }

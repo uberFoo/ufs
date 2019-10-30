@@ -373,7 +373,7 @@ fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
 
     // The &str is stored as a u32 pointer, followed by a length. We first extract the pointer
     // from memory.
-    let ptr_vec: Vec<_> = memory.view()[str_ptr as usize..(str_ptr + 4) as usize]
+    let ptr_vec: Vec<u8> = memory.view()[str_ptr as usize..(str_ptr + 4) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();
@@ -381,7 +381,7 @@ fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
     debug!("\tptr: {}", ptr);
 
     // And then we extract the length.
-    let len_vec: Vec<_> = memory.view()[(str_ptr + 4) as usize..(str_ptr + 8) as usize]
+    let len_vec: Vec<u8> = memory.view()[(str_ptr + 4) as usize..(str_ptr + 8) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();
@@ -389,7 +389,7 @@ fn unbox_str(ctx: &Ctx, str_ptr: u32) -> String {
     debug!("\tlen: {}", len);
 
     // Now we dereference the pointer, and read len bytes.
-    let bytes: Vec<_> = memory.view()[ptr as usize..(ptr + len) as usize]
+    let bytes: Vec<u8> = memory.view()[ptr as usize..(ptr + len) as usize]
         .iter()
         .map(|cell| cell.get())
         .collect();

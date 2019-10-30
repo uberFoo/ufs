@@ -7,7 +7,7 @@ pub(crate) mod manager;
 pub(crate) mod message;
 
 pub(crate) use {
-    manager::{MessageRegistration, ProtoWasmProgram, RuntimeManager, RuntimeManagerMsg},
+    manager::{IofsEventRegistration, ProtoWasmProgram, RuntimeManager, RuntimeManagerMsg},
     message::{
         IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, IofsSystemMessage,
         WasmMessageSender,
@@ -19,14 +19,14 @@ use {
     crate::{
         block::BlockStorage,
         metadata::{DirectoryMetadata, File, FileHandle, Grant, GrantType},
-        server::{HTTPServerMessage, IofsNetworkMessage},
+        server::IofsNetworkMessage,
         OpenFileMode, UberFileSystem, UfsUuid,
     },
-    crossbeam::{crossbeam_channel, Select},
+    crossbeam::crossbeam_channel,
     failure::{Backtrace, Context, Fail},
     log::{debug, error, info},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         ffi::c_void,
         fmt::{self, Display},
         path::PathBuf,
@@ -46,6 +46,11 @@ struct FileWriteBuffer {
     file_offset: u64,
 }
 
+pub(crate) enum WasmProcessMessage {
+    IofsEvent(IofsMessage),
+    NetworkEvent(IofsNetworkMessage),
+}
+
 /// The main interface between the file system and WASM
 ///
 /// One of these is created when the file system loads a new WASM program. This struct maintains a
@@ -58,9 +63,9 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     /// The bytes that comprise the program.
     program: Vec<u8>,
     /// The file system sends messages with sender...
-    sender: crossbeam_channel::Sender<IofsMessage>,
+    sender: crossbeam_channel::Sender<WasmProcessMessage>,
     /// we receive them using this.
-    receiver: crossbeam_channel::Receiver<IofsMessage>,
+    receiver: crossbeam_channel::Receiver<WasmProcessMessage>,
     /// A list of IDs of the files or directories which were the subjects of the synchronous method
     /// invocations to the file system -- we can filter notifications with these.
     sync_func_ids: Vec<UfsUuid>,
@@ -68,25 +73,18 @@ pub(crate) struct WasmProcess<B: BlockStorage + 'static> {
     iofs: Arc<Mutex<UberFileSystem<B>>>,
     /// Write buffers for write_file
     write_buffers: HashMap<FileHandle, FileWriteBuffer>,
-    /// Messages sent from HTTP Server
-    http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
-    /// HTTP GET callbacks
-    get_callbacks: HashSet<String>,
-    /// HTTP POST callbacks
-    post_callbacks: HashSet<String>,
     /// Message registration channel sender
-    message_registration_sender: crossbeam_channel::Sender<MessageRegistration>,
+    message_registration_sender: crossbeam_channel::Sender<IofsEventRegistration>,
 }
 
 impl<B: BlockStorage> WasmProcess<B> {
     pub(in crate::wasm) fn new(
         path: PathBuf,
         program: Vec<u8>,
-        http_receiver: Option<crossbeam_channel::Receiver<IofsNetworkMessage>>,
-        message_registration_sender: crossbeam_channel::Sender<MessageRegistration>,
+        message_registration_sender: crossbeam_channel::Sender<IofsEventRegistration>,
         iofs: Arc<Mutex<UberFileSystem<B>>>,
     ) -> Self {
-        let (sender, receiver) = crossbeam_channel::unbounded::<IofsMessage>();
+        let (sender, receiver) = crossbeam_channel::unbounded::<WasmProcessMessage>();
 
         WasmProcess {
             path,
@@ -96,9 +94,6 @@ impl<B: BlockStorage> WasmProcess<B> {
             sync_func_ids: vec![],
             iofs,
             write_buffers: HashMap::new(),
-            http_receiver,
-            get_callbacks: HashSet::new(),
-            post_callbacks: HashSet::new(),
             message_registration_sender,
         }
     }
@@ -111,23 +106,26 @@ impl<B: BlockStorage> WasmProcess<B> {
         self.path.to_str().unwrap()
     }
 
-    pub(crate) fn get_sender(&self) -> crossbeam_channel::Sender<IofsMessage> {
+    pub(crate) fn get_sender(&self) -> crossbeam_channel::Sender<WasmProcessMessage> {
         self.sender.clone()
     }
 
     pub(crate) fn set_handles_message(&mut self, msg: WasmMessage) {
         self.message_registration_sender
-            .send(MessageRegistration::Register(msg));
+            .send(IofsEventRegistration::Register(msg))
+            .unwrap();
     }
 
     pub(crate) fn register_get_callback(&mut self, route: String) {
-        println!("registring for get callback for {}", route);
-        self.get_callbacks.insert(route);
+        self.message_registration_sender
+            .send(IofsEventRegistration::RegisterHttpGet(route))
+            .unwrap();
     }
 
     pub(crate) fn register_post_callback(&mut self, route: String) {
-        println!("registring for post callback for {}", route);
-        self.post_callbacks.insert(route);
+        self.message_registration_sender
+            .send(IofsEventRegistration::RegisterHttpPost(route))
+            .unwrap();
     }
 
     /// Check incoming message to see if we're the source.
@@ -166,7 +164,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::open_file)
+            .check_wasm_program_grant(&self.path, GrantType::OpenFileInvocation)
         {
             Some(Grant::Allow) => match guard.open_file(id, mode) {
                 Ok(handle) => {
@@ -175,7 +173,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                 }
                 Err(e) => Err(e),
             },
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 
@@ -197,7 +195,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::close_file)
+            .check_wasm_program_grant(&self.path, GrantType::CloseFileInvocation)
         {
             Some(Grant::Allow) => match guard.close_file(handle) {
                 Ok(_) => {
@@ -222,7 +220,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::read_file)
+            .check_wasm_program_grant(&self.path, GrantType::ReadFileInvocation)
         {
             Some(Grant::Allow) => match guard.read_file(handle, offset, size) {
                 Ok(v) => {
@@ -231,7 +229,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                 }
                 Err(e) => Err(e),
             },
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 
@@ -247,7 +245,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::write_file)
+            .check_wasm_program_grant(&self.path, GrantType::WriteFileInvocation)
         {
             Some(Grant::Allow) => {
                 let bytes = bytes.as_ref();
@@ -281,7 +279,7 @@ impl<B: BlockStorage> WasmProcess<B> {
 
                 Ok(bytes_written)
             }
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 
@@ -296,7 +294,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::create_file)
+            .check_wasm_program_grant(&self.path, GrantType::CreateFileInvocation)
         {
             Some(Grant::Allow) => match guard.create_file(dir_id, name) {
                 Ok((h, f)) => {
@@ -305,7 +303,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                 }
                 Err(e) => Err(e),
             },
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 
@@ -320,7 +318,7 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::create_directory)
+            .check_wasm_program_grant(&self.path, GrantType::CreateDirectoryInvocation)
         {
             Some(Grant::Allow) => match guard.create_directory(dir_id, name) {
                 Ok(dm) => {
@@ -329,7 +327,7 @@ impl<B: BlockStorage> WasmProcess<B> {
                 }
                 Err(e) => Err(e),
             },
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 
@@ -344,10 +342,10 @@ impl<B: BlockStorage> WasmProcess<B> {
         match guard
             .block_manager_mut()
             .metadata_mut()
-            .check_wasm_program_grant(&self.path, GrantType::open_directory)
+            .check_wasm_program_grant(&self.path, GrantType::OpenDirectoryInvocation)
         {
             Some(Grant::Allow) => guard.open_sub_directory(dir_id, name),
-            _ => Err(RuntimeErrorKind::IOFSPermission.into()),
+            _ => Err(RuntimeErrorKind::IofsPermission.into()),
         }
     }
 }
@@ -361,6 +359,7 @@ impl<B: BlockStorage> WasmProcess<B> {
             let import_object = imports! {
                 "env" => {
                     "__register_for_callback" => func!(__register_for_callback<B>),
+                    "__register_get_handler" => func!(__register_get_handler<B>),
                     "__register_post_handler" => func!(__register_post_handler<B>),
                     "__print" => func!(__print<B>),
                     "__open_file" => func!(__open_file<B>),
@@ -403,108 +402,88 @@ impl<B: BlockStorage> WasmProcess<B> {
 
             let mut msg_sender = WasmMessageSender::new(&mut instance, root_id);
 
-            let mut select = Select::new();
-            let receiver = process.receiver.clone();
-            select.recv(&receiver);
-
-            // Sometimes the borrow checker makes us jump through hoops.
-            let r: crossbeam_channel::Receiver<IofsNetworkMessage>;
-            if let Some(receiver) = &process.http_receiver {
-                r = receiver.clone();
-                select.recv(&r);
-            }
-
             loop {
-                let channel = select.ready();
-
-                debug!("channel {} is ready", channel);
-
-                if channel == 0 {
-                    // FIXME: This should not return, but instead check for an error, and retry.
-                    let message = process.receiver.try_recv()?;
-                    debug!(
-                        "{:?} dispatching file system message {:#?}",
-                        process.path, message
-                    );
-                    match &message {
-                        IofsMessage::SystemMessage(m) => match m {
-                            IofsSystemMessage::Shutdown => {
-                                msg_sender.send_shutdown()?;
-                            }
-                            IofsSystemMessage::Ping => {
-                                msg_sender.send_ping()?;
-                            }
-                        },
-                        IofsMessage::FileMessage(m) => match m {
-                            IofsFileMessage::Create(payload) => {
-                                if process.should_send_notification(&payload.parent_id) {
-                                    msg_sender.send_file_create(&payload)?;
+                let message = process.receiver.recv().unwrap();
+                match message {
+                    WasmProcessMessage::IofsEvent(message) => {
+                        debug!(
+                            "{:?} dispatching file system message {:#?}",
+                            process.path, message
+                        );
+                        match &message {
+                            IofsMessage::SystemMessage(m) => match m {
+                                IofsSystemMessage::Shutdown => {
+                                    msg_sender.send_shutdown()?;
                                 }
-                            }
-                            IofsFileMessage::Delete(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_file_delete(&payload)?;
+                                IofsSystemMessage::Ping => {
+                                    msg_sender.send_ping()?;
                                 }
-                            }
-                            IofsFileMessage::Open(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_file_open(&payload)?;
+                            },
+                            IofsMessage::FileMessage(m) => match m {
+                                IofsFileMessage::Create(payload) => {
+                                    if process.should_send_notification(&payload.parent_id) {
+                                        msg_sender.send_file_create(&payload)?;
+                                    }
                                 }
-                            }
-                            IofsFileMessage::Close(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_file_close(&payload)?;
+                                IofsFileMessage::Delete(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_file_delete(&payload)?;
+                                    }
                                 }
-                            }
-                            IofsFileMessage::Write(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_file_write(&payload)?;
+                                IofsFileMessage::Open(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_file_open(&payload)?;
+                                    }
                                 }
-                            }
-                            IofsFileMessage::Read(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_file_read(&payload)?;
+                                IofsFileMessage::Close(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_file_close(&payload)?;
+                                    }
                                 }
-                            }
-                            _ => unimplemented!(),
-                        },
-                        IofsMessage::DirMessage(m) => match m {
-                            IofsDirMessage::Create(payload) => {
-                                if process.should_send_notification(&payload.parent_id) {
-                                    msg_sender.send_dir_create(&payload)?;
+                                IofsFileMessage::Write(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_file_write(&payload)?;
+                                    }
                                 }
-                            }
-                            IofsDirMessage::Delete(payload) => {
-                                if process.should_send_notification(&payload.target_id) {
-                                    msg_sender.send_dir_delete(&payload)?;
+                                IofsFileMessage::Read(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_file_read(&payload)?;
+                                    }
                                 }
-                            }
-                        },
-                    };
-                    if let IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) = message {
-                        info!("WASM program {} shutting down", process.name());
-                        break;
+                            },
+                            IofsMessage::DirMessage(m) => match m {
+                                IofsDirMessage::Create(payload) => {
+                                    if process.should_send_notification(&payload.parent_id) {
+                                        msg_sender.send_dir_create(&payload)?;
+                                    }
+                                }
+                                IofsDirMessage::Delete(payload) => {
+                                    if process.should_send_notification(&payload.target_id) {
+                                        msg_sender.send_dir_delete(&payload)?;
+                                    }
+                                }
+                            },
+                        };
+                        if let IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) = message {
+                            info!("WASM program {} shutting down", process.name());
+                            break;
+                        }
                     }
-                } else {
-                    if let Some(r) = &process.http_receiver {
-                        let mut message = r.try_recv()?;
+                    WasmProcessMessage::NetworkEvent(mut message) => {
                         debug!(
                             "{:?} dispatching network message {:#?}",
                             process.path, message
                         );
                         match &mut message {
-                            IofsNetworkMessage::Post(msg) => {
-                                if process.post_callbacks.contains(msg.route()) {
-                                    // msg_sender.send_http_post(msg)?;
-                                    debug!("POST");
-                                }
-                            }
+                            IofsNetworkMessage::Post(msg) => match msg_sender.send_http_post(msg) {
+                                Ok(response) => msg.respond(response),
+                                Err(e) => msg.respond(e.to_string()),
+                            },
                             IofsNetworkMessage::Get(msg) => {
-                                debug!("GET {:?}", msg);
-                                msg.response("Hello world!".to_string());
-                                if process.get_callbacks.contains(msg.route()) {
-                                    // msg_sender.send_http_get(msg)?;
-                                }
+                                match msg_sender.send_http_get(msg) {
+                                    Ok(response) => msg.respond(response),
+                                    Err(e) => msg.respond(e.to_string()),
+                                };
                             }
                         }
                     }
@@ -552,9 +531,9 @@ enum RuntimeErrorKind {
     #[fail(display = "Error invoking function in WASM.")]
     FunctionInvocation,
     #[fail(display = "Error invoking IOFS function in WASM.")]
-    IOFSInvocation,
+    IofsInvocation,
     #[fail(display = "Insufficient permissions to execute function.")]
-    IOFSPermission,
+    IofsPermission,
 }
 
 impl From<RuntimeErrorKind> for RuntimeError {

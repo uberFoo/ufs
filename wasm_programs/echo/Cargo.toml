@@ -12,7 +12,9 @@ lazy_static = "1.4"
 mut_static = "5.0"
 wasm_exports = { path = "../../wasm_exports" }
 serde_json = "1.0.41"
-uuid = { version = "0.8.0", features = ["v5"] }
+uuid = { version = "0.8.1", features = ["v5"] }
+serde_derive = "1.0.102"
+serde = "1.0.102"
 
 [profile.release]
 # Tell `rustc` to optimize for small code size.

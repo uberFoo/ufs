@@ -1,4 +1,10 @@
-use {lazy_static::lazy_static, mut_static::MutStatic, uuid::Uuid, wasm_exports::*};
+use {
+    lazy_static::lazy_static,
+    mut_static::MutStatic,
+    serde_derive::{Deserialize, Serialize},
+    uuid::Uuid,
+    wasm_exports::*,
+};
 
 lazy_static! {
     pub static ref PROGRAM: MutStatic<Echo> = { MutStatic::from(Echo::new()) };
@@ -35,17 +41,43 @@ pub extern "C" fn init(root_id: Uuid) {
     register_callback(WasmMessage::FileRead, handle_file_read);
 
     register_post_route("foo", post);
-    // register_get_route("foo");
+    register_get_route("foo", get);
+}
+
+fn fib(n: usize) -> usize {
+    if n == 0 || n == 1 {
+        1
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+#[derive(Serialize)]
+struct Fib {
+    index: usize,
+    value: usize,
 }
 
 #[no_mangle]
-pub extern "C" fn post(json: &str) {
+pub extern "C" fn post(json: &str) -> String {
+    let fib = fib(42);
     print(&format!("post called with {:#?}", json));
+    let result = Fib {
+        index: 42,
+        value: fib,
+    };
+    serde_json::to_string_pretty(&result).unwrap()
 }
 
 #[no_mangle]
-pub extern "C" fn get(route: &str) {
-    print(&format!("get called with {:#?}", route));
+pub extern "C" fn get() -> String {
+    print("get called");
+    let fib = fib(42);
+    let result = Fib {
+        index: 42,
+        value: fib,
+    };
+    serde_json::to_string_pretty(&result).unwrap()
 }
 
 #[no_mangle]

@@ -295,6 +295,17 @@ impl Metadata {
         self.grants.check_grant(program, grant_type)
     }
 
+    /// Check Wasm program HTTP grant
+    ///
+    pub(crate) fn check_wasm_program_http_grant(
+        &mut self,
+        program: &PathBuf,
+        grant_type: GrantType,
+        route: &str,
+    ) -> Option<Grant> {
+        self.grants.check_http_grant(program, grant_type, route)
+    }
+
     /// Create a new directory
     ///
     pub(crate) fn new_directory(
@@ -576,7 +587,7 @@ impl Metadata {
     /// Indicator that the metedata needs to be written.
     ///
     pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
+        self.dirty || self.grants.is_dirty()
     }
 
     /// Set the permissions on a Metadata node
