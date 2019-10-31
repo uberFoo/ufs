@@ -4,7 +4,7 @@
 //!
 use {
     crate::{
-        server::{IofsGetValue, IofsPostValue},
+        server::{IofsNetworkGetValue, IofsNetworkJsonValue},
         uuid::UfsUuid,
         wasm::RuntimeErrorKind,
     },
@@ -273,7 +273,10 @@ impl<'a> WasmMessageSender<'a> {
         Ok(())
     }
 
-    pub(crate) fn send_http_get(&mut self, msg: &IofsGetValue) -> Result<String, failure::Error> {
+    pub(crate) fn send_http_get(
+        &mut self,
+        msg: &IofsNetworkGetValue,
+    ) -> Result<String, failure::Error> {
         self.write_wasm_memory(5, &msg.route());
         match self.call_wasm_func(
             "__handle_http_get",
@@ -290,13 +293,100 @@ impl<'a> WasmMessageSender<'a> {
         }
     }
 
-    pub(crate) fn send_http_post(&mut self, msg: &IofsPostValue) -> Result<String, failure::Error> {
+    pub(crate) fn send_http_post(
+        &mut self,
+        msg: &IofsNetworkJsonValue,
+    ) -> Result<String, failure::Error> {
         let json_str =
             serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_post");
         self.write_wasm_memory(5, &msg.route());
         self.write_wasm_memory(5 + msg.route().len(), &json_str);
         match self.call_wasm_func(
             "__handle_http_post",
+            Some(&[
+                Value::I32(5),
+                Value::I32(msg.route().len() as i32),
+                Value::I32(5 + msg.route().len() as i32),
+                Value::I32(json_str.len() as i32),
+            ]),
+        ) {
+            Ok(value) => {
+                if let Value::I32(v) = value[0] {
+                    Ok(self.unbox_wasm_string(v as usize))
+                } else {
+                    Err(RuntimeErrorKind::IofsInvocation.into())
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub(crate) fn send_http_put(
+        &mut self,
+        msg: &IofsNetworkJsonValue,
+    ) -> Result<String, failure::Error> {
+        let json_str =
+            serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_put");
+        self.write_wasm_memory(5, &msg.route());
+        self.write_wasm_memory(5 + msg.route().len(), &json_str);
+        match self.call_wasm_func(
+            "__handle_http_put",
+            Some(&[
+                Value::I32(5),
+                Value::I32(msg.route().len() as i32),
+                Value::I32(5 + msg.route().len() as i32),
+                Value::I32(json_str.len() as i32),
+            ]),
+        ) {
+            Ok(value) => {
+                if let Value::I32(v) = value[0] {
+                    Ok(self.unbox_wasm_string(v as usize))
+                } else {
+                    Err(RuntimeErrorKind::IofsInvocation.into())
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub(crate) fn send_http_patch(
+        &mut self,
+        msg: &IofsNetworkJsonValue,
+    ) -> Result<String, failure::Error> {
+        let json_str =
+            serde_json::to_string(msg.json()).expect("unable to serialize JSON in send_http_patch");
+        self.write_wasm_memory(5, &msg.route());
+        self.write_wasm_memory(5 + msg.route().len(), &json_str);
+        match self.call_wasm_func(
+            "__handle_http_patch",
+            Some(&[
+                Value::I32(5),
+                Value::I32(msg.route().len() as i32),
+                Value::I32(5 + msg.route().len() as i32),
+                Value::I32(json_str.len() as i32),
+            ]),
+        ) {
+            Ok(value) => {
+                if let Value::I32(v) = value[0] {
+                    Ok(self.unbox_wasm_string(v as usize))
+                } else {
+                    Err(RuntimeErrorKind::IofsInvocation.into())
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub(crate) fn send_http_delete(
+        &mut self,
+        msg: &IofsNetworkJsonValue,
+    ) -> Result<String, failure::Error> {
+        let json_str = serde_json::to_string(msg.json())
+            .expect("unable to serialize JSON in send_http_delete");
+        self.write_wasm_memory(5, &msg.route());
+        self.write_wasm_memory(5 + msg.route().len(), &json_str);
+        match self.call_wasm_func(
+            "__handle_http_delete",
             Some(&[
                 Value::I32(5),
                 Value::I32(msg.route().len() as i32),

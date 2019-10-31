@@ -128,6 +128,24 @@ impl<B: BlockStorage> WasmProcess<B> {
             .unwrap();
     }
 
+    pub(crate) fn register_put_callback(&mut self, route: String) {
+        self.message_registration_sender
+            .send(IofsEventRegistration::RegisterHttpPut(route))
+            .unwrap();
+    }
+
+    pub(crate) fn register_patch_callback(&mut self, route: String) {
+        self.message_registration_sender
+            .send(IofsEventRegistration::RegisterHttpPatch(route))
+            .unwrap();
+    }
+
+    pub(crate) fn register_delete_callback(&mut self, route: String) {
+        self.message_registration_sender
+            .send(IofsEventRegistration::RegisterHttpDelete(route))
+            .unwrap();
+    }
+
     /// Check incoming message to see if we're the source.
     ///
     /// We don't want to be notified about things that we've done to the file system, so we maintain
@@ -361,6 +379,9 @@ impl<B: BlockStorage> WasmProcess<B> {
                     "__register_for_callback" => func!(__register_for_callback<B>),
                     "__register_get_handler" => func!(__register_get_handler<B>),
                     "__register_post_handler" => func!(__register_post_handler<B>),
+                    "__register_put_handler" => func!(__register_put_handler<B>),
+                    "__register_patch_handler" => func!(__register_patch_handler<B>),
+                    "__register_delete_handler" => func!(__register_delete_handler<B>),
                     "__print" => func!(__print<B>),
                     "__open_file" => func!(__open_file<B>),
                     "__close_file" => func!(__close_file<B>),
@@ -475,15 +496,30 @@ impl<B: BlockStorage> WasmProcess<B> {
                             process.path, message
                         );
                         match &mut message {
-                            IofsNetworkMessage::Post(msg) => match msg_sender.send_http_post(msg) {
-                                Ok(response) => msg.respond(response),
-                                Err(e) => msg.respond(e.to_string()),
-                            },
                             IofsNetworkMessage::Get(msg) => {
                                 match msg_sender.send_http_get(msg) {
                                     Ok(response) => msg.respond(response),
                                     Err(e) => msg.respond(e.to_string()),
                                 };
+                            }
+                            IofsNetworkMessage::Post(msg) => match msg_sender.send_http_post(msg) {
+                                Ok(response) => msg.respond(response),
+                                Err(e) => msg.respond(e.to_string()),
+                            },
+                            IofsNetworkMessage::Put(msg) => match msg_sender.send_http_put(msg) {
+                                Ok(response) => msg.respond(response),
+                                Err(e) => msg.respond(e.to_string()),
+                            },
+                            IofsNetworkMessage::Patch(msg) => match msg_sender.send_http_patch(msg)
+                            {
+                                Ok(response) => msg.respond(response),
+                                Err(e) => msg.respond(e.to_string()),
+                            },
+                            IofsNetworkMessage::Delete(msg) => {
+                                match msg_sender.send_http_delete(msg) {
+                                    Ok(response) => msg.respond(response),
+                                    Err(e) => msg.respond(e.to_string()),
+                                }
                             }
                         }
                     }

@@ -70,6 +70,9 @@ pub(crate) enum GrantType {
     FileWriteEvent,
     HttpGetEvent,
     HttpPostEvent,
+    HttpPutEvent,
+    HttpPatchEvent,
+    HttpDeleteEvent,
     OpenFileInvocation,
     CloseFileInvocation,
     ReadFileInvocation,
@@ -92,6 +95,9 @@ impl GrantType {
             GrantType::FileWriteEvent => "receive file write events",
             GrantType::HttpGetEvent => "receive HTTP GET to",
             GrantType::HttpPostEvent => "receive HTTP POST to",
+            GrantType::HttpPutEvent => "receive HTTP PUT to",
+            GrantType::HttpPatchEvent => "receive HTTP PATCH to",
+            GrantType::HttpDeleteEvent => "receive HTTP DELETE to",
             GrantType::OpenFileInvocation => "open files",
             GrantType::CloseFileInvocation => "close files",
             GrantType::ReadFileInvocation => "read files",
@@ -117,6 +123,9 @@ pub(crate) struct ProgramPermissions {
     // HTTP Events
     http_get: HttpGrant,
     http_post: HttpGrant,
+    http_put: HttpGrant,
+    http_patch: HttpGrant,
+    http_delete: HttpGrant,
     // Synchronous function calls
     open_file: Grant,
     close_file: Grant,
@@ -140,6 +149,9 @@ impl ProgramPermissions {
             file_write: Grant::Unknown,
             http_get: HttpGrant::new(),
             http_post: HttpGrant::new(),
+            http_put: HttpGrant::new(),
+            http_patch: HttpGrant::new(),
+            http_delete: HttpGrant::new(),
             open_file: Grant::Unknown,
             close_file: Grant::Unknown,
             read_file: Grant::Unknown,
@@ -175,6 +187,9 @@ impl ProgramPermissions {
         match grant_type {
             GrantType::HttpGetEvent => self.http_get.check(route),
             GrantType::HttpPostEvent => self.http_post.check(route),
+            GrantType::HttpPutEvent => self.http_put.check(route),
+            GrantType::HttpPatchEvent => self.http_patch.check(route),
+            GrantType::HttpDeleteEvent => self.http_delete.check(route),
             _ => panic!("called get_http_grant with non-HTTP grant-type"),
         }
     }
@@ -249,6 +264,9 @@ impl ProgramPermissions {
         match grant_type {
             GrantType::HttpGetEvent => self.http_get.set(route, grant),
             GrantType::HttpPostEvent => self.http_post.set(route, grant),
+            GrantType::HttpPutEvent => self.http_put.set(route, grant),
+            GrantType::HttpPatchEvent => self.http_patch.set(route, grant),
+            GrantType::HttpDeleteEvent => self.http_delete.set(route, grant),
             _ => panic!("called set_http_grant with non-HTTP grant-type"),
         }
     }
@@ -317,6 +335,22 @@ impl WasmPermissions {
     }
 }
 
+fn query_user(prompt: String) -> bool {
+    let mut buffer = String::new();
+    print!("{}", prompt);
+
+    io::stdout().flush().unwrap();
+    io::stdin().read_line(&mut buffer).unwrap();
+
+    if buffer == "y\n" || buffer == "Y\n" {
+        true
+    } else if buffer == "\n" {
+        false
+    } else {
+        query_user(prompt)
+    }
+}
+
 fn check_grant_and_get_auth(
     inner: &mut ProgramPermissions,
     program: &PathBuf,
@@ -335,15 +369,11 @@ fn check_grant_and_get_auth(
 }
 
 fn get_authorization(program: &PathBuf, grant_desc: &str) -> Grant {
-    let mut buffer = String::new();
-    print!(
+    if query_user(format!(
         "\nAllow {} to {}? (y/N): ",
         program.to_str().unwrap(),
         grant_desc
-    );
-    io::stdout().flush().unwrap();
-    io::stdin().read_line(&mut buffer).unwrap();
-    if buffer == "y\n" || buffer == "Y\n" {
+    )) {
         Grant::Allow
     } else {
         Grant::Deny
@@ -370,16 +400,12 @@ fn check_http_grant_and_get_auth(
 }
 
 fn get_http_authorization(program: &PathBuf, grant_desc: &str, route: &str) -> Grant {
-    let mut buffer = String::new();
-    print!(
+    if query_user(format!(
         "\nAllow {} to {} /wasm/{}? (y/N): ",
         program.to_str().unwrap(),
         grant_desc,
         route
-    );
-    io::stdout().flush().unwrap();
-    io::stdin().read_line(&mut buffer).unwrap();
-    if buffer == "y\n" || buffer == "Y\n" {
+    )) {
         Grant::Allow
     } else {
         Grant::Deny

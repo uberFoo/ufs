@@ -29,6 +29,8 @@ use {
     warp::{filters::BoxedFilter, path, Filter, Reply},
 };
 
+const CONTENT_LENGTH: u64 = 1024 * 16;
+
 /// Messages sent in response to HTTP events
 ///
 pub(crate) enum HTTPServerMessage {
@@ -43,33 +45,64 @@ pub(crate) enum GetPayload {
 
 #[derive(Debug)]
 pub(crate) enum IofsNetworkMessage {
-    Post(IofsPostValue),
-    Get(IofsGetValue),
+    Get(IofsNetworkGetValue),
+    Post(IofsNetworkJsonValue),
+    Put(IofsNetworkJsonValue),
+    Patch(IofsNetworkJsonValue),
+    Delete(IofsNetworkJsonValue),
 }
 
 impl IofsNetworkMessage {
     pub(crate) fn route(&self) -> &str {
         match self {
-            IofsNetworkMessage::Post(m) => &m.route,
             IofsNetworkMessage::Get(m) => &m.route,
+            IofsNetworkMessage::Post(m) => &m.route,
+            IofsNetworkMessage::Put(m) => &m.route,
+            IofsNetworkMessage::Patch(m) => &m.route,
+            IofsNetworkMessage::Delete(m) => &m.route,
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct IofsPostValue {
+pub(crate) struct IofsNetworkGetValue {
+    route: String,
+    response_channel: Option<oneshot::Sender<String>>,
+}
+
+impl IofsNetworkGetValue {
+    pub(crate) fn new(route: String, response_channel: oneshot::Sender<String>) -> Self {
+        IofsNetworkGetValue {
+            route,
+            response_channel: Some(response_channel),
+        }
+    }
+
+    pub(crate) fn respond(&mut self, value: String) {
+        if let Some(channel) = self.response_channel.take() {
+            channel.send(value);
+        }
+    }
+
+    pub(crate) fn route(&self) -> &str {
+        &self.route
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct IofsNetworkJsonValue {
     route: String,
     body: serde_json::Value,
     response_channel: Option<oneshot::Sender<String>>,
 }
 
-impl IofsPostValue {
+impl IofsNetworkJsonValue {
     pub(crate) fn new(
         route: String,
         body: serde_json::Value,
         response_channel: oneshot::Sender<String>,
     ) -> Self {
-        IofsPostValue {
+        IofsNetworkJsonValue {
             route,
             body,
             response_channel: Some(response_channel),
@@ -88,31 +121,6 @@ impl IofsPostValue {
         if let Some(channel) = self.response_channel.take() {
             channel.send(value);
         }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct IofsGetValue {
-    route: String,
-    response_channel: Option<oneshot::Sender<String>>,
-}
-
-impl IofsGetValue {
-    pub(crate) fn new(route: String, response_channel: oneshot::Sender<String>) -> Self {
-        IofsGetValue {
-            route,
-            response_channel: Some(response_channel),
-        }
-    }
-
-    pub(crate) fn respond(&mut self, value: String) {
-        if let Some(channel) = self.response_channel.take() {
-            channel.send(value);
-        }
-    }
-
-    pub(crate) fn route(&self) -> &str {
-        &self.route
     }
 }
 
@@ -163,10 +171,13 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let hb = Arc::new(hb);
             let hb_clone = hb.clone();
             let handlebars_index = move |with_template| render(with_template, hb_clone.clone());
+
             let hb_clone = hb.clone();
             let handlebars_block = move |with_template| render(with_template, hb_clone.clone());
+
             let hb_clone = hb.clone();
             let handlebars_dir = move |with_template| render(with_template, hb_clone.clone());
+
             let hb_clone = hb.clone();
             let handlebars_file = move |with_template| render(with_template, hb_clone.clone());
 
@@ -187,7 +198,19 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
 
             let channel = server.http_sender.clone();
             let to_wasm_post =
-                move |receiver, json| send_json_to_wasm(receiver, json, channel.clone());
+                move |receiver, json| send_post_to_wasm(receiver, json, channel.clone());
+
+            let channel = server.http_sender.clone();
+            let to_wasm_put =
+                move |receiver, json| send_put_to_wasm(receiver, json, channel.clone());
+
+            let channel = server.http_sender.clone();
+            let to_wasm_patch =
+                move |receiver, json| send_patch_to_wasm(receiver, json, channel.clone());
+
+            let channel = server.http_sender.clone();
+            let to_wasm_delete =
+                move |receiver, json| send_delete_to_wasm(receiver, json, channel.clone());
 
             let index = warp::get2()
                 .and(warp::path::end())
@@ -230,11 +253,40 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
-                .and(warp::body::content_length_limit(1024 * 16))
+                .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
                 .map(to_wasm_post);
 
-            let routes = index.or(block).or(dir).or(file).or(wasm_get).or(wasm_post);
+            let wasm_put = warp::put2()
+                .and(warp::path("wasm"))
+                .and(warp::path::param())
+                .and(warp::body::content_length_limit(CONTENT_LENGTH))
+                .and(warp::body::json())
+                .map(to_wasm_put);
+
+            let wasm_patch = warp::patch()
+                .and(warp::path("wasm"))
+                .and(warp::path::param())
+                .and(warp::body::content_length_limit(CONTENT_LENGTH))
+                .and(warp::body::json())
+                .map(to_wasm_patch);
+
+            let wasm_delete = warp::delete2()
+                .and(warp::path("wasm"))
+                .and(warp::path::param())
+                .and(warp::body::content_length_limit(CONTENT_LENGTH))
+                .and(warp::body::json())
+                .map(to_wasm_delete);
+
+            let routes = index
+                .or(block)
+                .or(dir)
+                .or(file)
+                .or(wasm_get)
+                .or(wasm_post)
+                .or(wasm_put)
+                .or(wasm_patch)
+                .or(wasm_delete);
 
             let (addr, warp) = warp::serve(routes)
                 // .tls("src/certs/cert.pem", "src/certs/cern.rsa")
@@ -460,7 +512,9 @@ fn send_get_filter(
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
 ) -> impl warp::Reply {
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Get(IofsGetValue::new(receiver, tx)));
+    channel.send(IofsNetworkMessage::Get(IofsNetworkGetValue::new(
+        receiver, tx,
+    )));
 
     // let bar = rx.map(|result| warp::reply::html(result));
     // let result = rx.wait().unwrap();
@@ -471,13 +525,49 @@ fn send_get_filter(
     // rx.map(|result| warp::reply::html(result))
 }
 
-fn send_json_to_wasm(
+fn send_post_to_wasm(
     receiver: String,
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
 ) -> impl warp::Reply {
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Post(IofsPostValue::new(
+    channel.send(IofsNetworkMessage::Post(IofsNetworkJsonValue::new(
+        receiver, json, tx,
+    )));
+    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+}
+
+fn send_put_to_wasm(
+    receiver: String,
+    json: serde_json::Value,
+    channel: crossbeam_channel::Sender<IofsNetworkMessage>,
+) -> impl warp::Reply {
+    let (tx, rx) = oneshot::channel::<String>();
+    channel.send(IofsNetworkMessage::Put(IofsNetworkJsonValue::new(
+        receiver, json, tx,
+    )));
+    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+}
+
+fn send_patch_to_wasm(
+    receiver: String,
+    json: serde_json::Value,
+    channel: crossbeam_channel::Sender<IofsNetworkMessage>,
+) -> impl warp::Reply {
+    let (tx, rx) = oneshot::channel::<String>();
+    channel.send(IofsNetworkMessage::Patch(IofsNetworkJsonValue::new(
+        receiver, json, tx,
+    )));
+    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+}
+
+fn send_delete_to_wasm(
+    receiver: String,
+    json: serde_json::Value,
+    channel: crossbeam_channel::Sender<IofsNetworkMessage>,
+) -> impl warp::Reply {
+    let (tx, rx) = oneshot::channel::<String>();
+    channel.send(IofsNetworkMessage::Delete(IofsNetworkJsonValue::new(
         receiver, json, tx,
     )));
     rx.map(|result| warp::reply::html(result)).wait().unwrap()

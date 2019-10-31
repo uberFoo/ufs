@@ -203,12 +203,18 @@ pub(crate) enum IofsEventRegistration {
     UnRegister(WasmMessage),
     RegisterHttpGet(String),
     RegisterHttpPost(String),
+    RegisterHttpPut(String),
+    RegisterHttpPatch(String),
+    RegisterHttpDelete(String),
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 enum HttpEndPoint {
     GET(String),
     POST(String),
+    PUT(String),
+    PATCH(String),
+    DELETE(String),
 }
 
 /// WASM Thread Management
@@ -353,6 +359,24 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                     .entry(HttpEndPoint::POST(r))
                                     .or_insert(index);
                             }
+                            IofsEventRegistration::RegisterHttpPut(r) => {
+                                runtime
+                                    .http_endpoints
+                                    .entry(HttpEndPoint::PUT(r))
+                                    .or_insert(index);
+                            }
+                            IofsEventRegistration::RegisterHttpPatch(r) => {
+                                runtime
+                                    .http_endpoints
+                                    .entry(HttpEndPoint::PATCH(r))
+                                    .or_insert(index);
+                            }
+                            IofsEventRegistration::RegisterHttpDelete(r) => {
+                                runtime
+                                    .http_endpoints
+                                    .entry(HttpEndPoint::DELETE(r))
+                                    .or_insert(index);
+                            }
                         };
                     }
                     RuntimeMessage::Network(msg) => {
@@ -402,6 +426,75 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                         runtime.threads[*endpoint]
                                             .sender
                                             .send(WasmProcessMessage::NetworkEvent(post))
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                            put @ IofsNetworkMessage::Put(_) => {
+                                let route = put.route();
+                                if let Some(endpoint) = runtime
+                                    .http_endpoints
+                                    .get(&HttpEndPoint::PUT(route.to_string()))
+                                {
+                                    let path = &runtime.threads[*endpoint].path;
+                                    if let Some(Grant::Allow) = guard
+                                        .block_manager_mut()
+                                        .metadata_mut()
+                                        .check_wasm_program_http_grant(
+                                            path,
+                                            GrantType::HttpPutEvent,
+                                            route,
+                                        )
+                                    {
+                                        runtime.threads[*endpoint]
+                                            .sender
+                                            .send(WasmProcessMessage::NetworkEvent(put))
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                            patch @ IofsNetworkMessage::Patch(_) => {
+                                let route = patch.route();
+                                if let Some(endpoint) = runtime
+                                    .http_endpoints
+                                    .get(&HttpEndPoint::PATCH(route.to_string()))
+                                {
+                                    let path = &runtime.threads[*endpoint].path;
+                                    if let Some(Grant::Allow) = guard
+                                        .block_manager_mut()
+                                        .metadata_mut()
+                                        .check_wasm_program_http_grant(
+                                            path,
+                                            GrantType::HttpPatchEvent,
+                                            route,
+                                        )
+                                    {
+                                        runtime.threads[*endpoint]
+                                            .sender
+                                            .send(WasmProcessMessage::NetworkEvent(patch))
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                            delete @ IofsNetworkMessage::Delete(_) => {
+                                let route = delete.route();
+                                if let Some(endpoint) = runtime
+                                    .http_endpoints
+                                    .get(&HttpEndPoint::DELETE(route.to_string()))
+                                {
+                                    let path = &runtime.threads[*endpoint].path;
+                                    if let Some(Grant::Allow) = guard
+                                        .block_manager_mut()
+                                        .metadata_mut()
+                                        .check_wasm_program_http_grant(
+                                            path,
+                                            GrantType::HttpDeleteEvent,
+                                            route,
+                                        )
+                                    {
+                                        runtime.threads[*endpoint]
+                                            .sender
+                                            .send(WasmProcessMessage::NetworkEvent(delete))
                                             .unwrap();
                                     }
                                 }

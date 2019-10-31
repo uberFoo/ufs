@@ -40,8 +40,11 @@ pub extern "C" fn init(root_id: Uuid) {
     register_callback(WasmMessage::FileWrite, handle_file_write);
     register_callback(WasmMessage::FileRead, handle_file_read);
 
-    register_post_route("foo", post);
     register_get_route("foo", get);
+    register_post_route("foo", post);
+    register_put_route("foo", put);
+    register_patch_route("foo", patch);
+    register_delete_route("foo", delete);
 }
 
 fn fib(n: usize) -> usize {
@@ -59,6 +62,17 @@ struct Fib {
 }
 
 #[no_mangle]
+pub extern "C" fn get() -> String {
+    print("get called");
+    let fib = fib(42);
+    let result = Fib {
+        index: 42,
+        value: fib,
+    };
+    serde_json::to_string_pretty(&result).unwrap()
+}
+
+#[no_mangle]
 pub extern "C" fn post(json: &str) -> String {
     let fib = fib(42);
     print(&format!("post called with {:#?}", json));
@@ -70,9 +84,31 @@ pub extern "C" fn post(json: &str) -> String {
 }
 
 #[no_mangle]
-pub extern "C" fn get() -> String {
-    print("get called");
+pub extern "C" fn put(json: &str) -> String {
     let fib = fib(42);
+    print(&format!("put called with {:#?}", json));
+    let result = Fib {
+        index: 42,
+        value: fib,
+    };
+    serde_json::to_string_pretty(&result).unwrap()
+}
+
+#[no_mangle]
+pub extern "C" fn patch(json: &str) -> String {
+    let fib = fib(42);
+    print(&format!("patch called with {:#?}", json));
+    let result = Fib {
+        index: 42,
+        value: fib,
+    };
+    serde_json::to_string_pretty(&result).unwrap()
+}
+
+#[no_mangle]
+pub extern "C" fn delete(json: &str) -> String {
+    let fib = fib(42);
+    print(&format!("delete called with {:#?}", json));
     let result = Fib {
         index: 42,
         value: fib,

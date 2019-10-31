@@ -23,6 +23,12 @@ lazy_static! {
     static ref GET_HANDLERS: MutStatic<GetCallbacks> = { MutStatic::from(GetCallbacks::new()) };
     #[doc(hidden)]
     static ref POST_HANDLERS: MutStatic<PostCallbacks> = { MutStatic::from(PostCallbacks::new()) };
+    #[doc(hidden)]
+    static ref PUT_HANDLERS: MutStatic<PutCallbacks> = { MutStatic::from(PutCallbacks::new()) };
+    #[doc(hidden)]
+    static ref PATCH_HANDLERS: MutStatic<PatchCallbacks> = { MutStatic::from(PatchCallbacks::new()) };
+    #[doc(hidden)]
+    static ref DELETE_HANDLERS: MutStatic<DeleteCallbacks> = { MutStatic::from(DeleteCallbacks::new()) };
 }
 
 /// These are exports that are available to be called by the WASM program.
@@ -39,6 +45,12 @@ extern "C" {
     pub fn __register_get_handler(route: u32);
     #[doc(hidden)]
     pub fn __register_post_handler(route: u32);
+    #[doc(hidden)]
+    pub fn __register_put_handler(route: u32);
+    #[doc(hidden)]
+    pub fn __register_patch_handler(route: u32);
+    #[doc(hidden)]
+    pub fn __register_delete_handler(route: u32);
     #[doc(hidden)]
     pub fn __print(ptr: u32);
     #[doc(hidden)]
@@ -153,6 +165,63 @@ impl PostCallbacks {
     }
 }
 
+/// Local storage for mapping HTTP PUT routes to callbacks.
+///
+#[doc(hidden)]
+struct PutCallbacks {
+    callbacks: HashMap<String, extern "C" fn(&str) -> String>,
+}
+
+impl PutCallbacks {
+    fn new() -> Self {
+        PutCallbacks {
+            callbacks: HashMap::new(),
+        }
+    }
+
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str) -> String> {
+        self.callbacks.get(route)
+    }
+}
+
+/// Local storage for mapping HTTP PATCH routes to callbacks.
+///
+#[doc(hidden)]
+struct PatchCallbacks {
+    callbacks: HashMap<String, extern "C" fn(&str) -> String>,
+}
+
+impl PatchCallbacks {
+    fn new() -> Self {
+        PatchCallbacks {
+            callbacks: HashMap::new(),
+        }
+    }
+
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str) -> String> {
+        self.callbacks.get(route)
+    }
+}
+
+/// Local storage for mapping HTTP DELETE routes to callbacks.
+///
+#[doc(hidden)]
+struct DeleteCallbacks {
+    callbacks: HashMap<String, extern "C" fn(&str) -> String>,
+}
+
+impl DeleteCallbacks {
+    fn new() -> Self {
+        DeleteCallbacks {
+            callbacks: HashMap::new(),
+        }
+    }
+
+    fn lookup(&self, route: &String) -> Option<&extern "C" fn(&str) -> String> {
+        self.callbacks.get(route)
+    }
+}
+
 /// Returned from the `create_file` function
 ///
 /// This structure must be used in subsequent file operations on the opened file.
@@ -226,6 +295,51 @@ pub fn register_post_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str) ->
 
     let route = Box::into_raw(Box::new(route.as_ref()));
     unsafe { __register_post_handler(route as u32) };
+}
+
+/// Register an HTTP PUT route
+///
+/// HTTP PUT requests sent to http://hostname/wasm/<route> will be routed to this function. The
+/// <route> is a single string, and not a path.
+pub fn register_put_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str) -> String) {
+    let mut lookup = PUT_HANDLERS.write().unwrap();
+    lookup
+        .callbacks
+        .entry(route.as_ref().to_owned())
+        .or_insert(func);
+
+    let route = Box::into_raw(Box::new(route.as_ref()));
+    unsafe { __register_put_handler(route as u32) };
+}
+
+/// Register an HTTP PATCH route
+///
+/// HTTP PATCH requests sent to http://hostname/wasm/<route> will be routed to this function. The
+/// <route> is a single string, and not a path.
+pub fn register_patch_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str) -> String) {
+    let mut lookup = PATCH_HANDLERS.write().unwrap();
+    lookup
+        .callbacks
+        .entry(route.as_ref().to_owned())
+        .or_insert(func);
+
+    let route = Box::into_raw(Box::new(route.as_ref()));
+    unsafe { __register_patch_handler(route as u32) };
+}
+
+/// Register an HTTP DELETE route
+///
+/// HTTP DELETE requests sent to http://hostname/wasm/<route> will be routed to this function. The
+/// <route> is a single string, and not a path.
+pub fn register_delete_route<S: AsRef<str>>(route: S, func: extern "C" fn(&str) -> String) {
+    let mut lookup = DELETE_HANDLERS.write().unwrap();
+    lookup
+        .callbacks
+        .entry(route.as_ref().to_owned())
+        .or_insert(func);
+
+    let route = Box::into_raw(Box::new(route.as_ref()));
+    unsafe { __register_delete_handler(route as u32) };
 }
 
 /// Open a file
@@ -525,6 +639,78 @@ pub extern "C" fn __handle_http_post(
     let route = unbox_string(route_ptr, route_len);
 
     let lookup = POST_HANDLERS.read().unwrap();
+    let result = if let Some(func) = lookup.lookup(&route) {
+        let slice = unbox_str(json_ptr, json_len);
+        func(slice)
+    } else {
+        "function not found in lookup table".to_string()
+    };
+    // Store the length of the string at the bottom of the stack
+    unsafe {
+        ::std::ptr::write(1 as _, result.len());
+    }
+    result.as_ptr() as i32
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn __handle_http_put(
+    route_ptr: i32,
+    route_len: i32,
+    json_ptr: i32,
+    json_len: i32,
+) -> i32 {
+    let route = unbox_string(route_ptr, route_len);
+
+    let lookup = PUT_HANDLERS.read().unwrap();
+    let result = if let Some(func) = lookup.lookup(&route) {
+        let slice = unbox_str(json_ptr, json_len);
+        func(slice)
+    } else {
+        "function not found in lookup table".to_string()
+    };
+    // Store the length of the string at the bottom of the stack
+    unsafe {
+        ::std::ptr::write(1 as _, result.len());
+    }
+    result.as_ptr() as i32
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn __handle_http_patch(
+    route_ptr: i32,
+    route_len: i32,
+    json_ptr: i32,
+    json_len: i32,
+) -> i32 {
+    let route = unbox_string(route_ptr, route_len);
+
+    let lookup = PATCH_HANDLERS.read().unwrap();
+    let result = if let Some(func) = lookup.lookup(&route) {
+        let slice = unbox_str(json_ptr, json_len);
+        func(slice)
+    } else {
+        "function not found in lookup table".to_string()
+    };
+    // Store the length of the string at the bottom of the stack
+    unsafe {
+        ::std::ptr::write(1 as _, result.len());
+    }
+    result.as_ptr() as i32
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub extern "C" fn __handle_http_delete(
+    route_ptr: i32,
+    route_len: i32,
+    json_ptr: i32,
+    json_len: i32,
+) -> i32 {
+    let route = unbox_string(route_ptr, route_len);
+
+    let lookup = DELETE_HANDLERS.read().unwrap();
     let result = if let Some(func) = lookup.lookup(&route) {
         let slice = unbox_str(json_ptr, json_len);
         func(slice)

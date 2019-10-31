@@ -42,6 +42,36 @@ where
     wc.register_post_callback(route);
 }
 
+pub(crate) fn __register_put_handler<B>(ctx: &mut Ctx, put_route_ptr: u32)
+where
+    B: BlockStorage + 'static,
+{
+    let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
+    let route = unbox_str(ctx, put_route_ptr);
+    info!("register PUT handler {:?}", route);
+    wc.register_put_callback(route);
+}
+
+pub(crate) fn __register_patch_handler<B>(ctx: &mut Ctx, patch_route_ptr: u32)
+where
+    B: BlockStorage + 'static,
+{
+    let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
+    let route = unbox_str(ctx, patch_route_ptr);
+    info!("register PATCH handler {:?}", route);
+    wc.register_patch_callback(route);
+}
+
+pub(crate) fn __register_delete_handler<B>(ctx: &mut Ctx, delete_route_ptr: u32)
+where
+    B: BlockStorage + 'static,
+{
+    let wc: &mut WasmProcess<B> = unsafe { &mut *(ctx.data as *mut WasmProcess<B>) };
+    let route = unbox_str(ctx, delete_route_ptr);
+    info!("register DELETE handler {:?}", route);
+    wc.register_delete_callback(route);
+}
+
 pub(crate) fn pong(_ctx: &mut Ctx) {
     debug!("pong");
 }
