@@ -10,7 +10,6 @@
 //!
 //! Permissions are stored in the file system metadata.
 use {
-    crate::metadata,
     serde_derive::{Deserialize, Serialize},
     std::{
         collections::HashMap,

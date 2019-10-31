@@ -531,8 +531,6 @@ impl<B: BlockStorage> WasmProcess<B> {
     }
 }
 
-fn process_iofs_message<B: BlockStorage>(process: WasmProcess<B>, message: IofsNetworkMessage) {}
-
 #[derive(Debug)]
 struct RuntimeError {
     inner: Context<RuntimeErrorKind>,

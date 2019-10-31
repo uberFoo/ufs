@@ -3,45 +3,22 @@
 //! A mounted UFS may also act as a block server for remote connections. That is implemented herein.
 //!
 use {
-    crate::{
-        metadata::{DirectoryEntry, File, FileHandle},
-        uuid::UfsUuid,
-        wasm::{IofsMessage, RuntimeManagerMsg},
-        BlockNumber, BlockStorage, OpenFileMode, UberFileSystem,
-    },
-    chrono::prelude::*,
+    crate::{uuid::UfsUuid, BlockNumber, BlockStorage, UberFileSystem},
     crossbeam::crossbeam_channel,
-    failure::format_err,
     futures::{future::Future, sync::oneshot},
     handlebars::{Context, Handlebars, Helper, JsonRender, Output, RenderContext, RenderError},
-    log::info,
-    serde::{Deserialize, Serialize},
+    serde::Serialize,
     serde_json::json,
     std::{
-        collections::HashMap,
         error::Error,
-        io::prelude::*,
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{Arc, Mutex},
         thread::{spawn, JoinHandle},
     },
-    warp::{filters::BoxedFilter, path, Filter, Reply},
+    warp::{path, Filter},
 };
 
 const CONTENT_LENGTH: u64 = 1024 * 16;
-
-/// Messages sent in response to HTTP events
-///
-pub(crate) enum HTTPServerMessage {
-    /// HTTP GET response
-    GetResponse(GetPayload),
-}
-
-pub(crate) enum GetPayload {
-    HTTP(String),
-    JSON(String),
-}
 
 #[derive(Debug)]
 pub(crate) enum IofsNetworkMessage {

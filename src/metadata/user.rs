@@ -2,11 +2,8 @@
 //!
 
 use {
-    crate::{
-        crypto::{hash_password, ITERATION_COUNT},
-        uuid::UfsUuid,
-    },
-    log::{debug, error},
+    crate::{crypto::hash_password, uuid::UfsUuid},
+    log::debug,
     rand::prelude::*,
     serde_derive::{Deserialize, Serialize},
     std::collections::HashMap,
@@ -19,7 +16,7 @@ pub(in crate::metadata) struct User {
 }
 
 impl User {
-    pub(crate) fn new<S: AsRef<str>>(user_name: S, password: S) -> Self {
+    pub(crate) fn new<S: AsRef<str>>(user_name: S) -> Self {
         let mut nonce: [u8; 16] = [0; 16];
         rand::thread_rng().fill_bytes(&mut nonce);
 
@@ -41,8 +38,8 @@ impl UserMetadata {
         }
     }
 
-    pub(crate) fn new_user(&mut self, id: String, password: String) {
-        let user = User::new(&id, &password);
+    pub(crate) fn new_user(&mut self, id: String) {
+        let user = User::new(&id);
         self.inner.entry(id).or_insert(user);
     }
 

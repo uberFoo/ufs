@@ -56,7 +56,7 @@ where
     pub fn new<S: AsRef<str>>(user: S, password: S, store: BS) -> Self {
         let user_id = UfsUuid::new_user(user.as_ref());
         let mut metadata = Metadata::new(*store.id(), user_id);
-        metadata.add_user(user.as_ref().to_owned(), password.as_ref().to_owned());
+        metadata.add_user(user.as_ref().to_owned());
 
         BlockManager {
             id: store.id().clone(),

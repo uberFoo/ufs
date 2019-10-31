@@ -258,8 +258,8 @@ impl UberFileSystem<NetworkStore> {
 
 impl<B: BlockStorage> UberFileSystem<B> {
     /// Add a user to the file system
-    pub fn add_user(&mut self, user: String, password: String) {
-        self.block_manager.metadata_mut().add_user(user, password);
+    pub fn add_user(&mut self, user: String) {
+        self.block_manager.metadata_mut().add_user(user);
     }
 
     /// Get a list of existing users
