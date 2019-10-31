@@ -10,6 +10,7 @@ use {
 
 use crate::{
     block::{
+        map::BlockMap,
         wrapper::{read_metadata, write_metadata},
         Block, BlockCardinality, BlockHash, BlockNumber, BlockSize, BlockStorage,
     },
@@ -55,7 +56,7 @@ where
     pub fn new<S: AsRef<str>>(user: S, password: S, store: BS) -> Self {
         let user_id = UfsUuid::new_user(user.as_ref());
         let mut metadata = Metadata::new(*store.id(), user_id);
-        metadata.add_user(user.as_ref().to_owned(), password.as_ref().to_owned());
+        metadata.add_user(user.as_ref().to_owned());
 
         BlockManager {
             id: store.id().clone(),
@@ -81,7 +82,7 @@ where
                     Ok(metadata) => {
                         debug!("loaded metadata");
                         let md: &Metadata = &metadata;
-                        if let Some((user_id, key)) = md.validate_user(&user, &password) {
+                        if let Some((user_id, key)) = md.get_user(&user, &password) {
                             Ok(BlockManager {
                                 id: store.id().clone(),
                                 metadata,
@@ -90,7 +91,7 @@ where
                                 store,
                             })
                         } else {
-                            Err(format_err!("Invalid user id, and/or password."))
+                            Err(format_err!("Invalid user id."))
                         }
                     }
                     Err(e) => Err(format_err!("Problem loading file system metadata: {}", e)),
@@ -100,8 +101,22 @@ where
         }
     }
 
+    /// The file system UUID
+    ///
     pub(crate) fn id(&self) -> &UfsUuid {
         &self.id
+    }
+
+    pub(crate) fn root_block(&self) -> Option<BlockNumber> {
+        self.store.map().root_block()
+    }
+
+    pub(crate) fn store(&self) -> &BS {
+        &self.store
+    }
+
+    pub(crate) fn map(&self) -> &BlockMap {
+        &self.store.map()
     }
 
     pub(crate) fn metadata(&self) -> &Metadata {

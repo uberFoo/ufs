@@ -9,7 +9,6 @@ use failure::format_err;
 use log::{debug, error, trace};
 use serde_derive::{Deserialize, Serialize};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{
     block::{Block, BlockNumber},
     time::UfsTime,
@@ -22,7 +21,6 @@ use super::{FileSize, Permission, PermissionGroups};
 ///
 /// The primary purpose if this struct is to store information about the existing versions of a
 /// file.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileMetadata {
     /// The UUID of this file
@@ -45,7 +43,6 @@ pub struct FileMetadata {
     versions: HashMap<usize, FileVersion>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl FileMetadata {
     /// Create a new `FileMetadata`
     ///
@@ -83,13 +80,21 @@ impl FileMetadata {
     }
 
     /// Return the UUID of this file
+    ///
     pub(crate) fn id(&self) -> UfsUuid {
         self.id
     }
 
     /// Return the directory id of this file
+    ///
     pub(crate) fn dir_id(&self) -> UfsUuid {
         self.dir_id
+    }
+
+    /// Return the owner
+    ///
+    pub(crate) fn owner(&self) -> UfsUuid {
+        self.owner
     }
 
     /// Return the file permissions, as a unix octal number
@@ -145,7 +150,6 @@ impl FileMetadata {
 ///
 /// This is where metadata and block numbers are actually stored. These are cheap: they just have a
 /// few time stamps, and a list of `BlockNumber`s that comprise the file.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FileVersion {
     /// A flag indicating that the directory's data has been modified and needs to be written.
@@ -179,7 +183,6 @@ pub struct FileVersion {
     blocks: Vec<BlockNumber>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl FileVersion {
     /// Create a new `FileVersion`
     ///

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <style>
+            body {
+                background-color: #353535;
+            }
+
+            h1 {
+                color: white;
+            }
+
+            p {
+                color: #ccc;
+            }
+        </style>
+        <title>IOFS Dashboard</title>
+    </head>
+
+    <body>
+        <h1>Block: {{ block_number }}</h1>
+        <p>type: {{ block_type }}</p>
+        <p>hash: {{ block_hash }}</p>
+        <p>size: {{ block_size }}</p>
+    </body>
+</html>

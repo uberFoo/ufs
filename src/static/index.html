@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <style>
+            body {
+                background-color: #353535;
+            }
+
+            h1 {
+                color: white;
+            }
+
+            h2 {
+                color: white;
+            }
+            p {
+                color: #ccc;
+            }
+            pre {
+                color: #ccc;
+            }
+            a {
+                color: #d2991d;
+            }
+        </style>
+        <title>IOFS Dashboard</title>
+    </head>
+
+    <body>
+        <h1>File System: {{ iofs_id }}</h1>
+        <p>block size: {{ block_size }}</p>
+        <p>block count: {{ block_count }}</p>
+        <p>free blocks: {{ free_blocks }}</p>
+        <p>
+            root block: <a href="block/{{ root_block }}">{{ root_block }}</a>
+        </p>
+        <h2><a href="dir/{{ root_dir_id }}">Files</a></h2>
+        <p>metadata: <pre>{{ metadata }}</pre></p>
+    </body>
+</html>

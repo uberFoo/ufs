@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 //! Logical File Blocks
 //!
 //! This file system is comprised of blocks; file contents and metadata are stored in blocks.  The
@@ -21,13 +20,15 @@ pub(crate) mod map;
 pub(crate) mod storage;
 pub(crate) mod wrapper;
 
-use std::{fmt, str::FromStr};
+use {
+    serde_derive::{Deserialize, Serialize},
+    std::{fmt, str::FromStr},
+};
 
-use serde_derive::{Deserialize, Serialize};
+pub(crate) use {
+    self::hash::BlockHash, self::storage::memory::MemoryStore, self::storage::network::NetworkStore,
+};
 
-pub(crate) use self::hash::BlockHash;
-pub(crate) use self::storage::memory::MemoryStore;
-pub(crate) use self::storage::network::NetworkStore;
 pub use self::storage::{file::FileStore, BlockReader, BlockStorage, BlockWriter};
 
 use self::map::BlockType;
@@ -211,47 +212,63 @@ impl Block {
     }
 
     /// Check if a block is free
+    #[allow(dead_code)]
     pub(in crate::block) fn is_free(&self) -> bool {
         self.block_type.is_free()
     }
 
     /// Check if a block contains data
+    #[allow(dead_code)]
     pub(in crate::block) fn is_data(&self) -> bool {
         self.block_type.is_data()
     }
 
     /// Check if a block contains metadata
+    #[allow(dead_code)]
     pub(in crate::block) fn is_map(&self) -> bool {
         self.block_type.is_map()
     }
 
     /// Check if a block contains metadata
+    #[allow(dead_code)]
     pub(in crate::block) fn is_metadata(&self) -> bool {
         self.block_type.is_metadata()
     }
 
     /// Return the block number
+    ///
     pub(crate) fn number(&self) -> BlockNumber {
         self.number
     }
 
+    /// Return the block type
+    ///
+    pub(crate) fn block_type(&self) -> &BlockType {
+        &self.block_type
+    }
+
     /// Return the number of bytes stored in this block
+    ///
     pub(crate) fn size(&self) -> BlockSizeType {
         self.byte_count
     }
 
     /// Set the number of bytes in this block
+    ///
     pub(in crate::block) fn set_size(&mut self, size: BlockSizeType) {
         self.byte_count = size
     }
 
     /// Set the SHA-256 hash of this block
+    ///
     pub(in crate::block) fn set_hash(&mut self, hash: BlockHash) {
         self.hash = Some(hash);
     }
 
     /// Return the SHA-256 hash of this block
-    pub(in crate::block) fn hash(&self) -> Option<BlockHash> {
+    ///
+    #[allow(dead_code)]
+    pub(in crate) fn hash(&self) -> Option<BlockHash> {
         self.hash
     }
 }

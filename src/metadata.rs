@@ -11,37 +11,39 @@
 //! Metadata is versioned. Each time a file is written, a new copy in created.
 //!
 //! [`BlockWrapper`]: crate::block::wrapper::BlockWrapper
-use std::collections::HashMap;
-use std::path::{Component, Components, Path, PathBuf};
-
-use failure::format_err;
-use log::{debug, trace, warn};
-use serde_derive::{Deserialize, Serialize};
+use {
+    crate::{
+        block::{
+            wrapper::{MetadataDeserialize, MetadataSerialize},
+            BlockNumber,
+        },
+        uuid::UfsUuid,
+    },
+    failure::format_err,
+    log::{debug, trace, warn},
+    serde_derive::{Deserialize, Serialize},
+    std::{
+        collections::HashMap,
+        path::{Component, Components, Path, PathBuf},
+    },
+};
 
 pub(crate) mod dir;
 pub(crate) mod file;
+pub(crate) mod permissions;
 pub(crate) mod user;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::uuid::UfsUuid;
 
 pub(crate) type FileSize = u64;
 
 /// The size of a FileHandle
 pub type FileHandle = u64;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use dir::DirectoryMetadata;
-pub(crate) use dir::WASM_EXT;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use file::{FileMetadata, FileVersion};
-
-pub(crate) use user::UserMetadata;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::block::{
-    wrapper::{MetadataDeserialize, MetadataSerialize},
-    BlockNumber,
+pub(crate) use {
+    dir::DirectoryMetadata,
+    dir::WASM_EXT,
+    file::{FileMetadata, FileVersion},
+    permissions::{Grant, GrantType, WasmPermissions},
+    user::UserMetadata,
 };
 
 /// UFS internal definition of a File
@@ -49,7 +51,6 @@ use crate::block::{
 /// This structure is used by the file system implementation as a file handle. It is a watered-down
 /// FileMetadata that is cheaply cloneable. It contains the metadata id of the parent FileMetadata,
 /// and a single, usually the latest, FileVersion of the file.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
     /// UfsUuid of the file
@@ -161,7 +162,6 @@ impl From<u16> for PermissionGroups {
 /// Entries in [`DirectoryMetadata`] structures
 ///
 /// A directory may contain files, or other directories. Here we capture that dualism.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum DirectoryEntry {
     /// A directory
@@ -172,9 +172,43 @@ pub enum DirectoryEntry {
     File(FileMetadata),
 }
 
-///
+impl DirectoryEntry {
+    pub(crate) fn is_dir(&self) -> bool {
+        match self {
+            DirectoryEntry::Directory(_) => true,
+            DirectoryEntry::File(_) => false,
+        }
+    }
 
-#[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn is_file(&self) -> bool {
+        match self {
+            DirectoryEntry::Directory(_) => false,
+            DirectoryEntry::File(_) => true,
+        }
+    }
+
+    pub(crate) fn id(&self) -> UfsUuid {
+        match self {
+            DirectoryEntry::Directory(d) => d.id(),
+            DirectoryEntry::File(f) => f.id(),
+        }
+    }
+
+    pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
+        match self {
+            DirectoryEntry::Directory(d) => d.parent_id(),
+            DirectoryEntry::File(f) => Some(f.dir_id()),
+        }
+    }
+
+    pub(crate) fn owner(&self) -> UfsUuid {
+        match self {
+            DirectoryEntry::Directory(d) => d.owner(),
+            DirectoryEntry::File(f) => f.owner(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Metadata {
     /// The dirty flag
@@ -191,9 +225,11 @@ pub(crate) struct Metadata {
     /// File system user information
     ///
     users: UserMetadata,
+    /// File system permissions for Wasm programs
+    ///
+    grants: WasmPermissions,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Metadata {
     /// Create a new file system metadata instance
     ///
@@ -205,35 +241,69 @@ impl Metadata {
             id: file_system_id.clone(),
             root_directory: DirectoryMetadata::new(file_system_id.new("/"), None, owner),
             users: UserMetadata::new(),
+            grants: WasmPermissions::new(),
         }
     }
 
     /// Create a new user
     ///
-    pub(crate) fn add_user(&mut self, user: String, password: String) {
+    pub(crate) fn add_user(&mut self, user: String) {
         debug!("-------");
         debug!("`new_user`: {}", user);
 
         self.dirty = true;
-        self.users.new_user(user, password);
+        self.users.new_user(user);
     }
 
-    /// Validate a user with a password
+    /// Get a user
     ///
     /// If successful, return a tuple of the user's id and their key.
     ///
-    pub(crate) fn validate_user<S: AsRef<str>>(
+    pub(crate) fn get_user<S: AsRef<str>>(
         &self,
         user: S,
         password: S,
     ) -> Option<(UfsUuid, [u8; 32])> {
-        self.users.validate_user(&user, &password)
+        self.users.get_user(&user, &password)
     }
 
     /// Return a list of existing users
     ///
     pub(crate) fn get_users(&self) -> Vec<String> {
         self.users.get_users()
+    }
+
+    /// Add a Wasm program to the grants
+    ///
+    pub(crate) fn add_wasm_program_grants(&mut self, program: PathBuf) {
+        self.grants.add_program(program);
+    }
+
+    /// Remove the grants for a Wasm program
+    ///
+    pub(crate) fn remove_wasm_program_grants(&mut self, program: &PathBuf) {
+        self.grants.remove_program(program);
+    }
+
+    /// Check Wasm program grant
+    ///
+    pub(crate) fn check_wasm_program_grant(
+        &mut self,
+        program: &PathBuf,
+        grant_type: GrantType,
+    ) -> Option<Grant> {
+        self.grants.check_grant(program, grant_type)
+    }
+
+    /// Check Wasm program HTTP grant
+    ///
+    pub(crate) fn check_wasm_program_http_grant(
+        &mut self,
+        program: &PathBuf,
+        grant_type: GrantType,
+        route: &str,
+    ) -> Option<Grant> {
+        self.grants.check_http_grant(program, grant_type, route)
     }
 
     /// Create a new directory
@@ -332,6 +402,27 @@ impl Metadata {
         }
     }
 
+    /// Get DirectoryMetadata given a parent directory, and a name
+    ///
+    pub(crate) fn get_dir_metadata_from_dir_and_name(
+        &self,
+        dir_id: UfsUuid,
+        name: &str,
+    ) -> Result<DirectoryMetadata, failure::Error> {
+        if let Some(dir) = self.lookup_dir(dir_id) {
+            match dir.entries().get(name) {
+                Some(DirectoryEntry::Directory(d)) => Ok(d.clone()),
+                _ => Err(format_err!(
+                    "unable to find directory {} under directory {}",
+                    name,
+                    dir_id
+                )),
+            }
+        } else {
+            Err(format_err!("unable to find directory with id {}", dir_id))
+        }
+    }
+
     /// Get FileMetadata given a parent directory, and a name
     ///
     pub(crate) fn get_file_metadata_from_dir_and_name(
@@ -422,6 +513,29 @@ impl Metadata {
         }
     }
 
+    /// Remove a directory
+    ///
+    pub(crate) fn remove_directory(
+        &mut self,
+        parent_id: UfsUuid,
+        name: &str,
+    ) -> Result<(), failure::Error> {
+        debug!("--------");
+        debug!("`remove_directory`: {}, parent: {:#?}", name, parent_id);
+
+        if let Some(parent) = self.lookup_dir_mut(parent_id) {
+            match parent.entries_mut().remove(name) {
+                Some(DirectoryEntry::Directory(dir)) => {
+                    debug!("\tremoved {:#?}\n\tfrom {:#?}", dir, parent);
+                    Ok(())
+                }
+                _ => Err(format_err!("did not find {} in {:#?}", name, parent)),
+            }
+        } else {
+            Err(format_err!("unable to find directory {:#?}", parent_id))
+        }
+    }
+
     /// Remove a file from a directory
     ///
     pub(crate) fn unlink_file(
@@ -437,13 +551,13 @@ impl Metadata {
             // from the parent.
             if dir.is_vers_dir() {
                 debug!("\teventually, we'll be able to remove specific versions of the file");
-                debug!("\tsomeday, I'd even like to make removing the root file, save it");
+                debug!("\tsomeday, I'd even like to make removing the root file save it");
                 debug!("\tsomeplace until all of the versions are removed");
                 Ok(vec![])
             } else {
                 match dir.entries_mut().remove(name) {
                     Some(DirectoryEntry::File(file)) => {
-                        debug!("\tremoved {:#?}\nfrom {:#?}", file, dir);
+                        debug!("\tremoved {:#?}\n\tfrom {:#?}", file, dir);
                         self.dirty = true;
                         // We need to collect all of the blocks, for all of the versions of the file
                         // and return them as a single list to be deleted by the caller
@@ -473,7 +587,7 @@ impl Metadata {
     /// Indicator that the metedata needs to be written.
     ///
     pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
+        self.dirty || self.grants.is_dirty()
     }
 
     /// Set the permissions on a Metadata node
@@ -647,7 +761,6 @@ impl Metadata {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl MetadataSerialize for Metadata {
     fn serialize(&mut self) -> Result<Vec<u8>, failure::Error> {
         match bincode::serialize(&self) {
@@ -662,7 +775,6 @@ impl MetadataSerialize for Metadata {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl MetadataDeserialize for Metadata {
     fn deserialize(bytes: Vec<u8>) -> Result<Self, failure::Error> {
         match bincode::deserialize(&bytes) {

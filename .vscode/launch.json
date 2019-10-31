@@ -50,13 +50,7 @@
             "request": "launch",
             "name": "Debug FUSE Server",
             "program": "${workspaceFolder}/target/debug/fuse-ufs",
-            "args": [
-                "--port",
-                "8888"
-                "--bundle",
-                "bundles/demo",
-                "mnt"
-            ],
+            "args": ["--port", "8888", "--bundle", "bundles/demo", "mnt"],
             "env": [
                 {
                     "name": "RUST_LOG",

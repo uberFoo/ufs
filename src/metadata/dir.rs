@@ -5,22 +5,20 @@
 //!
 //! FIXME: The directory data is not versioned. What happens to deleted files?  What do we do when
 //! a directory goes away?
-use failure::format_err;
-use log::debug;
-use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{time::UfsTime, uuid::UfsUuid};
+use {
+    crate::{time::UfsTime, uuid::UfsUuid, IOFSErrorKind},
+    failure::format_err,
+    log::debug,
+    serde_derive::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
 pub(crate) const WASM_DIR: &'static str = ".wasm";
 pub(crate) const WASM_EXT: &'static str = "wasm";
 pub(crate) const VERS_DIR: &'static str = ".vers";
 
-#[cfg(not(target_arch = "wasm32"))]
 use super::{DirectoryEntry, FileMetadata, Permission, PermissionGroups};
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DirectoryMetadata {
     /// A flag indicating that the directory's data has been modified and needs to be written.
@@ -65,7 +63,6 @@ pub struct DirectoryMetadata {
     entries: HashMap<String, DirectoryEntry>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl DirectoryMetadata {
     /// Create a new directory
     ///
@@ -133,6 +130,86 @@ impl DirectoryMetadata {
         d
     }
 
+    /// Return a reference to the HashMap from entry name to DirectoryEntry structures
+    ///
+    pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
+        &self.entries
+    }
+
+    /// Return a mutable reference to the name -> DirectoryEntry HashMap
+    ///
+    pub(crate) fn entries_mut(&mut self) -> &mut HashMap<String, DirectoryEntry> {
+        &mut self.entries
+    }
+
+    /// Set the entries
+    ///
+    pub(crate) fn set_entries(&mut self, entries: HashMap<String, DirectoryEntry>) {
+        self.entries = entries;
+    }
+
+    /// Return the UUID
+    ///
+    pub(crate) fn id(&self) -> UfsUuid {
+        self.id
+    }
+
+    /// Return the parent UUID
+    ///
+    pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
+        self.parent_id
+    }
+
+    /// Return the Owner
+    ///
+    pub(crate) fn owner(&self) -> UfsUuid {
+        self.owner
+    }
+
+    /// Return the directory permissions, as a unix octal number
+    ///
+    pub(crate) fn unix_perms(&self) -> u16 {
+        self.perms.as_u16()
+    }
+
+    /// Set the directory permissions
+    ///
+    pub(crate) fn set_unix_perms(&mut self, perms: u16) {
+        self.dirty = true;
+        self.perms = perms.into();
+    }
+
+    /// Return the `write_time` timestamp
+    ///
+    pub(crate) fn write_time(&self) -> UfsTime {
+        self.write_time
+    }
+
+    /// Return if this is a ".wasm" directory
+    ///
+    pub(crate) fn is_wasm_dir(&self) -> bool {
+        self.wasm_dir
+    }
+
+    /// Return if this is a ".vers" directory
+    ///
+    pub(crate) fn is_vers_dir(&self) -> bool {
+        self.vers_dir
+    }
+
+    /// Return true if the directory needs to be serialized
+    ///
+    #[allow(dead_code)]
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Set to serialize directory
+    ///
+    pub(crate) fn dirty(&mut self) {
+        self.dirty = true;
+    }
+
     /// Create a new directory as a child of this directory.
     ///
     pub(crate) fn new_subdirectory(
@@ -144,7 +221,7 @@ impl DirectoryMetadata {
         debug!("`new_subdirectory`: {:?}", name);
 
         if self.entries.contains_key(&name) {
-            Err(format_err!("directory already exists"))
+            Err(IOFSErrorKind::DirectoryExists.into())
         } else {
             let new_id = self.id.new(&name);
             let dir = DirectoryMetadata::new(new_id, Some(self.id), owner);
@@ -183,79 +260,6 @@ impl DirectoryMetadata {
                 Some(_) => Err(format_err!("unable to store directory entry")),
             }
         }
-    }
-
-    /// Return a reference to the HashMap from entry name to DirectoryEntry structures
-    ///
-    pub(crate) fn entries(&self) -> &HashMap<String, DirectoryEntry> {
-        &self.entries
-    }
-
-    /// Return a mutable reference to the name -> DirectoryEntry HashMap
-    ///
-    pub(crate) fn entries_mut(&mut self) -> &mut HashMap<String, DirectoryEntry> {
-        &mut self.entries
-    }
-
-    /// Set the entries
-    ///
-    pub(crate) fn set_entries(&mut self, entries: HashMap<String, DirectoryEntry>) {
-        self.entries = entries;
-    }
-
-    /// Return the UUID
-    ///
-    pub(crate) fn id(&self) -> UfsUuid {
-        self.id
-    }
-
-    /// Return the parent UUID
-    ///
-    pub(crate) fn parent_id(&self) -> Option<UfsUuid> {
-        self.parent_id
-    }
-
-    /// Return the directory permissions, as a unix octal number
-    ///
-    pub(crate) fn unix_perms(&self) -> u16 {
-        self.perms.as_u16()
-    }
-
-    /// Set the directory permissions
-    ///
-    pub(crate) fn set_unix_perms(&mut self, perms: u16) {
-        self.dirty = true;
-        self.perms = perms.into();
-    }
-
-    /// Return the `write_time` timestamp
-    ///
-    pub(crate) fn write_time(&self) -> UfsTime {
-        self.write_time
-    }
-
-    /// Return if this is a ".wasm" directory
-    ///
-    pub(crate) fn is_wasm_dir(&self) -> bool {
-        self.wasm_dir
-    }
-
-    /// Return if this is a ".vers" directory
-    ///
-    pub(crate) fn is_vers_dir(&self) -> bool {
-        self.vers_dir
-    }
-
-    /// Return true if the directory needs to be serialized
-    ///
-    pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// Set to serialize directory
-    ///
-    pub(crate) fn dirty(&mut self) {
-        self.dirty = true;
     }
 
     /// Lookup a subdirectory by id, and return a reference to it.

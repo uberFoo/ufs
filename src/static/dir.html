@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <style>
+            body {
+                background-color: #353535;
+            }
+
+            h1 {
+                color: white;
+            }
+
+            p {
+                color: #ccc;
+            }
+
+            li {
+                color: #ccc;
+            }
+
+            a {
+                color: #d2991d;
+            }
+        </style>
+        <title>IOFS Dashboard</title>
+    </head>
+
+    <body>
+        <h1>Directory: {{ name }}</h1>
+        <p>ID: {{ id }}</p>
+        <ul>
+            {{#each files as |f|}}
+            {{dir_entry_format f}}
+            {{/each}}
+        </ul>
+    </body>
+</html>

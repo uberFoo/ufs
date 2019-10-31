@@ -67,7 +67,7 @@ fn main() -> Result<(), failure::Error> {
             panic!("Passwords do not match.");
         }
 
-        ufs.add_user(user.to_owned(), password);
+        ufs.add_user(user.to_owned());
     }
 
     Ok(())

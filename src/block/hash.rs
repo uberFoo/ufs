@@ -46,12 +46,17 @@ impl From<&[u8]> for BlockHash {
     }
 }
 
+impl fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.inner)
+    }
+}
+
 impl fmt::Debug for BlockHash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for i in &self.inner {
             write!(f, "{:02x}", i)?;
         }
-        // write!(f, "{:?}", self.0);
         Ok(())
     }
 }

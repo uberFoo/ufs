@@ -2,6 +2,10 @@
 //!
 //! Mapping from block number to block type.
 //!
+//! The block map stores the file system id, the block size, and count, the list of free blocks, the
+//! root block (where the file system metadata is located), as well as the list of blocks in the
+//! file system.
+//!
 //! At this time block 0 is reserved as the starting place for the block map.  Blocks are then
 //! dynamically allocated, and written with the Block Map as necessary.
 //!
@@ -135,6 +139,8 @@ impl BlockMap {
         &mut self,
         store: &mut BS,
     ) -> Result<(), failure::Error> {
+        // Determine the amount of data that we can store in each Block -- its the block size minus
+        // the amount of data it takes to encode a BlockMapWrapper with no data.
         let zero_wrapper = BlockMapWrapper {
             data: vec![0; 0],
             hash: BlockHash::new(b""),
@@ -167,6 +173,10 @@ impl BlockMap {
                     None => return Err(format_err!("No free blocks.")),
                 };
                 debug!("Allocating new blockmap wrapper block {}", meta_block);
+
+                // We can tag this block as containing block map data, but we can't give it a size
+                // nor a hash, because we don't know that information now. By the time we do know
+                // that information, we've already serialized the block.
                 self.map[meta_block as usize].tag_map();
                 self.block_map_blocks.push(meta_block);
             }
@@ -183,7 +193,7 @@ impl BlockMap {
                 };
         }
 
-        // Iterate over the chunks of serialized block map, and writing them to the block store.
+        // Iterate over the chunks of serialized block map, and write them to the block store.
         bytes
             .chunks(chunk_size as usize)
             .enumerate()
@@ -276,7 +286,7 @@ fn read_wrapper_block<BS: BlockReader>(
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(in crate::block) enum BlockType {
+pub(in crate) enum BlockType {
     Free,
     Data,
     Map,
@@ -300,6 +310,7 @@ impl BlockType {
         BlockType::Metadata
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_free(&self) -> bool {
         match self {
             BlockType::Free => true,
@@ -307,6 +318,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_data(&self) -> bool {
         match self {
             BlockType::Data => true,
@@ -314,6 +326,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_map(&self) -> bool {
         match self {
             BlockType::Map => true,
@@ -321,6 +334,7 @@ impl BlockType {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::block) fn is_metadata(&self) -> bool {
         match self {
             BlockType::Metadata => true,
