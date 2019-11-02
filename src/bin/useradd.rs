@@ -37,7 +37,7 @@ fn main() -> Result<(), failure::Error> {
         rpassword::read_password_from_tty(Some("master password: ")).unwrap()
     };
 
-    io::stdout().write_all(b"user: ")?;
+    io::stdout().write_all(b"authorized user: ")?;
     io::stdout().flush()?;
     let mut user = String::new();
     io::stdin().read_line(&mut user)?;
@@ -56,7 +56,7 @@ fn main() -> Result<(), failure::Error> {
             println!(" - '{}'", user);
         }
     } else {
-        io::stdout().write_all(b"user: ")?;
+        io::stdout().write_all(b"new user: ")?;
         io::stdout().flush()?;
         let mut user = String::new();
         io::stdin().read_line(&mut user)?;
