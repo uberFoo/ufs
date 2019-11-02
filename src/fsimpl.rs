@@ -5,6 +5,7 @@ use {
             FileStore, MemoryStore, NetworkStore,
         },
         crypto::make_fs_key,
+        jwt::{new_jwt, UserClaims, JWT},
         metadata::{
             DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileSize, Metadata,
             WASM_EXT,
@@ -150,12 +151,22 @@ impl<B: BlockStorage> DerefMut for UfsMounter<B> {
 /// Main File System Implementation
 ///
 pub struct UberFileSystem<B: BlockStorage> {
+    /// The ID of the file system
     id: UfsUuid,
+    /// JWTs are passed out as authentication tokens. This is a mapping from user ID to a tuple
+    /// of the JWT ID and the user's encryption/decryption key
+    tokens: HashMap<UfsUuid, (UfsUuid, [u8; 32])>,
+    /// The ID of the user that mounted the file system
     user: UfsUuid,
+    /// The block manager -- where all the magic happens
     block_manager: BlockManager<B>,
+    /// A mapping of file handles to File structures
     open_files: HashMap<FileHandle, File>,
+    /// A mapping of file handles to DirectoryMetadata structures
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
+    /// A counter so that we know what the next file handle should be
     open_file_counter: FileHandle,
+    /// The Wasm program manager
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
 }
 
@@ -179,6 +190,7 @@ impl UberFileSystem<MemoryStore> {
 
         UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -218,6 +230,7 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -246,6 +259,7 @@ impl UberFileSystem<NetworkStore> {
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -257,6 +271,29 @@ impl UberFileSystem<NetworkStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
+    /// Log a user into the file system
+    pub fn login(&mut self, user: String, password: String) -> Option<JWT> {
+        if let Some(user) = self.block_manager.metadata().get_user(user, password) {
+            let jti = user.0.new_with_timestamp();
+            self.tokens
+                .entry(user.0)
+                .and_modify(|t| *t = (jti, user.1))
+                .or_insert((jti, user.1));
+
+            println!("{:#?}", self.tokens);
+            Some(new_jwt(
+                UserClaims {
+                    iss: self.id,
+                    sub: user.0,
+                    jti,
+                },
+                "secret".as_ref(),
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Add a user to the file system
     pub fn add_user(&mut self, user: String) {
         self.block_manager.metadata_mut().add_user(user);

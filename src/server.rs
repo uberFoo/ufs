@@ -7,7 +7,7 @@ use {
     crossbeam::crossbeam_channel,
     futures::{future::Future, sync::oneshot},
     handlebars::{Context, Handlebars, Helper, JsonRender, Output, RenderContext, RenderError},
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     serde_json::json,
     std::{
         error::Error,
@@ -101,6 +101,12 @@ impl IofsNetworkJsonValue {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct LoginCredentials {
+    id: String,
+    password: String,
+}
+
 pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
     iofs: Arc<Mutex<UberFileSystem<B>>>,
     http_sender: crossbeam_channel::Sender<IofsNetworkMessage>,
@@ -145,6 +151,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             hb.register_helper("dir_entry_format", Box::new(dir_entry_format));
             hb.register_helper("block_format", Box::new(block_format));
 
+            // Template lambdas for rendering UI.
             let hb = Arc::new(hb);
             let hb_clone = hb.clone();
             let handlebars_index = move |with_template| render(with_template, hb_clone.clone());
@@ -158,6 +165,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let hb_clone = hb.clone();
             let handlebars_file = move |with_template| render(with_template, hb_clone.clone());
 
+            // Lambdas for fetching UI contents
             let iofs = server.iofs.clone();
             let index_values = move || get_index_values(iofs.clone());
 
@@ -170,6 +178,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let iofs = server.iofs.clone();
             let block_values = move |number| get_block_values(number, iofs.clone());
 
+            // Lambdas for calling Wasm functions
             let channel = server.http_sender.clone();
             let to_wasm_get = move |receiver| send_get_filter(receiver, channel.clone());
 
@@ -189,6 +198,11 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let to_wasm_delete =
                 move |receiver, json| send_delete_to_wasm(receiver, json, channel.clone());
 
+            // Other lambdas
+            let iofs = server.iofs.clone();
+            let login = move |credentials| iofs_login(iofs.clone(), credentials);
+
+            // Paths that are part of the IOFS UI
             let index = warp::get2()
                 .and(warp::path::end())
                 .map(index_values)
@@ -222,6 +236,14 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 })
                 .map(handlebars_file);
 
+            let login = warp::post2()
+                .and(warp::path("login"))
+                .and(warp::body::content_length_limit(CONTENT_LENGTH))
+                .and(warp::body::json())
+                .map(login)
+                .map(|jwt| warp::reply::json(&jwt));
+
+            // Paths that invoke Wasm callbacks.
             let wasm_get = warp::get2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
@@ -259,6 +281,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .or(block)
                 .or(dir)
                 .or(file)
+                .or(login)
                 .or(wasm_get)
                 .or(wasm_post)
                 .or(wasm_put)
@@ -482,6 +505,18 @@ where
         }),
         None => json!({}),
     }
+}
+
+fn iofs_login<B>(
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+    credentials: LoginCredentials,
+) -> serde_json::value::Value
+where
+    B: BlockStorage,
+{
+    let mut guard = iofs.lock().expect("poisoned iofs lock");
+    let jwt = guard.login(credentials.id, credentials.password);
+    json!({ "token": jwt })
 }
 
 fn send_get_filter(

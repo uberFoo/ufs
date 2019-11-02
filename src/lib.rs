@@ -115,6 +115,7 @@ mod block;
 mod crypto;
 mod fsimpl;
 mod fuse;
+mod jwt;
 mod metadata;
 mod server;
 mod time;

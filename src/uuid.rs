@@ -1,4 +1,5 @@
 use {
+    chrono::prelude::*,
     lazy_static::lazy_static,
     rand::{distributions::Alphanumeric, thread_rng, Rng},
     serde_derive::{Deserialize, Serialize},
@@ -45,6 +46,14 @@ impl UfsUuid {
     {
         UfsUuid {
             inner: Uuid::new_v5(&USER_ROOT_UUID, name.as_ref()),
+        }
+    }
+
+    /// Create a new UfsUuid based on an existing UfsUuid, plus a the current time
+    pub fn new_with_timestamp(&self) -> Self {
+        let time = Utc::now();
+        UfsUuid {
+            inner: Uuid::new_v5(&self.inner, time.to_rfc3339().as_bytes()),
         }
     }
 
