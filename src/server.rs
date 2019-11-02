@@ -266,7 +266,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .or(wasm_delete);
 
             let (addr, warp) = warp::serve(routes)
-                // .tls("src/certs/cert.pem", "src/certs/cern.rsa")
+                .tls("src/certs/cert.pem", "src/certs/key.rsa")
                 .bind_with_graceful_shutdown(([0, 0, 0, 0], server.port), stop_signal);
 
             hyper::rt::run(warp);
