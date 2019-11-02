@@ -17,6 +17,7 @@ use {
         },
         UfsUuid,
     },
+    chrono::prelude::*,
     crossbeam::crossbeam_channel,
     failure::format_err,
     futures::sync::oneshot,
@@ -29,6 +30,7 @@ use {
         sync::{Arc, Mutex},
         thread::JoinHandle,
     },
+    time::Duration,
 };
 
 /// File mode for `open` call.
@@ -280,11 +282,14 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 .and_modify(|t| *t = (jti, user.1))
                 .or_insert((jti, user.1));
 
+            let exp = Utc::now() + Duration::minutes(5);
+
             Some(new_jwt(
                 UserClaims {
                     iss: self.id,
                     sub: user.0,
                     jti,
+                    exp: exp.timestamp() as usize,
                 },
                 "secret".as_ref(),
             ))

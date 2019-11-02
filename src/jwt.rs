@@ -12,6 +12,7 @@ pub(crate) struct UserClaims {
     pub(crate) iss: UfsUuid,
     pub(crate) sub: UfsUuid,
     pub(crate) jti: UfsUuid,
+    pub(crate) exp: usize,
 }
 
 pub(crate) fn new_jwt(claims: UserClaims, secret: &[u8]) -> JWT {

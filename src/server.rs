@@ -516,7 +516,7 @@ where
 {
     let mut guard = iofs.lock().expect("poisoned iofs lock");
     let jwt = guard.login(credentials.id, credentials.password);
-    json!({ "token": jwt })
+    json!(jwt)
 }
 
 fn send_get_filter(
