@@ -280,7 +280,6 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 .and_modify(|t| *t = (jti, user.1))
                 .or_insert((jti, user.1));
 
-            println!("{:#?}", self.tokens);
             Some(new_jwt(
                 UserClaims {
                     iss: self.id,
@@ -295,8 +294,8 @@ impl<B: BlockStorage> UberFileSystem<B> {
     }
 
     /// Add a user to the file system
-    pub fn add_user(&mut self, user: String) {
-        self.block_manager.metadata_mut().add_user(user);
+    pub fn add_user(&mut self, user: String, password: String) {
+        self.block_manager.metadata_mut().add_user(user, password);
     }
 
     /// Get a list of existing users

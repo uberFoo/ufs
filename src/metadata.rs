@@ -247,12 +247,12 @@ impl Metadata {
 
     /// Create a new user
     ///
-    pub(crate) fn add_user(&mut self, user: String) {
+    pub(crate) fn add_user(&mut self, user: String, password: String) {
         debug!("-------");
         debug!("`new_user`: {}", user);
 
         self.dirty = true;
-        self.users.new_user(user);
+        self.users.new_user(user, password);
     }
 
     /// Get a user

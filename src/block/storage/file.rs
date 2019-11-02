@@ -269,11 +269,11 @@ impl FileStore {
             Ok(map) => map,
             Err(e) => {
                 error!(
-                    "Unable to load block map -- possibly incorrect password?\nError: {}",
+                    "Unable to load block map -- possibly incorrect master password?\nError: {}",
                     e
                 );
                 return Err(format_err!(
-                    "Unable to load block map -- possibly incorrect password?"
+                    "Unable to load block map -- possibly incorrect master password?"
                 ));
             }
         };
