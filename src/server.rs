@@ -200,7 +200,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
 
             // Other lambdas
             let iofs = server.iofs.clone();
-            let login = move |credentials| iofs_login(iofs.clone(), credentials);
+            let login = move |credentials| iofs_login(credentials, iofs.clone());
 
             // Paths that are part of the IOFS UI
             let index = warp::get2()
@@ -366,7 +366,6 @@ where
 {
     let guard = iofs.lock().expect("poisoned iofs lock");
     let manager = guard.block_manager();
-
     json!({
         "iofs_id": format!("{}", manager.id()),
         "block_size": format!("{}", manager.block_size()),
@@ -508,8 +507,8 @@ where
 }
 
 fn iofs_login<B>(
-    iofs: Arc<Mutex<UberFileSystem<B>>>,
     credentials: LoginCredentials,
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
 ) -> serde_json::value::Value
 where
     B: BlockStorage,

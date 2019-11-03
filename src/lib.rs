@@ -167,6 +167,14 @@ impl Display for IOFSError {
 enum IOFSErrorKind {
     #[fail(display = "Directory already exists")]
     DirectoryExists,
+    #[fail(display = "Expired token")]
+    TokenExpired,
+    #[fail(display = "Unknown token")]
+    UnknownToken,
+    #[fail(display = "Invalid JWT token")]
+    InvalidToken,
+    #[fail(display = "Invalid JWT Signature")]
+    InvalidSignature,
 }
 
 impl From<IOFSErrorKind> for IOFSError {
