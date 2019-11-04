@@ -7,6 +7,7 @@ use {
     crossbeam::crossbeam_channel,
     futures::{future::Future, sync::oneshot},
     handlebars::{Context, Handlebars, Helper, JsonRender, Output, RenderContext, RenderError},
+    log::debug,
     serde::{Deserialize, Serialize},
     serde_json::json,
     std::{
@@ -39,25 +40,53 @@ impl IofsNetworkMessage {
             IofsNetworkMessage::Delete(m) => &m.route,
         }
     }
+
+    pub(crate) fn token(&self) -> &str {
+        match self {
+            IofsNetworkMessage::Get(m) => &m.token,
+            IofsNetworkMessage::Post(m) => &m.token,
+            IofsNetworkMessage::Put(m) => &m.token,
+            IofsNetworkMessage::Patch(m) => &m.token,
+            IofsNetworkMessage::Delete(m) => &m.token,
+        }
+    }
+
+    pub(crate) fn unauthorized(self) {
+        match self {
+            IofsNetworkMessage::Get(mut m) => m.respond("unauthorized".to_string()),
+            IofsNetworkMessage::Post(mut m) => m.respond("unauthorized".to_string()),
+            IofsNetworkMessage::Put(mut m) => m.respond("unauthorized".to_string()),
+            IofsNetworkMessage::Patch(mut m) => m.respond("unauthorized".to_string()),
+            IofsNetworkMessage::Delete(mut m) => m.respond("unauthorized".to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct IofsNetworkGetValue {
     route: String,
+    token: String,
     response_channel: Option<oneshot::Sender<String>>,
 }
 
 impl IofsNetworkGetValue {
-    pub(crate) fn new(route: String, response_channel: oneshot::Sender<String>) -> Self {
+    pub(crate) fn new(
+        route: String,
+        token: String,
+        response_channel: oneshot::Sender<String>,
+    ) -> Self {
         IofsNetworkGetValue {
             route,
+            token,
             response_channel: Some(response_channel),
         }
     }
 
     pub(crate) fn respond(&mut self, value: String) {
         if let Some(channel) = self.response_channel.take() {
-            channel.send(value);
+            channel
+                .send(value)
+                .expect("unable to send on oneshot channel");
         }
     }
 
@@ -69,6 +98,7 @@ impl IofsNetworkGetValue {
 #[derive(Debug)]
 pub(crate) struct IofsNetworkJsonValue {
     route: String,
+    token: String,
     body: serde_json::Value,
     response_channel: Option<oneshot::Sender<String>>,
 }
@@ -76,11 +106,13 @@ pub(crate) struct IofsNetworkJsonValue {
 impl IofsNetworkJsonValue {
     pub(crate) fn new(
         route: String,
+        token: String,
         body: serde_json::Value,
         response_channel: oneshot::Sender<String>,
     ) -> Self {
         IofsNetworkJsonValue {
             route,
+            token,
             body,
             response_channel: Some(response_channel),
         }
@@ -96,7 +128,9 @@ impl IofsNetworkJsonValue {
 
     pub(crate) fn respond(&mut self, value: String) {
         if let Some(channel) = self.response_channel.take() {
-            channel.send(value);
+            channel
+                .send(value)
+                .expect("unable to send on onshot channel");
         }
     }
 }
@@ -105,6 +139,11 @@ impl IofsNetworkJsonValue {
 struct LoginCredentials {
     id: String,
     password: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Query {
+    token: String,
 }
 
 pub(crate) struct UfsRemoteServer<B: BlockStorage + 'static> {
@@ -180,23 +219,39 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
 
             // Lambdas for calling Wasm functions
             let channel = server.http_sender.clone();
-            let to_wasm_get = move |receiver| send_get_filter(receiver, channel.clone());
+            let iofs = server.iofs.clone();
+            // These are reversed for some reason.
+            let to_wasm_get = move |receiver, token| {
+                send_get_filter(token, receiver, channel.clone(), iofs.clone())
+            };
 
             let channel = server.http_sender.clone();
-            let to_wasm_post =
-                move |receiver, json| send_post_to_wasm(receiver, json, channel.clone());
+            let iofs = server.iofs.clone();
+            // These are reversed for some reason.
+            let to_wasm_post = move |receiver, token, json| {
+                send_post_to_wasm(token, receiver, json, channel.clone(), iofs.clone())
+            };
 
             let channel = server.http_sender.clone();
-            let to_wasm_put =
-                move |receiver, json| send_put_to_wasm(receiver, json, channel.clone());
+            let iofs = server.iofs.clone();
+            // These are reversed for some reason.
+            let to_wasm_put = move |receiver, token, json| {
+                send_put_to_wasm(token, receiver, json, channel.clone(), iofs.clone())
+            };
 
             let channel = server.http_sender.clone();
-            let to_wasm_patch =
-                move |receiver, json| send_patch_to_wasm(receiver, json, channel.clone());
+            let iofs = server.iofs.clone();
+            // These are reversed for some reason.
+            let to_wasm_patch = move |receiver, token, json| {
+                send_patch_to_wasm(token, receiver, json, channel.clone(), iofs.clone())
+            };
 
             let channel = server.http_sender.clone();
-            let to_wasm_delete =
-                move |receiver, json| send_delete_to_wasm(receiver, json, channel.clone());
+            let iofs = server.iofs.clone();
+            // These are reversed for some reason.
+            let to_wasm_delete = move |receiver, token, json| {
+                send_delete_to_wasm(token, receiver, json, channel.clone(), iofs.clone())
+            };
 
             // Other lambdas
             let iofs = server.iofs.clone();
@@ -247,11 +302,13 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_get = warp::get2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
+                .and(warp::query().map(|q: Query| q.token))
                 .map(to_wasm_get);
 
             let wasm_post = warp::post2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
+                .and(warp::query().map(|q: Query| q.token))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
                 .map(to_wasm_post);
@@ -259,6 +316,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_put = warp::put2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
+                .and(warp::query().map(|q: Query| q.token))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
                 .map(to_wasm_put);
@@ -266,6 +324,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_patch = warp::patch()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
+                .and(warp::query().map(|q: Query| q.token))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
                 .map(to_wasm_patch);
@@ -273,6 +332,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
             let wasm_delete = warp::delete2()
                 .and(warp::path("wasm"))
                 .and(warp::path::param())
+                .and(warp::query().map(|q: Query| q.token))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
                 .map(to_wasm_delete);
@@ -509,7 +569,7 @@ where
 fn iofs_login<B>(
     credentials: LoginCredentials,
     iofs: Arc<Mutex<UberFileSystem<B>>>,
-) -> serde_json::value::Value
+) -> serde_json::Value
 where
     B: BlockStorage,
 {
@@ -518,14 +578,24 @@ where
     json!(jwt)
 }
 
-fn send_get_filter(
+fn send_get_filter<B>(
+    token: String,
     receiver: String,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
-) -> impl warp::Reply {
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> impl warp::Reply
+where
+    B: BlockStorage,
+{
+    debug!("token: {}", token);
+
+    debug!("calling get handler");
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Get(IofsNetworkGetValue::new(
-        receiver, tx,
-    )));
+    channel
+        .send(IofsNetworkMessage::Get(IofsNetworkGetValue::new(
+            receiver, token, tx,
+        )))
+        .expect("unable to send IofsNetworkMessage");
 
     // let bar = rx.map(|result| warp::reply::html(result));
     // let result = rx.wait().unwrap();
@@ -536,50 +606,81 @@ fn send_get_filter(
     // rx.map(|result| warp::reply::html(result))
 }
 
-fn send_post_to_wasm(
+fn send_post_to_wasm<B>(
+    token: String,
     receiver: String,
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
-) -> impl warp::Reply {
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> impl warp::Reply
+where
+    B: BlockStorage,
+{
+    debug!("token: {}", token);
+
+    debug!("calling post handler");
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Post(IofsNetworkJsonValue::new(
-        receiver, json, tx,
-    )));
+    channel
+        .send(IofsNetworkMessage::Post(IofsNetworkJsonValue::new(
+            receiver, token, json, tx,
+        )))
+        .expect("unable to send IofsNetworkMessage");
     rx.map(|result| warp::reply::html(result)).wait().unwrap()
 }
 
-fn send_put_to_wasm(
+fn send_put_to_wasm<B>(
+    token: String,
     receiver: String,
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
-) -> impl warp::Reply {
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> impl warp::Reply
+where
+    B: BlockStorage,
+{
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Put(IofsNetworkJsonValue::new(
-        receiver, json, tx,
-    )));
+    channel
+        .send(IofsNetworkMessage::Put(IofsNetworkJsonValue::new(
+            receiver, token, json, tx,
+        )))
+        .expect("unable to send IofsNetworkMessage");
     rx.map(|result| warp::reply::html(result)).wait().unwrap()
 }
 
-fn send_patch_to_wasm(
+fn send_patch_to_wasm<B>(
+    token: String,
     receiver: String,
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
-) -> impl warp::Reply {
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> impl warp::Reply
+where
+    B: BlockStorage,
+{
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Patch(IofsNetworkJsonValue::new(
-        receiver, json, tx,
-    )));
+    channel
+        .send(IofsNetworkMessage::Patch(IofsNetworkJsonValue::new(
+            receiver, token, json, tx,
+        )))
+        .expect("unable to send IofsNetworkMessage");
     rx.map(|result| warp::reply::html(result)).wait().unwrap()
 }
 
-fn send_delete_to_wasm(
+fn send_delete_to_wasm<B>(
+    token: String,
     receiver: String,
     json: serde_json::Value,
     channel: crossbeam_channel::Sender<IofsNetworkMessage>,
-) -> impl warp::Reply {
+    iofs: Arc<Mutex<UberFileSystem<B>>>,
+) -> impl warp::Reply
+where
+    B: BlockStorage,
+{
     let (tx, rx) = oneshot::channel::<String>();
-    channel.send(IofsNetworkMessage::Delete(IofsNetworkJsonValue::new(
-        receiver, json, tx,
-    )));
+    channel
+        .send(IofsNetworkMessage::Delete(IofsNetworkJsonValue::new(
+            receiver, token, json, tx,
+        )))
+        .expect("unable to send IofsNetworkMessage");
     rx.map(|result| warp::reply::html(result)).wait().unwrap()
 }

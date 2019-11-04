@@ -383,123 +383,127 @@ impl<B: BlockStorage> RuntimeManager<B> {
                         let guard = runtime.ufs.clone();
                         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-                        match msg {
-                            get @ IofsNetworkMessage::Get(_) => {
-                                let route = get.route();
-                                if let Some(endpoint) = runtime
-                                    .http_endpoints
-                                    .get(&HttpEndPoint::GET(route.to_string()))
-                                {
-                                    let path = &runtime.threads[*endpoint].path;
-                                    if let Some(Grant::Allow) = guard
-                                        .block_manager_mut()
-                                        .metadata_mut()
-                                        .check_wasm_program_http_grant(
-                                            path,
-                                            GrantType::HttpGetEvent,
-                                            route,
-                                        )
+                        if let Ok(()) = guard.validate_token(msg.token().to_owned()) {
+                            match msg {
+                                get @ IofsNetworkMessage::Get(_) => {
+                                    let route = get.route();
+                                    if let Some(endpoint) = runtime
+                                        .http_endpoints
+                                        .get(&HttpEndPoint::GET(route.to_string()))
                                     {
-                                        runtime.threads[*endpoint]
-                                            .sender
-                                            .send(WasmProcessMessage::NetworkEvent(get))
-                                            .unwrap();
+                                        let path = &runtime.threads[*endpoint].path;
+                                        if let Some(Grant::Allow) = guard
+                                            .block_manager_mut()
+                                            .metadata_mut()
+                                            .check_wasm_program_http_grant(
+                                                path,
+                                                GrantType::HttpGetEvent,
+                                                route,
+                                            )
+                                        {
+                                            runtime.threads[*endpoint]
+                                                .sender
+                                                .send(WasmProcessMessage::NetworkEvent(get))
+                                                .unwrap();
+                                        }
                                     }
                                 }
-                            }
-                            post @ IofsNetworkMessage::Post(_) => {
-                                let route = post.route();
-                                if let Some(endpoint) = runtime
-                                    .http_endpoints
-                                    .get(&HttpEndPoint::POST(route.to_string()))
-                                {
-                                    let path = &runtime.threads[*endpoint].path;
-                                    if let Some(Grant::Allow) = guard
-                                        .block_manager_mut()
-                                        .metadata_mut()
-                                        .check_wasm_program_http_grant(
-                                            path,
-                                            GrantType::HttpPostEvent,
-                                            route,
-                                        )
+                                post @ IofsNetworkMessage::Post(_) => {
+                                    let route = post.route();
+                                    if let Some(endpoint) = runtime
+                                        .http_endpoints
+                                        .get(&HttpEndPoint::POST(route.to_string()))
                                     {
-                                        runtime.threads[*endpoint]
-                                            .sender
-                                            .send(WasmProcessMessage::NetworkEvent(post))
-                                            .unwrap();
+                                        let path = &runtime.threads[*endpoint].path;
+                                        if let Some(Grant::Allow) = guard
+                                            .block_manager_mut()
+                                            .metadata_mut()
+                                            .check_wasm_program_http_grant(
+                                                path,
+                                                GrantType::HttpPostEvent,
+                                                route,
+                                            )
+                                        {
+                                            runtime.threads[*endpoint]
+                                                .sender
+                                                .send(WasmProcessMessage::NetworkEvent(post))
+                                                .unwrap();
+                                        }
                                     }
                                 }
-                            }
-                            put @ IofsNetworkMessage::Put(_) => {
-                                let route = put.route();
-                                if let Some(endpoint) = runtime
-                                    .http_endpoints
-                                    .get(&HttpEndPoint::PUT(route.to_string()))
-                                {
-                                    let path = &runtime.threads[*endpoint].path;
-                                    if let Some(Grant::Allow) = guard
-                                        .block_manager_mut()
-                                        .metadata_mut()
-                                        .check_wasm_program_http_grant(
-                                            path,
-                                            GrantType::HttpPutEvent,
-                                            route,
-                                        )
+                                put @ IofsNetworkMessage::Put(_) => {
+                                    let route = put.route();
+                                    if let Some(endpoint) = runtime
+                                        .http_endpoints
+                                        .get(&HttpEndPoint::PUT(route.to_string()))
                                     {
-                                        runtime.threads[*endpoint]
-                                            .sender
-                                            .send(WasmProcessMessage::NetworkEvent(put))
-                                            .unwrap();
+                                        let path = &runtime.threads[*endpoint].path;
+                                        if let Some(Grant::Allow) = guard
+                                            .block_manager_mut()
+                                            .metadata_mut()
+                                            .check_wasm_program_http_grant(
+                                                path,
+                                                GrantType::HttpPutEvent,
+                                                route,
+                                            )
+                                        {
+                                            runtime.threads[*endpoint]
+                                                .sender
+                                                .send(WasmProcessMessage::NetworkEvent(put))
+                                                .unwrap();
+                                        }
                                     }
                                 }
-                            }
-                            patch @ IofsNetworkMessage::Patch(_) => {
-                                let route = patch.route();
-                                if let Some(endpoint) = runtime
-                                    .http_endpoints
-                                    .get(&HttpEndPoint::PATCH(route.to_string()))
-                                {
-                                    let path = &runtime.threads[*endpoint].path;
-                                    if let Some(Grant::Allow) = guard
-                                        .block_manager_mut()
-                                        .metadata_mut()
-                                        .check_wasm_program_http_grant(
-                                            path,
-                                            GrantType::HttpPatchEvent,
-                                            route,
-                                        )
+                                patch @ IofsNetworkMessage::Patch(_) => {
+                                    let route = patch.route();
+                                    if let Some(endpoint) = runtime
+                                        .http_endpoints
+                                        .get(&HttpEndPoint::PATCH(route.to_string()))
                                     {
-                                        runtime.threads[*endpoint]
-                                            .sender
-                                            .send(WasmProcessMessage::NetworkEvent(patch))
-                                            .unwrap();
+                                        let path = &runtime.threads[*endpoint].path;
+                                        if let Some(Grant::Allow) = guard
+                                            .block_manager_mut()
+                                            .metadata_mut()
+                                            .check_wasm_program_http_grant(
+                                                path,
+                                                GrantType::HttpPatchEvent,
+                                                route,
+                                            )
+                                        {
+                                            runtime.threads[*endpoint]
+                                                .sender
+                                                .send(WasmProcessMessage::NetworkEvent(patch))
+                                                .unwrap();
+                                        }
                                     }
                                 }
-                            }
-                            delete @ IofsNetworkMessage::Delete(_) => {
-                                let route = delete.route();
-                                if let Some(endpoint) = runtime
-                                    .http_endpoints
-                                    .get(&HttpEndPoint::DELETE(route.to_string()))
-                                {
-                                    let path = &runtime.threads[*endpoint].path;
-                                    if let Some(Grant::Allow) = guard
-                                        .block_manager_mut()
-                                        .metadata_mut()
-                                        .check_wasm_program_http_grant(
-                                            path,
-                                            GrantType::HttpDeleteEvent,
-                                            route,
-                                        )
+                                delete @ IofsNetworkMessage::Delete(_) => {
+                                    let route = delete.route();
+                                    if let Some(endpoint) = runtime
+                                        .http_endpoints
+                                        .get(&HttpEndPoint::DELETE(route.to_string()))
                                     {
-                                        runtime.threads[*endpoint]
-                                            .sender
-                                            .send(WasmProcessMessage::NetworkEvent(delete))
-                                            .unwrap();
+                                        let path = &runtime.threads[*endpoint].path;
+                                        if let Some(Grant::Allow) = guard
+                                            .block_manager_mut()
+                                            .metadata_mut()
+                                            .check_wasm_program_http_grant(
+                                                path,
+                                                GrantType::HttpDeleteEvent,
+                                                route,
+                                            )
+                                        {
+                                            runtime.threads[*endpoint]
+                                                .sender
+                                                .send(WasmProcessMessage::NetworkEvent(delete))
+                                                .unwrap();
+                                        }
                                     }
                                 }
-                            }
-                        };
+                            };
+                        } else {
+                            msg.unauthorized();
+                        }
                     }
                 }
             }
