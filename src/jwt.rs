@@ -1,7 +1,7 @@
 use {
     crate::{IOFSErrorKind, UfsUuid},
     jsonwebtoken as jwt,
-    jwt::{decode, encode, errors::ErrorKind, Algorithm, Header, Validation},
+    jwt::{decode, encode, errors::ErrorKind, Header, Validation},
     log::error,
     serde::{Deserialize, Serialize},
 };

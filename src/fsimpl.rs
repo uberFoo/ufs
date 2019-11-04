@@ -293,7 +293,7 @@ impl<B: BlockStorage> UberFileSystem<B> {
                 key: user.1,
             };
 
-            info!("token secret {}", secret);
+            debug!("token secret {}", secret);
 
             let token = new_jwt(
                 UserClaims {
@@ -313,12 +313,31 @@ impl<B: BlockStorage> UberFileSystem<B> {
     }
 
     /// Validate a previously issued token
-    pub fn validate_token(&self, token: JWT) -> Result<(), failure::Error> {
+    pub fn validate_token(&mut self, token: JWT) -> Result<(), failure::Error> {
         if let Some(tr) = self.tokens.get(&token) {
-            match decode_jwt(token, &tr.secret) {
-                Ok(_) => Ok(()),
-                // Decoding should check the expiration
-                Err(e) => Err(e),
+            match decode_jwt(token.clone(), &tr.secret) {
+                Ok(_) => {
+                    debug!("validated token: {}", token);
+                    Ok(())
+                }
+                // Decoding will check the expiration
+                Err(e) => match e.as_fail().downcast_ref::<IOFSErrorKind>() {
+                    Some(e) => match e {
+                        IOFSErrorKind::TokenExpired => {
+                            debug!("removed token: {}", token);
+                            self.tokens.remove(&token);
+                            Err(IOFSErrorKind::TokenExpired.into())
+                        }
+                        _ => {
+                            error!("access attempt with token: {}", token);
+                            Err(IOFSErrorKind::TokenError.into())
+                        }
+                    },
+                    None => {
+                        error!("access attempt with token: {}", token);
+                        Err(IOFSErrorKind::TokenError.into())
+                    }
+                },
             }
         } else {
             return Err(IOFSErrorKind::UnknownToken.into());
