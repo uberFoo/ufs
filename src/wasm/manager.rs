@@ -405,7 +405,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                                 .sender
                                                 .send(WasmProcessMessage::NetworkEvent(get))
                                                 .unwrap();
+                                        } else {
+                                            get.not_allowed();
                                         }
+                                    } else {
+                                        get.no_such_endpoint();
                                     }
                                 }
                                 post @ IofsNetworkMessage::Post(_) => {
@@ -428,7 +432,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                                 .sender
                                                 .send(WasmProcessMessage::NetworkEvent(post))
                                                 .unwrap();
+                                        } else {
+                                            post.not_allowed();
                                         }
+                                    } else {
+                                        post.no_such_endpoint();
                                     }
                                 }
                                 put @ IofsNetworkMessage::Put(_) => {
@@ -451,7 +459,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                                 .sender
                                                 .send(WasmProcessMessage::NetworkEvent(put))
                                                 .unwrap();
+                                        } else {
+                                            put.not_allowed();
                                         }
+                                    } else {
+                                        put.no_such_endpoint();
                                     }
                                 }
                                 patch @ IofsNetworkMessage::Patch(_) => {
@@ -474,7 +486,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                                 .sender
                                                 .send(WasmProcessMessage::NetworkEvent(patch))
                                                 .unwrap();
+                                        } else {
+                                            patch.not_allowed();
                                         }
+                                    } else {
+                                        patch.no_such_endpoint();
                                     }
                                 }
                                 delete @ IofsNetworkMessage::Delete(_) => {
@@ -497,7 +513,11 @@ impl<B: BlockStorage> RuntimeManager<B> {
                                                 .sender
                                                 .send(WasmProcessMessage::NetworkEvent(delete))
                                                 .unwrap();
+                                        } else {
+                                            delete.not_allowed();
                                         }
+                                    } else {
+                                        delete.no_such_endpoint();
                                     }
                                 }
                             };
