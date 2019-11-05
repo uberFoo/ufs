@@ -5,6 +5,7 @@ use {
             FileStore, MemoryStore, NetworkStore,
         },
         crypto::make_fs_key,
+        jwt::{decode_jwt, new_jwt, UserClaims, JWT},
         metadata::{
             DirectoryEntry, DirectoryMetadata, File, FileHandle, FileMetadata, FileSize, Metadata,
             WASM_EXT,
@@ -14,12 +15,14 @@ use {
             IofsDirMessage, IofsFileMessage, IofsMessage, IofsMessagePayload, ProtoWasmProgram,
             RuntimeManager, RuntimeManagerMsg,
         },
-        UfsUuid,
+        IOFSErrorKind, UfsUuid,
     },
+    chrono::prelude::*,
     crossbeam::crossbeam_channel,
     failure::format_err,
     futures::sync::oneshot,
     log::{debug, error, info, trace, warn},
+    rand::{distributions::Alphanumeric, thread_rng, Rng},
     reqwest::IntoUrl,
     std::{
         collections::HashMap,
@@ -28,6 +31,7 @@ use {
         sync::{Arc, Mutex},
         thread::JoinHandle,
     },
+    time::Duration,
 };
 
 /// File mode for `open` call.
@@ -147,15 +151,31 @@ impl<B: BlockStorage> DerefMut for UfsMounter<B> {
     }
 }
 
+struct TokenRegistration {
+    user: UfsUuid,
+    secret: String,
+    key: [u8; 32],
+}
+
 /// Main File System Implementation
 ///
 pub struct UberFileSystem<B: BlockStorage> {
+    /// The ID of the file system
     id: UfsUuid,
+    /// JWTs are passed out as authentication tokens. This is a mapping from token string to data
+    /// needed for token validation and user access.
+    tokens: HashMap<String, TokenRegistration>,
+    /// The ID of the user that mounted the file system
     user: UfsUuid,
+    /// The block manager -- where all the magic happens
     block_manager: BlockManager<B>,
+    /// A mapping of file handles to File structures
     open_files: HashMap<FileHandle, File>,
+    /// A mapping of file handles to DirectoryMetadata structures
     open_dirs: HashMap<FileHandle, DirectoryMetadata>,
+    /// A counter so that we know what the next file handle should be
     open_file_counter: FileHandle,
+    /// The Wasm program manager
     program_mgr: Option<crossbeam_channel::Sender<RuntimeManagerMsg>>,
 }
 
@@ -179,6 +199,7 @@ impl UberFileSystem<MemoryStore> {
 
         UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -218,6 +239,7 @@ impl UberFileSystem<FileStore> {
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -246,6 +268,7 @@ impl UberFileSystem<NetworkStore> {
 
         Ok(UberFileSystem {
             id: block_manager.id().clone(),
+            tokens: HashMap::new(),
             user: UfsUuid::new_user(user.as_ref()),
             block_manager,
             open_files: HashMap::new(),
@@ -257,9 +280,73 @@ impl UberFileSystem<NetworkStore> {
 }
 
 impl<B: BlockStorage> UberFileSystem<B> {
+    /// Log a user into the file system
+    pub fn login(&mut self, user: String, password: String) -> Option<JWT> {
+        if let Some(user) = self.block_manager.metadata().get_user(user, password) {
+            // let token_id = user.0.new_with_timestamp();
+            let expiration = Utc::now() + Duration::minutes(5);
+            let secret: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();
+
+            let tr = TokenRegistration {
+                user: user.0,
+                secret: secret.clone(),
+                key: user.1,
+            };
+
+            debug!("token secret {}", secret);
+
+            let token = new_jwt(
+                UserClaims {
+                    iss: self.id,
+                    sub: user.0,
+                    exp: expiration.timestamp() as usize,
+                },
+                secret.as_bytes(),
+            );
+            // Insert the TokenRegistration into our map.
+            self.tokens.entry(token.clone()).or_insert(tr);
+
+            Some(token)
+        } else {
+            None
+        }
+    }
+
+    /// Validate a previously issued token
+    pub fn validate_token(&mut self, token: JWT) -> Result<(), failure::Error> {
+        if let Some(tr) = self.tokens.get(&token) {
+            match decode_jwt(token.clone(), &tr.secret) {
+                Ok(_) => {
+                    debug!("validated token: {}", token);
+                    Ok(())
+                }
+                // Decoding will check the expiration
+                Err(e) => match e.as_fail().downcast_ref::<IOFSErrorKind>() {
+                    Some(e) => match e {
+                        IOFSErrorKind::TokenExpired => {
+                            debug!("removed token: {}", token);
+                            self.tokens.remove(&token);
+                            Err(IOFSErrorKind::TokenExpired.into())
+                        }
+                        _ => {
+                            error!("access attempt with token: {}", token);
+                            Err(IOFSErrorKind::TokenError.into())
+                        }
+                    },
+                    None => {
+                        error!("access attempt with token: {}", token);
+                        Err(IOFSErrorKind::TokenError.into())
+                    }
+                },
+            }
+        } else {
+            return Err(IOFSErrorKind::UnknownToken.into());
+        }
+    }
+
     /// Add a user to the file system
-    pub fn add_user(&mut self, user: String) {
-        self.block_manager.metadata_mut().add_user(user);
+    pub fn add_user(&mut self, user: String, password: String) {
+        self.block_manager.metadata_mut().add_user(user, password);
     }
 
     /// Get a list of existing users
@@ -967,7 +1054,8 @@ mod test {
         init();
 
         // User and password on test file system are both empty
-        UberFileSystem::new_networked("", "", "test", "http://localhost:8888").unwrap();
+        let mut ufs =
+            UberFileSystem::new_networked("", "", "test", "http://localhost:8888").unwrap();
         let test = include_str!("wasm.rs").as_bytes();
 
         let root_id = ufs.block_manager.metadata().root_directory().id();

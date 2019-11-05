@@ -115,6 +115,7 @@ mod block;
 mod crypto;
 mod fsimpl;
 mod fuse;
+mod jwt;
 mod metadata;
 mod server;
 mod time;
@@ -137,28 +138,28 @@ pub use {
 
 #[derive(Debug)]
 pub(crate) struct IOFSError {
-    inner: Context<IOFSErrorKind>,
+    ctx: Context<IOFSErrorKind>,
 }
 
 impl IOFSError {
-    pub fn kind(&self) -> IOFSErrorKind {
-        *self.inner.get_context()
+    pub fn kind(&self) -> &IOFSErrorKind {
+        self.ctx.get_context()
     }
 }
 
 impl Fail for IOFSError {
     fn cause(&self) -> Option<&dyn Fail> {
-        self.inner.cause()
+        self.ctx.cause()
     }
 
     fn backtrace(&self) -> Option<&Backtrace> {
-        self.inner.backtrace()
+        self.ctx.backtrace()
     }
 }
 
 impl Display for IOFSError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.inner, f)
+        Display::fmt(&self.ctx, f)
     }
 }
 
@@ -166,18 +167,26 @@ impl Display for IOFSError {
 enum IOFSErrorKind {
     #[fail(display = "Directory already exists")]
     DirectoryExists,
+    #[fail(display = "Expired token")]
+    TokenExpired,
+    #[fail(display = "Unknown token")]
+    UnknownToken,
+    #[fail(display = "Invalid JWT token")]
+    InvalidToken,
+    #[fail(display = "Invalid JWT Signature")]
+    InvalidSignature,
+    #[fail(display = "Unknown token error")]
+    TokenError,
 }
 
 impl From<IOFSErrorKind> for IOFSError {
     fn from(kind: IOFSErrorKind) -> Self {
-        IOFSError {
-            inner: Context::new(kind),
-        }
+        IOFSError::from(Context::new(kind))
     }
 }
 
 impl From<Context<IOFSErrorKind>> for IOFSError {
-    fn from(inner: Context<IOFSErrorKind>) -> Self {
-        IOFSError { inner: inner }
+    fn from(ctx: Context<IOFSErrorKind>) -> Self {
+        IOFSError { ctx }
     }
 }
