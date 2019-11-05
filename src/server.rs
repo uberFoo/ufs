@@ -315,8 +315,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::path("login"))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
-                .map(login)
-                .map(|jwt| warp::reply::json(&jwt));
+                .map(login);
 
             // Paths that invoke Wasm callbacks.
             let wasm_get = warp::get2()
@@ -586,16 +585,15 @@ where
     }
 }
 
-fn iofs_login<B>(
-    credentials: LoginCredentials,
-    iofs: Arc<Mutex<UberFileSystem<B>>>,
-) -> serde_json::Value
+fn iofs_login<B>(credentials: LoginCredentials, iofs: Arc<Mutex<UberFileSystem<B>>>) -> String
 where
     B: BlockStorage,
 {
     let mut guard = iofs.lock().expect("poisoned iofs lock");
-    let jwt = guard.login(credentials.id, credentials.password);
-    json!(jwt)
+    match guard.login(credentials.id, credentials.password) {
+        Some(jwt) => jwt,
+        None => "user not found, or password incorrect".to_string(),
+    }
 }
 
 fn send_get_filter<B>(
