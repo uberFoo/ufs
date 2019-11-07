@@ -60,6 +60,26 @@ impl IofsNetworkMessage {
             IofsNetworkMessage::Delete(mut m) => m.respond("unauthorized".to_string()),
         }
     }
+
+    pub(crate) fn no_such_endpoint(self) {
+        match self {
+            IofsNetworkMessage::Get(mut m) => m.respond("no such endpoint".to_string()),
+            IofsNetworkMessage::Post(mut m) => m.respond("no such endpoint".to_string()),
+            IofsNetworkMessage::Put(mut m) => m.respond("no such endpoint".to_string()),
+            IofsNetworkMessage::Patch(mut m) => m.respond("no such endpoint".to_string()),
+            IofsNetworkMessage::Delete(mut m) => m.respond("no such endpoint".to_string()),
+        }
+    }
+
+    pub(crate) fn not_allowed(self) {
+        match self {
+            IofsNetworkMessage::Get(mut m) => m.respond("insufficient permissions".to_string()),
+            IofsNetworkMessage::Post(mut m) => m.respond("insufficient permissions".to_string()),
+            IofsNetworkMessage::Put(mut m) => m.respond("insufficient permissions".to_string()),
+            IofsNetworkMessage::Patch(mut m) => m.respond("insufficient permissions".to_string()),
+            IofsNetworkMessage::Delete(mut m) => m.respond("insufficient permissions".to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -295,8 +315,7 @@ impl<B: BlockStorage> UfsRemoteServer<B> {
                 .and(warp::path("login"))
                 .and(warp::body::content_length_limit(CONTENT_LENGTH))
                 .and(warp::body::json())
-                .map(login)
-                .map(|jwt| warp::reply::json(&jwt));
+                .map(login);
 
             // Paths that invoke Wasm callbacks.
             let wasm_get = warp::get2()
@@ -566,16 +585,15 @@ where
     }
 }
 
-fn iofs_login<B>(
-    credentials: LoginCredentials,
-    iofs: Arc<Mutex<UberFileSystem<B>>>,
-) -> serde_json::Value
+fn iofs_login<B>(credentials: LoginCredentials, iofs: Arc<Mutex<UberFileSystem<B>>>) -> String
 where
     B: BlockStorage,
 {
     let mut guard = iofs.lock().expect("poisoned iofs lock");
-    let jwt = guard.login(credentials.id, credentials.password);
-    json!(jwt)
+    match guard.login(credentials.id, credentials.password) {
+        Some(jwt) => jwt,
+        None => "user not found, or password incorrect".to_string(),
+    }
 }
 
 fn send_get_filter<B>(
@@ -602,7 +620,9 @@ where
     // let baz = warp::reply::html(result);
     // warp::reply::reply()
 
-    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    rx.map(|result| warp::reply::html(result))
+        .wait()
+        .expect("error reading channel")
     // rx.map(|result| warp::reply::html(result))
 }
 
@@ -625,7 +645,9 @@ where
             receiver, token, json, tx,
         )))
         .expect("unable to send IofsNetworkMessage");
-    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    rx.map(|result| warp::reply::html(result))
+        .wait()
+        .expect("error reading channel")
 }
 
 fn send_put_to_wasm<B>(
@@ -644,7 +666,9 @@ where
             receiver, token, json, tx,
         )))
         .expect("unable to send IofsNetworkMessage");
-    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    rx.map(|result| warp::reply::html(result))
+        .wait()
+        .expect("error reading channel")
 }
 
 fn send_patch_to_wasm<B>(
@@ -663,7 +687,9 @@ where
             receiver, token, json, tx,
         )))
         .expect("unable to send IofsNetworkMessage");
-    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    rx.map(|result| warp::reply::html(result))
+        .wait()
+        .expect("error reading channel")
 }
 
 fn send_delete_to_wasm<B>(
@@ -682,5 +708,7 @@ where
             receiver, token, json, tx,
         )))
         .expect("unable to send IofsNetworkMessage");
-    rx.map(|result| warp::reply::html(result)).wait().unwrap()
+    rx.map(|result| warp::reply::html(result))
+        .wait()
+        .expect("error reading channel")
 }

@@ -320,7 +320,6 @@ mod test {
         );
 
         let block = bm.write(NONCE.to_vec(), 0, b"abc").unwrap().clone();
-        println!("{:#?}", block);
 
         assert_eq!(bm.free_block_count(), 0);
         let hash = block.hash.unwrap();
@@ -359,7 +358,6 @@ mod test {
             &vec![0x38; 511][..],
             "compare stored data with expected values"
         );
-        println!("{:#?}", block);
     }
 
     #[test]
@@ -384,7 +382,6 @@ mod test {
             &vec![0x38; 512][..],
             "compare stored data with expected values"
         );
-        println!("{:#?}", block);
     }
 
     #[test]
