@@ -17,7 +17,10 @@ fn mount_fs(
     port: u16,
 ) -> JoinHandle<Result<(), failure::Error>> {
     spawn(move || {
-        Command::new("mkdir").arg(mnt).status();
+        Command::new("mkdir")
+            .arg(mnt)
+            .status()
+            .expect("unable to create mount point");
 
         let ufs = UberFileSystem::load_file_backed(
             "".to_string(),
@@ -29,7 +32,10 @@ fn mount_fs(
         let ufs_fuse = UberFSFuse::new(mounter);
         mount(ufs_fuse, &mnt.to_string(), &[])?;
 
-        Command::new("rmdir").arg(mnt).status();
+        Command::new("rmdir")
+            .arg(mnt)
+            .status()
+            .expect("unable to remove mount point");
         Ok(())
     })
 }
@@ -53,7 +59,7 @@ fn get_token(port: u16) -> String {
 
 #[test]
 fn missing_endpoints() {
-    let fs = mount_fs(Path::new("bundles/integration_tests"), "mnt1", 8887);
+    let fs = mount_fs(Path::new("tests/bundles/integration_tests"), "mnt1", 8887);
     // Sleep to allow the file system to mount.
     thread::sleep(time::Duration::from_millis(500));
 
@@ -145,15 +151,18 @@ fn missing_endpoints() {
 
     assert_eq!("no such endpoint".to_string(), body);
 
-    Command::new("umount").arg("mnt1").status();
+    Command::new("umount")
+        .arg("mnt1")
+        .status()
+        .expect("unable to unmount mnt1");
     fs.join()
         .expect("unable to join fs thread")
         .expect("error starting fs");
 }
 
 #[test]
-fn wasm_rest() {
-    let fs = mount_fs(Path::new("bundles/test_for_echo"), "mnt2", 8889);
+fn rest_grants() {
+    let fs = mount_fs(Path::new("tests/bundles/test_for_echo"), "mnt2", 8889);
     // Sleep to allow the file system to mount.
     thread::sleep(time::Duration::from_millis(500));
 
@@ -251,7 +260,10 @@ fn wasm_rest() {
 
     assert_eq!("insufficient permissions".to_string(), body);
 
-    Command::new("umount").arg("mnt2").status();
+    Command::new("umount")
+        .arg("mnt2")
+        .status()
+        .expect("unable to unmount mnt2");
     fs.join()
         .expect("unable to join fs thread")
         .expect("error starting fs");
