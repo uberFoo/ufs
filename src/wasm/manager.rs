@@ -90,102 +90,117 @@ impl<B: BlockStorage> RuntimeProcess<B> {
         let guard = self.iofs.clone();
         let mut guard = guard.lock().expect("poisoned iofs lock");
 
-        let (can_send, msg) = match iofs_msg {
-            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) => {
-                (true, WasmMessage::Shutdown)
+        // The following code first checks to see if the wasm program is interested in the event. If
+        // so, it then checks that there is a grant to allow the wasm program to receive the eevent.
+        match iofs_msg {
+            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown)
+                if self.handled_messages.contains(&WasmMessage::Shutdown) =>
+            {
+                true
             }
-            IofsMessage::SystemMessage(IofsSystemMessage::Ping) => (true, WasmMessage::Ping),
-            IofsMessage::FileMessage(IofsFileMessage::Create(_)) => {
-                let can_send = match guard
+            IofsMessage::SystemMessage(IofsSystemMessage::Ping)
+                if self.handled_messages.contains(&WasmMessage::Shutdown) =>
+            {
+                true
+            }
+            IofsMessage::FileMessage(IofsFileMessage::Create(_))
+                if self.handled_messages.contains(&WasmMessage::FileCreate) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileCreateEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileCreate)
+                }
             }
-            IofsMessage::FileMessage(IofsFileMessage::Delete(_)) => {
-                let can_send = match guard
+            IofsMessage::FileMessage(IofsFileMessage::Delete(_))
+                if self.handled_messages.contains(&WasmMessage::FileDelete) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileDeleteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileDelete)
+                }
             }
-            IofsMessage::FileMessage(IofsFileMessage::Open(_)) => {
-                let can_send = match guard
+            IofsMessage::FileMessage(IofsFileMessage::Open(_))
+                if self.handled_messages.contains(&WasmMessage::FileOpen) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileOpenEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileOpen)
+                }
             }
-            IofsMessage::FileMessage(IofsFileMessage::Close(_)) => {
-                let can_send = match guard
+            IofsMessage::FileMessage(IofsFileMessage::Close(_))
+                if self.handled_messages.contains(&WasmMessage::FileClose) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileCloseEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileClose)
+                }
             }
-            IofsMessage::FileMessage(IofsFileMessage::Write(_)) => {
-                let can_send = match guard
+            IofsMessage::FileMessage(IofsFileMessage::Write(_))
+                if self.handled_messages.contains(&WasmMessage::FileWrite) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileWriteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileWrite)
+                }
             }
-            IofsMessage::FileMessage(IofsFileMessage::Read(_)) => {
-                let can_send = match guard
+            IofsMessage::FileMessage(IofsFileMessage::Read(_))
+                if self.handled_messages.contains(&WasmMessage::FileRead) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::FileReadEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileRead)
+                }
             }
-            IofsMessage::DirMessage(IofsDirMessage::Create(_)) => {
-                let can_send = match guard
+            IofsMessage::DirMessage(IofsDirMessage::Create(_))
+                if self.handled_messages.contains(&WasmMessage::FileCreate) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::DirCreateEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::FileCreate)
+                }
             }
-            IofsMessage::DirMessage(IofsDirMessage::Delete(_)) => {
-                let can_send = match guard
+            IofsMessage::DirMessage(IofsDirMessage::Delete(_))
+                if self.handled_messages.contains(&WasmMessage::DirDelete) =>
+            {
+                match guard
                     .block_manager_mut()
                     .metadata_mut()
                     .check_wasm_program_grant(&self.path, GrantType::DirDeleteEvent)
                 {
                     Some(Grant::Allow) => true,
                     _ => false,
-                };
-                (can_send, WasmMessage::DirDelete)
+                }
             }
-        };
-
-        can_send && self.handled_messages.contains(&msg)
+            _ => false,
+        }
     }
 
     fn register_for_event(&mut self, event: WasmMessage) {
