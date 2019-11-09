@@ -93,11 +93,8 @@ impl<B: BlockStorage> RuntimeProcess<B> {
         // The following code first checks to see if the wasm program is interested in the event. If
         // so, it then checks that there is a grant to allow the wasm program to receive the eevent.
         match iofs_msg {
-            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown)
-                if self.handled_messages.contains(&WasmMessage::Shutdown) =>
-            {
-                true
-            }
+            // Always dispatch the shutdown in order for the wasm program to be terminated.
+            IofsMessage::SystemMessage(IofsSystemMessage::Shutdown) => true,
             IofsMessage::SystemMessage(IofsSystemMessage::Ping)
                 if self.handled_messages.contains(&WasmMessage::Shutdown) =>
             {
