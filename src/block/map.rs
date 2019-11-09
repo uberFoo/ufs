@@ -55,15 +55,15 @@ pub struct BlockMap {
     /// The number of blocks in the file system
     ///
     count: BlockCardinality,
+    /// The first block in the block map -- it contains the first metadata block
+    ///
+    root_block: Option<BlockNumber>,
     /// A list of blocks that contain the block map (as `BlockMapWrapper`s)
     ///
     block_map_blocks: Vec<BlockNumber>,
     /// The list of free blocks
     ///
     free_blocks: VecDeque<BlockNumber>,
-    /// The first block in the block map -- it contains the first metadata block
-    ///
-    root_block: Option<BlockNumber>,
     /// The map itself
     ///
     map: Vec<Block>,
