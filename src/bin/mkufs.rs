@@ -23,7 +23,7 @@ struct Opt {
     #[structopt(short = "s", long = "block-size", default_value = "2048")]
     block_size: BlockSize,
     /// Number of blocks
-    #[structopt(short = "c", long = "block-count", default_value = "256")]
+    #[structopt(short = "c", long = "block-count", default_value = "1024")]
     block_count: BlockCardinality,
     /// File system master password
     #[structopt(short = "p", long = "password")]
