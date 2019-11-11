@@ -25,8 +25,8 @@
 //! ## `BlockMap`
 //!
 //! The block map maintains a mapping from a block's number to a block's type. It also contains
-//! metadata about the blocks themselves. It's stored in starting at block 0, and is the first thing
-//! loaded, when a file system is initialized, by the `BlockStorage` implementation. Additionally
+//! metadata about the blocks themselves. It's stored starting at block 0, and is the first thing
+//! loaded when a file system is initialized, by the `BlockStorage` implementation. Additionally
 //! the block map stores the block size, free block list, and something called the "root block".
 //! This is a pointer to the block that contains the file system metadata, described in the next
 //! section.
