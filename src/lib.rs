@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! A different sort of file system: *uberFS*
+//! A different sort of file system: *IOFS*
 //!
 //! # File System Structure
 //!
